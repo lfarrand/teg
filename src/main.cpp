@@ -446,6 +446,56 @@ String logs[] = {
   "Line 5"
 };
 
+// Method defs
+void writeInfluxDb(String data);
+void configureTimers();
+void startupTimerCallback();
+void chargeToggleTimerCallback();
+void dischargeToggleTimerCallback();
+void loadSettings();
+void configureSdCard();
+void configureEthernet();
+void index(Request &req, Response &res);
+void settings_pwm(Request &req, Response &res);
+void settings_pwm_update(Request &req, Response &res);
+void settings_pwm_timer(Request &req, Response &res);
+void settings_pwm_timer_update(Request &req, Response &res);
+void configureWebServer();
+void DumpText(EthernetClient& client);
+void processWebServer();
+void configureNtp();
+void configureSensors();
+void printAddress(DeviceAddress deviceAddress);
+void pollMetrics();
+void lookupSensorAddresses();
+void pollTemperature();
+void pollVoltage();
+void pollCurrent();
+void pollFreeMemory();
+void pollConfigSettings();
+void configurePwm();
+void configureModule1();
+void configureModule2();
+void configureModule3();
+void configureModule4();
+void attachInterruptVectors();
+void attachModule2PwmInterruptVectors();
+void enablePwmInterrupts();
+void disablePwmInterrupts();
+void enableModule2PwmInterrupts();
+void disableModule2PwmInterrupts();
+void IsrOverflowSm20();
+void enableXbar();
+void printStats();
+void writeLog(String msg);
+void printDigits(int digits);
+void sendNTPpacket(char *host);
+void loadConfiguration(const char *filename, MainConfig &config);
+void saveConfiguration(const char *filename, const MainConfig &config);
+void printFile(const char *filename);
+int getFreeMemory();
+time_t getNtpTime();
+
 static const char PwmTimerSettingsPageTemplate[] = "<!DOCTYPE html>\
 <html lang=\"en\">\
 <head>\

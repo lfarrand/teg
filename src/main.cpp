@@ -302,6 +302,7 @@ eFlex::Timer &Tm4 = Sm40.timer();
 TeensyTimerTool::OneShotTimer startupTimer(TeensyTimerTool::TCK64);
 TeensyTimerTool::OneShotTimer chargeToggleTimer(TeensyTimerTool::GPT1);
 TeensyTimerTool::OneShotTimer dischargeToggleTimer(TeensyTimerTool::GPT2);
+TeensyTimerTool::PeriodicTimer pwmSyncTimer(TeensyTimerTool::PIT);
 
 // Teensy identifiers
 uint8_t serial[4];
@@ -997,6 +998,7 @@ void configureTimers() {
   chargeToggleTimer.begin(chargeToggleTimerCallback);
   dischargeToggleTimer.begin(dischargeToggleTimerCallback);
   startupTimer.begin(startupTimerCallback);
+  pwmSyncTimer.begin([] { }, 1us, true); // 10MHz timer used to synchronise PWM modules
 
   startupTimer.trigger(5s);
 }
@@ -2109,7 +2111,9 @@ void configureModule2() {
   else {
     Serial.println(F("Using PWM for TM2"));
 
-    pwmConfig.setInitializationControl (kPWM_Initialize_LocalSync);
+    // TODO: Move xbar option to config
+    pwmConfig.setInitializationControl (kPWM_Initialize_ExtSync);
+    //pwmConfig.setInitializationControl (kPWM_Initialize_LocalSync);
     pwmConfig.setReloadLogic (kPWM_ReloadPwmFullCycle);
     pwmConfig.setPairOperation (kPWM_ComplementaryPwmA);
     pwmConfig.setMode(kPWM_SignedCenterAligned);
@@ -2916,17 +2920,54 @@ void enableXbar() {
   // TRIG1 is Channel B
 
   // SM2.0 -> SM1.3
+  // XBARA1_IN_FLEXPWM2_PWM1_OUT_TRIG0
   writeLog("XBAR connecting PWM2.0 TRIG0 to PWM1.3 EXT_SYNC");
-  if(xbarConnect (XBARA1_IN_FLEXPWM2_PWM1_OUT_TRIG0, XBARA1_OUT_FLEXPWM1_PWM3_EXT_SYNC)) {
+  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM1_PWM3_EXT_SYNC)) {
     writeLog("XBAR connected PWM2.0 TRIG0 to PWM1.3 EXT_SYNC");
   }
   else {
     writeLog("ERROR: XBAR did not connect PWM2.0 TRIG0 to PWM1.3 EXT_SYNC");
   }
 
+  // PIT0 -> SM2.0
+  writeLog("XBAR connecting PIT TRIG0 to PWM2.0 EXT_SYNC");
+  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM2_PWM0_EXT_SYNC)) {
+    writeLog("XBAR connected PIT TRIG0 to PWM2.0 EXT_SYNC");
+  }
+  else {
+    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM2.0 EXT_SYNC");
+  }
+
+  // PIT0 -> SM2.1
+  writeLog("XBAR connecting PIT TRIG0 to PWM2.1 EXT_SYNC");
+  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM2_PWM1_EXT_SYNC)) {
+    writeLog("XBAR connected PIT TRIG0 to PWM2.1 EXT_SYNC");
+  }
+  else {
+    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM2.1 EXT_SYNC");
+  }
+
+  // PIT0 -> SM2.2
+  writeLog("XBAR connecting PIT TRIG0 to PWM2.2 EXT_SYNC");
+  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM2_PWM2_EXT_SYNC)) {
+    writeLog("XBAR connected PIT TRIG0 to PWM2.2 EXT_SYNC");
+  }
+  else {
+    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM2.2 EXT_SYNC");
+  }
+
+  // PIT0 -> SM2.3
+  writeLog("XBAR connecting PIT TRIG0 to PWM2.3 EXT_SYNC");
+  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM2_PWM3_EXT_SYNC)) {
+    writeLog("XBAR connected PIT TRIG0 to PWM2.3 EXT_SYNC");
+  }
+  else {
+    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM2.3 EXT_SYNC");
+  }
+
   // SM2.0 -> SM3.1
   writeLog("XBAR connecting PWM2.0 TRIG0 to PWM3.1 EXT_SYNC");
-  if(xbarConnect (XBARA1_IN_FLEXPWM2_PWM1_OUT_TRIG0, XBARA1_OUT_FLEXPWM3_EXT_SYNC1)) {
+  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM3_EXT_SYNC1)) {
     writeLog("XBAR connected PWM2.0 TRIG0 to PWM3.1 EXT_SYNC");
   }
   else {
@@ -2935,7 +2976,7 @@ void enableXbar() {
 
   // SM2.0 -> SM4.0
   writeLog("XBAR connecting PWM2.0 TRIG0 to PWM4.0 EXT_SYNC");
-  if(xbarConnect (XBARA1_IN_FLEXPWM2_PWM1_OUT_TRIG0, XBARA1_OUT_FLEXPWM4_EXT_SYNC0)) {
+  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM4_EXT_SYNC0)) {
     writeLog("XBAR connected PWM2.0 TRIG0 to PWM4.0 EXT_SYNC");
   }
   else {
@@ -2944,7 +2985,7 @@ void enableXbar() {
 
   // SM2.0 -> SM4.1
   writeLog("XBAR connecting PWM2.0 TRIG0 to PWM4.1 EXT_SYNC");
-  if(xbarConnect (XBARA1_IN_FLEXPWM2_PWM1_OUT_TRIG0, XBARA1_OUT_FLEXPWM4_EXT_SYNC1)) {
+  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM4_EXT_SYNC1)) {
     writeLog("XBAR connected PWM2.0 TRIG0 to PWM4.1 EXT_SYNC");
   }
   else {
@@ -2953,7 +2994,7 @@ void enableXbar() {
 
   // SM2.0 -> SM4.2
   writeLog("XBAR connecting PWM2.0 TRIG0 to PWM4.2 EXT_SYNC");
-  if(xbarConnect (XBARA1_IN_FLEXPWM2_PWM1_OUT_TRIG0, XBARA1_OUT_FLEXPWM4_EXT_SYNC2)) {
+  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM4_EXT_SYNC2)) {
     writeLog("XBAR connected PWM2.0 TRIG0 to PWM4.2 EXT_SYNC");
   }
   else {

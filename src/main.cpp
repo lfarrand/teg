@@ -256,10 +256,10 @@ struct Module2Config {
   bool UseSpwm = false;
   uint32_t SpwmCarrierFrequency = 20000;
   uint32_t SpwmModulationFrequency = 50;
-  SubmoduleConfig Sm20;
-  SubmoduleConfig Sm21;
-  SubmoduleConfig Sm22;
-  SubmoduleConfig Sm23;
+  SubmoduleConfig Sm20{};
+  SubmoduleConfig Sm21{};
+  SubmoduleConfig Sm22{};
+  SubmoduleConfig Sm23{};
 };
 
 struct Module3Config {
@@ -273,10 +273,10 @@ struct Module4Config {
 };
 
 struct PwmConfig {
-  Module1Config Tm1;
+  Module1Config Tm1{};
   Module2Config Tm2;
-  Module3Config Tm3;
-  Module4Config Tm4;
+  Module3Config Tm3{};
+  Module4Config Tm4{};
   bool PrintRegs = false;
 };
 
@@ -303,11 +303,18 @@ char timeServer[] = "uk.pool.ntp.org";
 EthernetUDP ntpUDP;
 constexpr uint16_t localPort = 8888;  // local port to listen for UDP packets
 
+// Data wire is plugged into pin 34 on the Arduino
+#define ONE_WIRE_BUS 34
+// The resolution of the temperature sensor is user-configurable to 9, 10, 11, or 12 bits, corresponding to increments of 0.5°C, 0.25°C, 0.125°C, and 0.0625°C, respectively. The default resolution at power-up is 12-bit.
+#define TEMP_PRECISION 9 // Range 9-12. Larger values are slower. 9 (0.5°C): 93.75ms, 10 (0.25°C): 187.5ms, 11 (0.125°C): 375ms, 12 (0.0625°C): 750ms
+// Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
+OneWire oneWire(ONE_WIRE_BUS);
+
 // OLED screen
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define SCREEN_ADDRESS 0x3C
-#define OLED_RESET -1  // Reset pin # (or -1 if sharing Arduino reset pin)
+#define OLED_RESET (-1)  // Reset pin # (or -1 if sharing Arduino reset pin)
 // Port   SCL   SDA   Wire
 // 0      19    18    Wire
 // 1      16    17    Wire1
@@ -315,12 +322,6 @@ constexpr uint16_t localPort = 8888;  // local port to listen for UDP packets
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // Sensors
-// Data wire is plugged into pin 34 on the Arduino
-#define ONE_WIRE_BUS 34
-// The resolution of the temperature sensor is user-configurable to 9, 10, 11, or 12 bits, corresponding to increments of 0.5°C, 0.25°C, 0.125°C, and 0.0625°C, respectively. The default resolution at power-up is 12-bit.
-#define TEMP_PRECISION 9 // Range 9-12. Larger values are slower. 9 (0.5°C): 93.75ms, 10 (0.25°C): 187.5ms, 11 (0.125°C): 375ms, 12 (0.0625°C): 750ms
-// Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
-OneWire oneWire(ONE_WIRE_BUS);
 // Pass our oneWire reference to Dallas Temperature.
 DallasTemperature sensors(&oneWire);
 DeviceAddress Thermometer;
@@ -1871,13 +1872,13 @@ void pollTemperature() {
     }
 
     dtostrf(tempC, 4, 6, buffer);
-    snprintf(temp, sizeof(temp), "temperatureSensors,sensor_id=%s,sensor_address=%s temperature=%s %l\n", s.name, s.addressString, buffer, timestamp);
+    snprintf(temp, sizeof(temp), "temperatureSensors,sensor_id=%s,sensor_address=%s temperature=%s %llu\n", s.name, s.addressString, buffer, timestamp);
     postRequest += temp;
   }
 
   tempC = InternalTemperature.readTemperatureC();
   dtostrf(tempC, 4, 6, buffer);
-  snprintf(temp, sizeof(temp), "temperatureSensors,sensor_id=%s temperature=%s %l\n", "CPU", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "temperatureSensors,sensor_id=%s temperature=%s %llu\n", "CPU", buffer, timestamp);
   postRequest += temp;
 
   //Serial.print(postRequest);
@@ -1892,7 +1893,7 @@ void pollCurrent() {
 }
 
 void pollFreeMemory() {
-  int freeMemory = getFreeMemory();
+  //int freeMemory = getFreeMemory();
 
   //Serial.print(F("Free memory: "));
   //Serial.print(freeMemory);
@@ -1907,183 +1908,183 @@ void pollConfigSettings() {
 
   // On period
   dtostrf(config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=onPeriodSm13ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=onPeriodSm13ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=onPeriodSm13ChB,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=onPeriodSm13ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   // PWM frequency
   dtostrf(config.Pwm.Tm1.Sm13.PwmFrequency, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm13,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm13,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm20.PwmFrequency, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm20,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm20,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm21.PwmFrequency, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm21,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm21,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm22.PwmFrequency, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm22,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm22,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm23.PwmFrequency, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm23,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm23,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm3.Sm31.PwmFrequency, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm31,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm31,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm4.Sm40.PwmFrequency, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm40,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm40,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm4.Sm41.PwmFrequency, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm41,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm41,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm4.Sm42.PwmFrequency, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm42,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm42,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   // Duty cycle
   dtostrf(config.Pwm.Tm1.Sm13.DeadTime, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm13,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm13,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm20.DeadTime, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm20,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm20,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm21.DeadTime, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm21,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm21,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm22.DeadTime, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm22,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm22,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm23.DeadTime, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm23,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm23,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm3.Sm31.DeadTime, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm31,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm31,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm4.Sm40.DeadTime, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm40,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm40,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm4.Sm41.DeadTime, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm41,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm41,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm4.Sm42.DeadTime, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm42,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm42,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   // Duty cycle
   dtostrf(config.Pwm.Tm1.Sm13.ChannelA.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm13ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm13ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm1.Sm13.ChannelB.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm13ChB,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm13ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm20.ChannelA.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm20ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm20ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm20.ChannelB.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm20ChB,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm20ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm21.ChannelA.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm21ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm21ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm22.ChannelA.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm22ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm22ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm22.ChannelB.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm22ChB,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm22ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm23.ChannelA.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm23ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm23ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm23.ChannelB.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm23ChB,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm23ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm3.Sm31.ChannelA.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm31ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm31ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm3.Sm31.ChannelB.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm31ChB,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm31ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm4.Sm40.ChannelA.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm40ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm40ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm4.Sm41.ChannelA.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm41ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm41ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm4.Sm42.ChannelA.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm42ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm42ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm4.Sm42.ChannelB.DutyCycle, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm42ChB,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm42ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm20.ChannelA.PhaseShift, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm20ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm20ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm20.ChannelB.PhaseShift, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm20ChB,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm20ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm22.ChannelA.PhaseShift, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm22ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm22ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm22.ChannelB.PhaseShift, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm22ChB,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm22ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm23.ChannelA.PhaseShift, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm23ChA,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm23ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.Sm23.ChannelB.PhaseShift, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm23ChB,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm23ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   // SPWM
   dtostrf(config.Pwm.Tm2.SpwmCarrierFrequency, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=spwmCarrierFrequency,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=spwmCarrierFrequency,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.SpwmModulationFrequency, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=spwmModulationFrequency,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=spwmModulationFrequency,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   dtostrf(config.Pwm.Tm2.UseSpwm, -24, 6, buffer);
-  snprintf(temp, sizeof(temp), "configSettings,setting_id=useSpwm,setting_category=pwm value=%s %l\n", buffer, timestamp);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=useSpwm,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   //Serial.print(postRequest);

@@ -81,128 +81,6 @@ generator inputs change state, deadtime is inserted. Deadtime forces both PWM ou
 in the pair to the inactive state.
 */
 
-/*
-Config example:
-
-{
-  "Config": {
-    "Pwm": {
-      "Tm1": {
-        "Sm13": {
-          "DeadTime": "50",
-          "PwmFrequency": "1000",
-          "ChannelA": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          },
-          "ChannelB": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          }
-        }
-      },
-      "Tm2": {
-        "UseSpwm": "false",
-        "SpwmCarrierFrequency": "20000",
-        "SpwmModulationFrequency": "50",
-        "Sm20": {
-          "DeadTime": "50",
-          "PwmFrequency": "1000",
-          "ChannelA": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          },
-          "ChannelB": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          }
-        },
-        "Sm21": {
-          "DeadTime": "50",
-          "PwmFrequency": "1000",
-          "ChannelA": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          }
-        },
-        "Sm22": {
-          "DeadTime": "50",
-          "PwmFrequency": "1000",
-          "ChannelA": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          },
-          "ChannelB": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          }
-        },
-        "Sm23": {
-          "DeadTime": "50",
-          "PwmFrequency": "1000",
-          "ChannelA": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          },
-          "ChannelB": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          }
-        }
-      },
-      "Tm3": {
-        "Sm31": {
-          "DeadTime": "50",
-          "PwmFrequency": "1000",
-          "ChannelA": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          },
-          "ChannelB": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          }
-        }
-      },
-      "Tm4": {
-        "Sm40": {
-          "DeadTime": "50",
-          "PwmFrequency": "1000",
-          "ChannelA": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          },
-          "ChannelB": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          }
-        },
-        "Sm41": {
-          "DeadTime": "50",
-          "PwmFrequency": "1000",
-          "ChannelA": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          }
-        },
-        "Sm42": {
-          "DeadTime": "50",
-          "PwmFrequency": "1000",
-          "ChannelA": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          },
-          "ChannelB": {
-            "DutyCycle": "32768",
-            "PhaseShift": "10"
-          }
-        }
-      }
-    }
-  }
-}
-*/
-
 // Core
 
 #include <Arduino.h>
@@ -231,10 +109,9 @@ Config example:
 
 #define TIMEOUT 3000;
 
+static constexpr uint16_t FIFTY_PERCENT_DUTY = 32768;
+
 // Configuration
-
-static const uint16_t FIFTY_PERCENT_DUTY = 32768;
-
 struct ChannelConfig {
   uint32_t OnPeriodMicroseconds;
   uint16_t DutyCycle;
@@ -383,17 +260,13 @@ float tempC;
 // PWM
 using namespace eFlex;
 
-static int microMHz = F_CPU_ACTUAL / 1000000;  // Clock frequency in MHz
-
-static const double UPPER_BOUND_8_BIT_DECIMAL = 255;
-static const double UPPER_BOUND_16_BIT_DECIMAL = 65535;
-static const double UPPER_BOUND_32_BIT_DECIMAL = 4294967295;
+static u_int32_t microMHz = F_CPU_ACTUAL / 1000000;  // Clock frequency in MHz
 
 // sPWM
 // DutyCycle range 0-65535 (0-100%)
-const uint16_t MinDutyCycle = 0; // min duty cycle value
-const uint16_t MidDutyCycle = 32768; // middle duty cycle value
-const uint16_t MaxDutyCycle = 65535; // max duty cycle value
+constexpr uint16_t MinDutyCycle = 0; // min duty cycle value
+constexpr uint16_t MidDutyCycle = 32768; // middle duty cycle value
+constexpr uint16_t MaxDutyCycle = 65535; // max duty cycle value
 volatile uint32_t vSample;
 volatile float32_t vSpwmUpdateSpeed;
 
@@ -435,10 +308,10 @@ uint8_t serial[4];
 uint8_t uid64[8];
 
 // Trigger pin to trigger oscilloscope
-const int TriggerPin = 13;
+constexpr int TriggerPin = 13;
 
 // Log
-const int LogSize = 5;
+constexpr int16_t LogSize = 5;
 String logs[] = {
   "Line 1",
   "Line 2",
@@ -488,16 +361,16 @@ void disableModule2PwmInterrupts();
 void IsrOverflowSm20();
 void enableXbar();
 void printStats();
-void writeLog(String msg);
+void writeLog(const String &msg);
 void printDigits(int digits);
-void sendNTPpacket(char *host);
+void sendNTPpacket(const char *host);
 void loadConfiguration(const char *filename, MainConfig &config);
 void saveConfiguration(const char *filename, const MainConfig &config);
 void printFile(const char *filename);
 int getFreeMemory();
 time_t getNtpTime();
 
-static const char PwmTimerSettingsPageTemplate[] = "<!DOCTYPE html>\
+static constexpr char PwmTimerSettingsPageTemplate[] = "<!DOCTYPE html>\
 <html lang=\"en\">\
 <head>\
 <title>PWM Timer Settings</title>\
@@ -550,7 +423,7 @@ body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Col
 </body>\
 </html>";
 
-static const char PwmSettingsPageTemplate[] = "<!DOCTYPE html>\
+static constexpr char PwmSettingsPageTemplate[] = "<!DOCTYPE html>\
 <html lang=\"en\">\
 <head>\
 <title>PWM Settings</title>\
@@ -981,10 +854,9 @@ EthernetClient      influxDbClient;
 
 void writeInfluxDb(String data) {
   //Serial.println("Sending POST request to Influx DB");
-
+  /*
   HttpClient http(influxDbClient);
 
-  /*
   httpClient.beginRequest();
   httpClient.post(F("/api/v2/write?org=501eaf58ac3171cd&bucket=power_generator&precision=ms"));
   httpClient.sendHeader(F("Authorization"), F("Bearer oSe4_XGLyob-Ns0FT56CouDXw3jEpocQ0ntSuX7q0vr6JOn82GapRz0yUfrnpobYPxTTwS_EV2nyJ6vMCvGTcA=="));
@@ -1012,23 +884,11 @@ void writeInfluxDb(String data) {
 Print *stdPrint;
 
 void setup() {
-  if ( !CrashReport ) {
-    CrashReport.breadcrumb( 1, 0x5000000 | __LINE__ ); // Upper bits hold '5' perhaps indicating func() for ref, lower bits show line #
-    CrashReport.breadcrumb( 2, millis() );
-    Serial.begin(115200);
-    CrashReport.breadcrumb( 3, millis() );
-    while (!Serial && millis() < 4000 );
-    CrashReport.breadcrumb( 4, millis() );
-    Serial.println("\n" __FILE__ " " __DATE__ " " __TIME__);
-    CrashReport.breadcrumb( 5, millis() );
-    CrashReport.breadcrumb( 6, 0xdeadbeef );
-    *(volatile uint32_t *)0x30000000 = 0; // causes Data_Access_Violation
-  }
-  else {
-    while (!Serial && millis() < 10000 );
+  Serial.begin(9600);
+
+  if ( Serial && CrashReport ) {
     Serial.println("\n" __FILE__ " " __DATE__ " " __TIME__);
     Serial.print(CrashReport);
-    delay(5000);
   }
 
   stdPrint = &Serial;  // Make printf work
@@ -1226,7 +1086,7 @@ bool hasStarted = false;
 
   Ethernet.onAddressChanged([]() {
     IPAddress ip = Ethernet.localIP();
-    bool hasIP = (ip != INADDR_NONE);
+    const bool hasIP = (ip != INADDR_NONE);
     if (hasIP) {
       IPAddress subnet = Ethernet.subnetMask();
       IPAddress gw = Ethernet.gatewayIP();
@@ -1287,10 +1147,10 @@ bool hasStarted = false;
 // Web server
 void index(Request &req, Response &res) {
   char temp[BUFFER_SIZE];
-  int sec = millis() / 1000;
-  int min = sec / 60;
-  int hr = min / 60;
-  int dy = hr / 24;
+  const uint32_t sec = millis() / 1000;
+  const uint32_t min = sec / 60;
+  uint32_t hr = min / 60;
+  const uint32_t dy = hr / 24;
 
   hr = hr % 24;
 
@@ -1302,17 +1162,19 @@ void index(Request &req, Response &res) {
   snprintf(temp, BUFFER_SIZE - 1,
            "<html>\
 <head>\
-<title>Resonant Power Generator</title>\
+<title>TPG: Transient Power Generator</title>\
 <style>\
 body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #000088; }\
 </style>\
 </head>\
 <body>\
-<h1>Settings</h1>\
-<div><a href='/settings'>Settings</a></div>\
-<div><a href='/settings/pwm'>Settings &gt; PWM</a></div>\
-<div><a href='/settings/pwm-timer'>Settings &gt; PWM Timer</a></div>\
-<p>Uptime: %d d %02d:%02d:%02d</p>\
+<h1>TPG: Transient Power Generator</h1>\
+<h2>Settings</h2>\
+<ul>\
+<li><a href='/settings/pwm'>PWM</a></li>\
+<li><a href='/settings/pwm-timer'>PWM Timer</a></li>\
+</ul>\
+<p>Uptime: %lu d %02lu:%02lu:%02lu</p>\
 <p>Current time: %s UTC</p>\
 </body>\
 </html>", dy, hr, min % 60, sec % 60, timeText);
@@ -1419,10 +1281,9 @@ void settings_pwm_update(Request &req, Response &res) {
 
     disablePwmInterrupts();
 
-    char name[50];
-    char value[100];
-
     while (req.left()) {
+      char value[100];
+      char name[50];
       if(!req.form(name, 50, value, 100)) {
         return res.sendStatus(400);
       }
@@ -1432,127 +1293,127 @@ void settings_pwm_update(Request &req, Response &res) {
       res.println(value);
 
       if(strcmp( name, "period-13a") == 0) {
-        config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds = atol(value);
+        config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "period-13b") == 0) {
-        config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds = atol(value);
+        config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "pwm-frequency-13") == 0) {
-        config.Pwm.Tm1.Sm13.PwmFrequency = atoi(value);
+        config.Pwm.Tm1.Sm13.PwmFrequency = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "pwm-frequency-20") == 0) {
-        config.Pwm.Tm2.Sm20.PwmFrequency = atoi(value);
+        config.Pwm.Tm2.Sm20.PwmFrequency = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "pwm-frequency-21") == 0) {
-        config.Pwm.Tm2.Sm21.PwmFrequency = atoi(value);
+        config.Pwm.Tm2.Sm21.PwmFrequency = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "pwm-frequency-22") == 0) {
-        config.Pwm.Tm2.Sm22.PwmFrequency = atoi(value);
+        config.Pwm.Tm2.Sm22.PwmFrequency = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "pwm-frequency-23") == 0) {
-        config.Pwm.Tm2.Sm23.PwmFrequency = atoi(value);
+        config.Pwm.Tm2.Sm23.PwmFrequency = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "pwm-frequency-31") == 0) {
-        config.Pwm.Tm3.Sm31.PwmFrequency = atoi(value);
+        config.Pwm.Tm3.Sm31.PwmFrequency = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "pwm-frequency-40") == 0) {
-        config.Pwm.Tm4.Sm40.PwmFrequency = atoi(value);
+        config.Pwm.Tm4.Sm40.PwmFrequency = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "pwm-frequency-41") == 0) {
-        config.Pwm.Tm4.Sm41.PwmFrequency = atoi(value);
+        config.Pwm.Tm4.Sm41.PwmFrequency = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "pwm-frequency-42") == 0) {
-        config.Pwm.Tm4.Sm42.PwmFrequency = atoi(value);
+        config.Pwm.Tm4.Sm42.PwmFrequency = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "dead-time-13") == 0) {
-        config.Pwm.Tm1.Sm13.DeadTime = atoi(value);
+        config.Pwm.Tm1.Sm13.DeadTime = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "dead-time-20") == 0) {
-        config.Pwm.Tm2.Sm20.DeadTime = atoi(value);
+        config.Pwm.Tm2.Sm20.DeadTime = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "dead-time-21") == 0) {
-        config.Pwm.Tm2.Sm21.DeadTime = atoi(value);
+        config.Pwm.Tm2.Sm21.DeadTime = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "dead-time-22") == 0) {
-        config.Pwm.Tm2.Sm22.DeadTime = atoi(value);
+        config.Pwm.Tm2.Sm22.DeadTime = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "dead-time-23") == 0) {
-        config.Pwm.Tm2.Sm23.DeadTime = atoi(value);
+        config.Pwm.Tm2.Sm23.DeadTime = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "dead-time-31") == 0) {
-        config.Pwm.Tm3.Sm31.DeadTime = atoi(value);
+        config.Pwm.Tm3.Sm31.DeadTime = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "dead-time-40") == 0) {
-        config.Pwm.Tm4.Sm40.DeadTime = atoi(value);
+        config.Pwm.Tm4.Sm40.DeadTime = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "dead-time-41") == 0) {
-        config.Pwm.Tm4.Sm41.DeadTime = atoi(value);
+        config.Pwm.Tm4.Sm41.DeadTime = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "dead-time-42") == 0) {
-        config.Pwm.Tm4.Sm42.DeadTime = atoi(value);
+        config.Pwm.Tm4.Sm42.DeadTime = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-13a") == 0) {
-        config.Pwm.Tm1.Sm13.ChannelA.DutyCycle = atoi(value);
+        config.Pwm.Tm1.Sm13.ChannelA.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-13b") == 0) {
-        config.Pwm.Tm1.Sm13.ChannelB.DutyCycle = atoi(value);
+        config.Pwm.Tm1.Sm13.ChannelB.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-20a") == 0) {
-        config.Pwm.Tm2.Sm20.ChannelA.DutyCycle = atoi(value);
+        config.Pwm.Tm2.Sm20.ChannelA.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-20b") == 0) {
-        config.Pwm.Tm2.Sm20.ChannelB.DutyCycle = atoi(value);
+        config.Pwm.Tm2.Sm20.ChannelB.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-21a") == 0) {
-        config.Pwm.Tm2.Sm21.ChannelA.DutyCycle = atoi(value);
+        config.Pwm.Tm2.Sm21.ChannelA.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-22a") == 0) {
-        config.Pwm.Tm2.Sm22.ChannelA.DutyCycle = atoi(value);
+        config.Pwm.Tm2.Sm22.ChannelA.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-22b") == 0) {
-        config.Pwm.Tm2.Sm22.ChannelB.DutyCycle = atoi(value);
+        config.Pwm.Tm2.Sm22.ChannelB.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-23a") == 0) {
-        config.Pwm.Tm2.Sm23.ChannelA.DutyCycle = atoi(value);
+        config.Pwm.Tm2.Sm23.ChannelA.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-23b") == 0) {
-        config.Pwm.Tm2.Sm23.ChannelB.DutyCycle = atoi(value);
+        config.Pwm.Tm2.Sm23.ChannelB.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-31a") == 0) {
-        config.Pwm.Tm3.Sm31.ChannelA.DutyCycle = atoi(value);
+        config.Pwm.Tm3.Sm31.ChannelA.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-31b") == 0) {
-        config.Pwm.Tm3.Sm31.ChannelB.DutyCycle = atoi(value);
+        config.Pwm.Tm3.Sm31.ChannelB.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-40a") == 0) {
-        config.Pwm.Tm4.Sm40.ChannelA.DutyCycle = atoi(value);
+        config.Pwm.Tm4.Sm40.ChannelA.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-40b") == 0) {
-        config.Pwm.Tm4.Sm40.ChannelB.DutyCycle = atoi(value);
+        config.Pwm.Tm4.Sm40.ChannelB.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-41a") == 0) {
-        config.Pwm.Tm4.Sm41.ChannelA.DutyCycle = atoi(value);
+        config.Pwm.Tm4.Sm41.ChannelA.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-42a") == 0) {
-        config.Pwm.Tm4.Sm42.ChannelA.DutyCycle = atoi(value);
+        config.Pwm.Tm4.Sm42.ChannelA.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "duty-cycle-42b") == 0) {
-        config.Pwm.Tm4.Sm42.ChannelB.DutyCycle = atoi(value);
+        config.Pwm.Tm4.Sm42.ChannelB.DutyCycle = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "phase-shift-21a") == 0) {
-        config.Pwm.Tm2.Sm21.ChannelA.PhaseShift = atoi(value);
+        config.Pwm.Tm2.Sm21.ChannelA.PhaseShift = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "phase-shift-22a") == 0) {
-        config.Pwm.Tm2.Sm22.ChannelA.PhaseShift = atoi(value);
+        config.Pwm.Tm2.Sm22.ChannelA.PhaseShift = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "phase-shift-22b") == 0) {
-        config.Pwm.Tm2.Sm22.ChannelB.PhaseShift = atoi(value);
+        config.Pwm.Tm2.Sm22.ChannelB.PhaseShift = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "phase-shift-23a") == 0) {
-        config.Pwm.Tm2.Sm23.ChannelA.PhaseShift = atoi(value);
+        config.Pwm.Tm2.Sm23.ChannelA.PhaseShift = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "phase-shift-23b") == 0) {
-        config.Pwm.Tm2.Sm23.ChannelB.PhaseShift = atoi(value);
+        config.Pwm.Tm2.Sm23.ChannelB.PhaseShift = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "print-regs") == 0) {
         if(strcmp( value, "Yes") == 0) {
@@ -1571,10 +1432,10 @@ void settings_pwm_update(Request &req, Response &res) {
         }
       }
       else if(strcmp( name, "spwm-carrier-signal-frequency") == 0) {
-        config.Pwm.Tm2.SpwmCarrierFrequency = atoi(value);
+        config.Pwm.Tm2.SpwmCarrierFrequency = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "spwm-modulation-frequency") == 0) {
-        config.Pwm.Tm2.SpwmModulationFrequency = atoi(value);
+        config.Pwm.Tm2.SpwmModulationFrequency = strtol(value, nullptr, 10);
       }
     }
 
@@ -1634,10 +1495,9 @@ void settings_pwm_timer_update(Request &req, Response &res) {
   {
     digitalWriteFast (LED_BUILTIN, HIGH);
 
-    char name[50];
-    char value[100];
-
     while (req.left()) {
+      char value[100];
+      char name[50];
       if(!req.form(name, 50, value, 100)) {
         return res.sendStatus(400);
       }
@@ -1647,10 +1507,10 @@ void settings_pwm_timer_update(Request &req, Response &res) {
       res.println(value);
 
       if(strcmp( name, "period-13a") == 0) {
-        config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds = atol(value);
+        config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "period-13b") == 0) {
-        config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds = atol(value);
+        config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds = strtol(value, nullptr, 10);
       }
     }
 
@@ -1736,15 +1596,15 @@ void configureNtp() {
 // Generally, you should use "unsigned long" for variables that hold time
 // The value will quickly become too large for an int to store
 unsigned long prevSensorMillis = 0;  // will store last time sensors were updated
-const long sensorUpdateInterval = 5000;  // interval at which to update sensors, every 5 seconds
+constexpr long sensorUpdateInterval = 5000;  // interval at which to update sensors, every 5 seconds
 
 unsigned long prevPrintStatsMillis = 0;
-const long printStatsUpdateInterval = 60000; // every minute
+constexpr long printStatsUpdateInterval = 60000; // every minute
 
 void loop() {
   digitalWriteFast (LED_BUILTIN, HIGH);
 
-  unsigned long currentMillis = millis();
+  const unsigned long currentMillis = millis();
 
   // Use pin 13 for 'scope trigger.
   static volatile byte pin13_val = 0;
@@ -1787,7 +1647,7 @@ void configureSensors() {
 
   for (int i = 0; i < tempSensorCount; i++)
   {
-    temperatureSensor s = temperatureSensors[i];
+    const temperatureSensor s = temperatureSensors[i];
 
 /*
     char hexAddrText[24];
@@ -1857,13 +1717,13 @@ void pollTemperature() {
   sensors.requestTemperatures();
 
   String postRequest = F("");
-  uint64_t timestamp = now() * 1000000000;
+  const uint64_t timestamp = now() * 1000000000;
   char buffer[10];
   char temp[200];
 
   for (int i = 0; i < tempSensorCount; i++)
   {
-    temperatureSensor s = temperatureSensors[i];
+    const temperatureSensor s = temperatureSensors[i];
     tempC = sensors.getTempC(s.address);
 
     // Handle sensor issues by
@@ -1876,7 +1736,7 @@ void pollTemperature() {
     postRequest += temp;
   }
 
-  tempC = InternalTemperature.readTemperatureC();
+  tempC = InternalTemperatureClass::readTemperatureC();
   dtostrf(tempC, 4, 6, buffer);
   snprintf(temp, sizeof(temp), "temperatureSensors,sensor_id=%s temperature=%s %llu\n", "CPU", buffer, timestamp);
   postRequest += temp;
@@ -1907,183 +1767,183 @@ void pollConfigSettings() {
   char temp[200];
 
   // On period
-  dtostrf(config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds, -24, 6, buffer);
+  ultoa(config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=onPeriodSm13ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds, -24, 6, buffer);
+  ultoa(config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=onPeriodSm13ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   // PWM frequency
-  dtostrf(config.Pwm.Tm1.Sm13.PwmFrequency, -24, 6, buffer);
+  ultoa(config.Pwm.Tm1.Sm13.PwmFrequency, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm13,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm20.PwmFrequency, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm20.PwmFrequency, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm20,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm21.PwmFrequency, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm21.PwmFrequency, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm21,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm22.PwmFrequency, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm22.PwmFrequency, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm22,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm23.PwmFrequency, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm23.PwmFrequency, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm23,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm3.Sm31.PwmFrequency, -24, 6, buffer);
+  ultoa(config.Pwm.Tm3.Sm31.PwmFrequency, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm31,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm4.Sm40.PwmFrequency, -24, 6, buffer);
+  ultoa(config.Pwm.Tm4.Sm40.PwmFrequency, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm40,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm4.Sm41.PwmFrequency, -24, 6, buffer);
+  ultoa(config.Pwm.Tm4.Sm41.PwmFrequency, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm41,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm4.Sm42.PwmFrequency, -24, 6, buffer);
+  ultoa(config.Pwm.Tm4.Sm42.PwmFrequency, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=pwmFrequencySm42,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   // Duty cycle
-  dtostrf(config.Pwm.Tm1.Sm13.DeadTime, -24, 6, buffer);
+  ultoa(config.Pwm.Tm1.Sm13.DeadTime, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm13,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm20.DeadTime, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm20.DeadTime, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm20,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm21.DeadTime, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm21.DeadTime, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm21,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm22.DeadTime, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm22.DeadTime, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm22,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm23.DeadTime, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm23.DeadTime, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm23,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm3.Sm31.DeadTime, -24, 6, buffer);
+  ultoa(config.Pwm.Tm3.Sm31.DeadTime, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm31,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm4.Sm40.DeadTime, -24, 6, buffer);
+  ultoa(config.Pwm.Tm4.Sm40.DeadTime, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm40,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm4.Sm41.DeadTime, -24, 6, buffer);
+  ultoa(config.Pwm.Tm4.Sm41.DeadTime, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm41,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm4.Sm42.DeadTime, -24, 6, buffer);
+  ultoa(config.Pwm.Tm4.Sm42.DeadTime, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=deadTimeSm42,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   // Duty cycle
-  dtostrf(config.Pwm.Tm1.Sm13.ChannelA.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm1.Sm13.ChannelA.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm13ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm1.Sm13.ChannelB.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm1.Sm13.ChannelB.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm13ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm20.ChannelA.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm20.ChannelA.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm20ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm20.ChannelB.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm20.ChannelB.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm20ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm21.ChannelA.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm21.ChannelA.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm21ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm22.ChannelA.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm22.ChannelA.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm22ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm22.ChannelB.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm22.ChannelB.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm22ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm23.ChannelA.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm23.ChannelA.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm23ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm23.ChannelB.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm23.ChannelB.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm23ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm3.Sm31.ChannelA.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm3.Sm31.ChannelA.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm31ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm3.Sm31.ChannelB.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm3.Sm31.ChannelB.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm31ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm4.Sm40.ChannelA.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm4.Sm40.ChannelA.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm40ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm4.Sm41.ChannelA.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm4.Sm41.ChannelA.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm41ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm4.Sm42.ChannelA.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm4.Sm42.ChannelA.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm42ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm4.Sm42.ChannelB.DutyCycle, -24, 6, buffer);
+  ultoa(config.Pwm.Tm4.Sm42.ChannelB.DutyCycle, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=dutyCycleSm42ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm20.ChannelA.PhaseShift, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm20.ChannelA.PhaseShift, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm20ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm20.ChannelB.PhaseShift, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm20.ChannelB.PhaseShift, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm20ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm22.ChannelA.PhaseShift, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm22.ChannelA.PhaseShift, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm22ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm22.ChannelB.PhaseShift, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm22.ChannelB.PhaseShift, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm22ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm23.ChannelA.PhaseShift, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm23.ChannelA.PhaseShift, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm23ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.Sm23.ChannelB.PhaseShift, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.Sm23.ChannelB.PhaseShift, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm23ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   // SPWM
-  dtostrf(config.Pwm.Tm2.SpwmCarrierFrequency, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.SpwmCarrierFrequency, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=spwmCarrierFrequency,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.SpwmModulationFrequency, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.SpwmModulationFrequency, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=spwmModulationFrequency,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
-  dtostrf(config.Pwm.Tm2.UseSpwm, -24, 6, buffer);
+  ultoa(config.Pwm.Tm2.UseSpwm, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=useSpwm,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
@@ -2128,7 +1988,7 @@ void configureModule1() {
     exit (EXIT_FAILURE);
   }
 
-  uint16_t deadTimeCycles = ((uint64_t) Tm1.srcClockHz() * config.Pwm.Tm1.Sm13.DeadTime) / 1000000000;
+  const uint16_t deadTimeCycles = (static_cast<uint64_t>(Tm1.srcClockHz()) * config.Pwm.Tm1.Sm13.DeadTime) / 1000000000;
   Sm13.setupDeadtime(deadTimeCycles);
 
   char strBuf[150];
@@ -2161,21 +2021,13 @@ void configureModule1() {
     exit (EXIT_FAILURE);
   }
 
-  const char* prescale;
-  uint32_t pwmFrequency;
-  uint32_t pwmMode;
-  uint16_t deadtimeSettingChanA;
-  uint16_t deadtimeSettingChanB;
-  uint16_t dutyCycleSettingChanA;
-  uint16_t dutyCycleSettingChanB;
-
-  pwmFrequency = Sm13.pwmFrequency();
-  pwmMode = Sm13.pwmMode();
-  deadtimeSettingChanA = Sm13.deadtimeSetting(ChanA);
-  deadtimeSettingChanB = Sm13.deadtimeSetting(ChanB);
-  dutyCycleSettingChanA = Sm13.dutyCycleSetting(ChanA);
-  dutyCycleSettingChanB = Sm13.dutyCycleSetting(ChanB);
-  prescale = prescaleStr[Sm13.prescaler()];
+  const uint32_t pwmFrequency = Sm13.pwmFrequency();
+  const uint32_t pwmMode = Sm13.pwmMode();
+  const uint16_t deadtimeSettingChanA = Sm13.deadtimeSetting(ChanA);
+  const uint16_t deadtimeSettingChanB = Sm13.deadtimeSetting(ChanB);
+  const uint16_t dutyCycleSettingChanA = Sm13.dutyCycleSetting(ChanA);
+  const uint16_t dutyCycleSettingChanB = Sm13.dutyCycleSetting(ChanB);
+  const char *prescale = prescaleStr[Sm13.prescaler()];
   sprintf(strBuf, "Configured SM13 %luHz %s md:%lu dtA:%hu dcA:%hhu%% dtB:%hu dcB:%hhu%%", pwmFrequency, prescale, pwmMode, deadtimeSettingChanA, dutyCycleSettingChanA, deadtimeSettingChanB, dutyCycleSettingChanB);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
@@ -2201,13 +2053,6 @@ void configureModule2() {
   Serial.println(F("Configuring TM2"));
 
   char strBuf[150];
-  const char* prescale;
-  uint32_t pwmFrequency;
-  uint32_t pwmMode;
-  uint16_t deadtimeSettingChanA;
-  uint16_t deadtimeSettingChanB;
-  uint16_t dutyCycleSettingChanA;
-  uint16_t dutyCycleSettingChanB;
 
   if(config.Pwm.Tm2.UseSpwm) {
     disableModule2PwmInterrupts();
@@ -2231,10 +2076,10 @@ void configureModule2() {
   if(config.Pwm.Tm2.UseSpwm) {
     Serial.println(F("Using SPWM for TM2"));
 
-    float32_t spwmModulationFrequency = config.Pwm.Tm2.SpwmModulationFrequency;
-    float32_t spwmCarrierFrequency = config.Pwm.Tm2.SpwmCarrierFrequency;
-    float32_t spwmRatio = spwmModulationFrequency / spwmCarrierFrequency;
-    float32_t spwmUpdateSpeed = 2.0 * PI * spwmRatio;
+    const auto spwmModulationFrequency = static_cast<float>(config.Pwm.Tm2.SpwmModulationFrequency);
+    const auto spwmCarrierFrequency = static_cast<float>(config.Pwm.Tm2.SpwmCarrierFrequency);
+    const float32_t spwmRatio = spwmModulationFrequency / spwmCarrierFrequency;
+    const float32_t spwmUpdateSpeed = 2.0f * static_cast<float>(PI) * spwmRatio;
 
     ATOMIC_BLOCK (ATOMIC_RESTORESTATE) {
       vSpwmUpdateSpeed = spwmUpdateSpeed;
@@ -2432,36 +2277,34 @@ void configureModule2() {
     }
   }
 
-  uint16_t deadTimeCycles;
-
-  deadTimeCycles = ((uint64_t) Tm2.srcClockHz() * config.Pwm.Tm2.Sm20.DeadTime) / 1000000000;
+  uint16_t deadTimeCycles = (static_cast<uint64_t>(Tm2.srcClockHz()) * config.Pwm.Tm2.Sm20.DeadTime) / 1000000000;
   Sm20.setupDeadtime(deadTimeCycles);
   sprintf(strBuf, "Set Sm20 deadtime to %hu cycles", deadTimeCycles);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
 
-  deadTimeCycles = ((uint64_t) Tm2.srcClockHz() * config.Pwm.Tm2.Sm21.DeadTime) / 1000000000;
+  deadTimeCycles = (static_cast<uint64_t>(Tm2.srcClockHz()) * config.Pwm.Tm2.Sm21.DeadTime) / 1000000000;
   Sm21.setupDeadtime(deadTimeCycles);
   sprintf(strBuf, "Set Sm21 deadtime to %hu cycles", deadTimeCycles);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
 
-  pwmFrequency = Sm21.pwmFrequency();
-  pwmMode = Sm21.pwmMode();
-  deadtimeSettingChanA = Sm21.deadtimeSetting(ChanA);
-  dutyCycleSettingChanA = Sm21.dutyCycleSetting(ChanA);
-  prescale = prescaleStr[Sm21.prescaler()];
+  uint32_t pwmFrequency = Sm21.pwmFrequency();
+  uint32_t pwmMode = Sm21.pwmMode();
+  uint16_t deadtimeSettingChanA = Sm21.deadtimeSetting(ChanA);
+  uint16_t dutyCycleSettingChanA = Sm21.dutyCycleSetting(ChanA);
+  const char *prescale = prescaleStr[Sm21.prescaler()];
   sprintf(strBuf, "#4 PWM 2.1 %luHz %s md:%lu dtA:%hu dcA:%hhu%%", pwmFrequency, prescale, pwmMode, deadtimeSettingChanA, dutyCycleSettingChanA);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
 
-  deadTimeCycles = ((uint64_t) Tm2.srcClockHz() * config.Pwm.Tm2.Sm22.DeadTime) / 1000000000;
+  deadTimeCycles = (static_cast<uint64_t>(Tm2.srcClockHz()) * config.Pwm.Tm2.Sm22.DeadTime) / 1000000000;
   Sm22.setupDeadtime(deadTimeCycles);
   sprintf(strBuf, "Set Sm22 deadtime to %hu cycles", deadTimeCycles);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
 
-  deadTimeCycles = ((uint64_t) Tm2.srcClockHz() * config.Pwm.Tm2.Sm23.DeadTime) / 1000000000;
+  deadTimeCycles = (static_cast<uint64_t>(Tm2.srcClockHz()) * config.Pwm.Tm2.Sm23.DeadTime) / 1000000000;
   Sm23.setupDeadtime(deadTimeCycles);
   sprintf(strBuf, "Set Sm23 deadtime to %hu cycles", deadTimeCycles);
   writeLog(strBuf);
@@ -2585,9 +2428,9 @@ void configureModule2() {
   pwmFrequency = Sm20.pwmFrequency();
   pwmMode = Sm20.pwmMode();
   deadtimeSettingChanA = Sm20.deadtimeSetting(ChanA);
-  deadtimeSettingChanB = Sm20.deadtimeSetting(ChanB);
+  uint16_t deadtimeSettingChanB = Sm20.deadtimeSetting(ChanB);
   dutyCycleSettingChanA = Sm20.dutyCycleSetting(ChanA);
-  dutyCycleSettingChanB = Sm20.dutyCycleSetting(ChanB);
+  uint16_t dutyCycleSettingChanB = Sm20.dutyCycleSetting(ChanB);
   prescale = prescaleStr[Sm20.prescaler()];
   sprintf(strBuf, "Configured PWM 2.0 %luHz %s md:%lu dtA:%hu dcA:%hhu%% dtB:%hu dcB:%hhu%%", pwmFrequency, prescale, pwmMode, deadtimeSettingChanA, dutyCycleSettingChanA, deadtimeSettingChanB, dutyCycleSettingChanB);
   writeLog(strBuf);
@@ -2667,7 +2510,7 @@ void configureModule3() {
     exit (EXIT_FAILURE);
   }
 
-  uint16_t deadTimeCycles = ((uint64_t) Tm3.srcClockHz() * config.Pwm.Tm3.Sm31.DeadTime) / 1000000000;
+  const uint16_t deadTimeCycles = (static_cast<uint64_t>(Tm3.srcClockHz()) * config.Pwm.Tm3.Sm31.DeadTime) / 1000000000;
   Sm31.setupDeadtime(deadTimeCycles);
 
   // Set ChanB to be an inverted mirror of ChanA
@@ -2709,25 +2552,17 @@ void configureModule3() {
     exit (EXIT_FAILURE);
   }
 
-  const char* prescale;
-  uint32_t pwmFrequency;
-  uint32_t pwmMode;
-  uint16_t deadtimeSettingChanA;
-  uint16_t deadtimeSettingChanB;
-  uint16_t dutyCycleSettingChanA;
-  uint16_t dutyCycleSettingChanB;
-
   sprintf(strBuf, "Set TM3 deadtime to %hu cycles", deadTimeCycles);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
 
-  pwmFrequency = Sm31.pwmFrequency();
-  pwmMode = Sm31.pwmMode();
-  deadtimeSettingChanA = Sm31.deadtimeSetting(ChanA);
-  deadtimeSettingChanB = Sm31.deadtimeSetting(ChanB);
-  dutyCycleSettingChanA = Sm31.dutyCycleSetting(ChanA);
-  dutyCycleSettingChanB = Sm31.dutyCycleSetting(ChanB);
-  prescale = prescaleStr[Sm31.prescaler()];
+  const uint32_t pwmFrequency = Sm31.pwmFrequency();
+  const uint32_t pwmMode = Sm31.pwmMode();
+  const uint16_t deadtimeSettingChanA = Sm31.deadtimeSetting(ChanA);
+  const uint16_t deadtimeSettingChanB = Sm31.deadtimeSetting(ChanB);
+  const uint16_t dutyCycleSettingChanA = Sm31.dutyCycleSetting(ChanA);
+  const uint16_t dutyCycleSettingChanB = Sm31.dutyCycleSetting(ChanB);
+  const char *prescale = prescaleStr[Sm31.prescaler()];
   sprintf(strBuf, "Configured SM31 %luHz %s md:%lu dtA:%hu dcA:%hhu%% dtB:%hu dcB:%hhu%%", pwmFrequency, prescale, pwmMode, deadtimeSettingChanA, dutyCycleSettingChanA, deadtimeSettingChanB, dutyCycleSettingChanB);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
@@ -2781,21 +2616,20 @@ void configureModule4() {
   }
 
   char strBuf[150];
-  uint16_t deadTimeCycles;
 
-  deadTimeCycles = ((uint64_t) Tm4.srcClockHz() * config.Pwm.Tm4.Sm40.DeadTime) / 1000000000;
+  uint16_t deadTimeCycles = (static_cast<uint64_t>(Tm4.srcClockHz()) * config.Pwm.Tm4.Sm40.DeadTime) / 1000000000;
   Sm40.setupDeadtime(deadTimeCycles);
   sprintf(strBuf, "Set TM4.0 deadtime to %hu cycles", deadTimeCycles);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
 
-  deadTimeCycles = ((uint64_t) Tm4.srcClockHz() * config.Pwm.Tm4.Sm41.DeadTime) / 1000000000;
+  deadTimeCycles = (static_cast<uint64_t>(Tm4.srcClockHz()) * config.Pwm.Tm4.Sm41.DeadTime) / 1000000000;
   Sm41.setupDeadtime(deadTimeCycles);
   sprintf(strBuf, "Set TM4.1 deadtime to %hu cycles", deadTimeCycles);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
 
-  deadTimeCycles = ((uint64_t) Tm4.srcClockHz() * config.Pwm.Tm4.Sm42.DeadTime) / 1000000000;
+  deadTimeCycles = (static_cast<uint64_t>(Tm4.srcClockHz()) * config.Pwm.Tm4.Sm42.DeadTime) / 1000000000;
   Sm42.setupDeadtime(deadTimeCycles);
   sprintf(strBuf, "Set TM4.2 deadtime to %hu cycles", deadTimeCycles);
   writeLog(strBuf);
@@ -2863,19 +2697,11 @@ void configureModule4() {
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
 
-  const char* prescale;
-  uint32_t pwmFrequency;
-  uint32_t pwmMode;
-  uint16_t deadtimeSettingChanA;
-  uint16_t deadtimeSettingChanB;
-  uint16_t dutyCycleSettingChanA;
-  uint16_t dutyCycleSettingChanB;
-
-  pwmFrequency = Sm40.pwmFrequency();
-  pwmMode = Sm40.pwmMode();
-  deadtimeSettingChanA = Sm40.deadtimeSetting(ChanA);
-  dutyCycleSettingChanA = Sm40.dutyCycleSetting(ChanA);
-  prescale = prescaleStr[Sm40.prescaler()];
+  uint32_t pwmFrequency = Sm40.pwmFrequency();
+  uint32_t pwmMode = Sm40.pwmMode();
+  uint16_t deadtimeSettingChanA = Sm40.deadtimeSetting(ChanA);
+  uint16_t dutyCycleSettingChanA = Sm40.dutyCycleSetting(ChanA);
+  const char *prescale = prescaleStr[Sm40.prescaler()];
   sprintf(strBuf, "Configured PWM 4.0 %luHz %s md:%lu dtA:%hu dcA:%hhu%%", pwmFrequency, prescale, pwmMode, deadtimeSettingChanA, dutyCycleSettingChanA);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
@@ -2892,9 +2718,9 @@ void configureModule4() {
   pwmFrequency = Sm42.pwmFrequency();
   pwmMode = Sm42.pwmMode();
   deadtimeSettingChanA = Sm42.deadtimeSetting(ChanA);
-  deadtimeSettingChanB = Sm42.deadtimeSetting(ChanB);
+  const uint16_t deadtimeSettingChanB = Sm42.deadtimeSetting(ChanB);
   dutyCycleSettingChanA = Sm42.dutyCycleSetting(ChanA);
-  dutyCycleSettingChanB = Sm42.dutyCycleSetting(ChanB);
+  const uint16_t dutyCycleSettingChanB = Sm42.dutyCycleSetting(ChanB);
   prescale = prescaleStr[Sm42.prescaler()];
   sprintf(strBuf, "Configured PWM 4.2 %luHz %s md:%lu dtA:%hu dcA:%hhu%% dtB:%hu dcB:%hhu%%", pwmFrequency, prescale, pwmMode, deadtimeSettingChanA, dutyCycleSettingChanA, deadtimeSettingChanB, dutyCycleSettingChanB);
   writeLog(strBuf);
@@ -3041,7 +2867,7 @@ bool xbarConnect (uint8_t input, uint8_t output) {
   volatile uint16_t *xbar_select_reg = &XBARA1_SEL0 + (output / 2); // 1 reg per 2 outputs
   uint16_t val = *xbar_select_reg;
 
-  sprintf(strBuf, "  Value of XBARA1_SEL%hu (address 0x%" PRIXPTR ") register before writing is 0x%04X", (output / 2), (uintptr_t) (&XBARA1_SEL0 + (output / 2)), *xbar_select_reg);
+  sprintf(strBuf, "  Value of XBARA1_SEL%hu (address 0x%" PRIXPTR ") register before writing is 0x%04X", (output / 2), reinterpret_cast<uintptr_t>(&XBARA1_SEL0 + (output / 2)), *xbar_select_reg);
   writeLog(strBuf);
 /*
   uint32_t addr1 = (uint32_t)&XBARA1_SEL16;
@@ -3057,13 +2883,13 @@ bool xbarConnect (uint8_t input, uint8_t output) {
     val = (val & 0xFF00) | input;
   }
 
-  sprintf(strBuf, "  Writing value 0x%04X to register XBARA1_SEL%hu (address 0x%" PRIXPTR ")", val, (output / 2), (uintptr_t) (&XBARA1_SEL0 + (output / 2)));
+  sprintf(strBuf, "  Writing value 0x%04X to register XBARA1_SEL%hu (address 0x%" PRIXPTR ")", val, (output / 2), reinterpret_cast<uintptr_t>(&XBARA1_SEL0 + (output / 2)));
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
 
   *xbar_select_reg = val;
 
-  sprintf(strBuf, "  Value of XBARA1_SEL%hu (address 0x%" PRIXPTR ") register after writing is 0x%04X", (output / 2), (uintptr_t) (&XBARA1_SEL0 + (output / 2)), *xbar_select_reg);
+  sprintf(strBuf, "  Value of XBARA1_SEL%hu (address 0x%" PRIXPTR ") register after writing is 0x%04X", (output / 2), reinterpret_cast<uintptr_t>(&XBARA1_SEL0 + (output / 2)), *xbar_select_reg);
   writeLog(strBuf);
 /*
   addr1 = (uint32_t)&XBARA1_SEL16;
@@ -3145,21 +2971,14 @@ void enableXbar() {
 
 void printStats() {
   char strBuf[150];
-  const char* prescale;
-  uint32_t pwmFrequency;
-  uint32_t pwmMode;
-  uint16_t deadtimeSettingChanA;
-  uint16_t deadtimeSettingChanB;
-  uint16_t dutyCycleSettingChanA;
-  uint16_t dutyCycleSettingChanB;
 
-  pwmFrequency = Sm13.pwmFrequency();
-  pwmMode = Sm13.pwmMode();
-  deadtimeSettingChanA = Sm13.deadtimeSetting(ChanA);
-  deadtimeSettingChanB = Sm13.deadtimeSetting(ChanB);
-  dutyCycleSettingChanA = Sm13.dutyCycleSetting(ChanA);
-  dutyCycleSettingChanB = Sm13.dutyCycleSetting(ChanB);
-  prescale = prescaleStr[Sm13.prescaler()];
+  uint32_t pwmFrequency = Sm13.pwmFrequency();
+  uint32_t pwmMode = Sm13.pwmMode();
+  uint16_t deadtimeSettingChanA = Sm13.deadtimeSetting(ChanA);
+  uint16_t deadtimeSettingChanB = Sm13.deadtimeSetting(ChanB);
+  uint16_t dutyCycleSettingChanA = Sm13.dutyCycleSetting(ChanA);
+  uint16_t dutyCycleSettingChanB = Sm13.dutyCycleSetting(ChanB);
+  const char *prescale = prescaleStr[Sm13.prescaler()];
   sprintf(strBuf, "1.3 %luHz %s md:%lu dtA:%hu dcA:%hhu%% dtB:%hu dcB:%hhu%%", pwmFrequency, prescale, pwmMode, deadtimeSettingChanA, dutyCycleSettingChanA, deadtimeSettingChanB, dutyCycleSettingChanB);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf)); // Clear buffer
@@ -3305,7 +3124,7 @@ void printStats() {
   memset(strBuf, 0, sizeof(strBuf)); // Clear buffer
 }
 
-void writeLog(String msg) {
+void writeLog(const String &msg) {
   for (int i = 0; i < LogSize - 1; i++) {
     logs[i] = logs[i + 1];
   }
@@ -3316,7 +3135,7 @@ void writeLog(String msg) {
 
   display.clearDisplay();
 
-  for (int i = 0; i < LogSize; i++) {
+  for (int16_t i = 0; i < LogSize; i++) {
     display.setCursor(10, (i + 1) * 10);
     display.println(logs[i]);
   }
@@ -3334,7 +3153,7 @@ extern char *__brkval;
 int getFreeMemory() {
   char top;
 #ifdef __arm__
-  return &top - reinterpret_cast<char*>(sbrk(0));
+  return &top - static_cast<char*>(sbrk(0));
 #elif defined(CORE_TEENSY) || (ARDUINO > 103 && ARDUINO != 151)
   return &top - __brkval;
 #else  // __arm__
@@ -3352,29 +3171,29 @@ void printDigits(int digits){
 
 /*-------- NTP code ----------*/
 
-const int NTP_PACKET_SIZE = 48; // NTP time is in the first 48 bytes of message
+constexpr int NTP_PACKET_SIZE = 48; // NTP time is in the first 48 bytes of message
 byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming & outgoing packets
 
 time_t getNtpTime()
 {
-  while (ntpUDP.parsePacket() > 0) ; // discard any previously received packets
+  while (ntpUDP.parsePacket() > 0) {}
+  // discard any previously received packets
   Serial.println(F("Transmit NTP Request"));
   sendNTPpacket(timeServer);
-  uint32_t beginWait = millis();
+  const uint32_t beginWait = millis();
   while (millis() - beginWait < 1500) {
-    int size = ntpUDP.parsePacket();
+    const int size = ntpUDP.parsePacket();
     if (size >= NTP_PACKET_SIZE) {
       Serial.println(F("Receive NTP Response"));
       ntpUDP.read(packetBuffer, NTP_PACKET_SIZE);  // read packet into the buffer
-      unsigned long secsSince1900;
       // convert four bytes starting at location 40 to a long integer
-      secsSince1900 =  (unsigned long)packetBuffer[40] << 24;
-      secsSince1900 |= (unsigned long)packetBuffer[41] << 16;
-      secsSince1900 |= (unsigned long)packetBuffer[42] << 8;
-      secsSince1900 |= (unsigned long)packetBuffer[43];
+      unsigned long secsSince1900 = static_cast<unsigned long>(packetBuffer[40]) << 24;
+      secsSince1900 |= static_cast<unsigned long>(packetBuffer[41]) << 16;
+      secsSince1900 |= static_cast<unsigned long>(packetBuffer[42]) << 8;
+      secsSince1900 |= static_cast<unsigned long>(packetBuffer[43]);
       Serial.print(F("Seconds since 1 Jan 1900: "));
       Serial.println(secsSince1900);
-      time_t time = secsSince1900 - 2208988800UL;
+      const time_t time = secsSince1900 - 2208988800UL;
       Serial.print(F("Seconds since 1 Jan 1970: "));
       Serial.println(time);
       return time;
@@ -3385,7 +3204,7 @@ time_t getNtpTime()
 }
 
 // send an NTP request to the time server at the given address
-void sendNTPpacket(char *host)
+void sendNTPpacket(const char *host)
 {
   // set all bytes in the buffer to 0
   memset(packetBuffer, 0, NTP_PACKET_SIZE);
@@ -3701,7 +3520,7 @@ void printFile(const char *filename) {
 
   // Extract each characters by one by one
   while (file.available()) {
-    Serial.print((char)file.read());
+    Serial.print(static_cast<char>(file.read()));
   }
   Serial.println();
 

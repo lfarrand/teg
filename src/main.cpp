@@ -2336,7 +2336,7 @@ void configureModule2() {
       VAL2           /     | /     | /
       INIT ($FF00)  /      |/      |/
   */
-  Sm20.outputTriggerEnable(kPWM_ValueRegister_2, true);
+  Sm20.enableOutputTrigger(kPWM_ValueRegister_2);
 
   if(config.Pwm.Tm2.UseSpwm) {
     Sm20.setPwmLdok(true);

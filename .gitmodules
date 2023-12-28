@@ -1,0 +1,6 @@
+[submodule "lib/eFlexPwm"]
+	path = lib/eFlexPwm
+	url = git@github.com:lfarrand/eFlexPwm.git
+[submodule "lib/aWOT"]
+	path = lib/aWOT
+	url = git@github.com:lfarrand/aWOT.git

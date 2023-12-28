@@ -762,6 +762,12 @@ body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Col
                 </label>\
                 <input type=\"text\" style=\"width: 75px;\" id=\"print-regs\" name=\"print-regs\" value=\"%s\"> Yes / No\
             </div>\
+            <div class=\"input\">\
+                <label>\
+                    Synchronise PWM With PIT0 Timer?\
+                </label>\
+                <input type=\"text\" style=\"width: 75px;\" id=\"sync-pwm\" name=\"sync-pwm\" value=\"%s\"> Yes / No\
+            </div>\
             <p>This is the configuration for the inverter PWM.</p>\
             <p>This is a full bridge SPWM using PWM outputs 2.0A, 2.0B, 2.2A &amp; 2.2B</p>\
             <p>The carrier signal of SPWM is usually a triangular wave with a high frequency, generally in several KHz. The modulation signal of SPWM is a sinusoidal waveform with a frequency equal to the desired output voltage frequency (50 or 60 Hz).</p>\
@@ -1256,6 +1262,7 @@ void settings_pwm(Request &req, Response &res) {
   config.Pwm.Tm2.Sm23.ChannelA.PhaseShift,
   config.Pwm.Tm2.Sm23.ChannelB.PhaseShift,
   config.Pwm.PrintRegs ? "Yes" : "No",
+  config.Pwm.SyncPwm ? "Yes" : "No",
   config.Pwm.Tm2.UseSpwm ? "Yes" : "No",
   config.Pwm.Tm2.SpwmCarrierFrequency,
   config.Pwm.Tm2.SpwmModulationFrequency);
@@ -1425,6 +1432,14 @@ void settings_pwm_update(Request &req, Response &res) {
         }
         else {
           config.Pwm.PrintRegs = false;
+        }
+      }
+      else if(strcmp( name, "sync-pwm") == 0) {
+        if(strcmp( value, "Yes") == 0) {
+          config.Pwm.SyncPwm = true;
+        }
+        else {
+          config.Pwm.SyncPwm = false;
         }
       }
       else if(strcmp( name, "use-spwm") == 0) {
@@ -2133,9 +2148,9 @@ void configureModule2() {
       exit (EXIT_FAILURE);
     }
 
-    pwmConfig.setPairOperation (kPWM_Independent);
     pwmConfig.setClockSource (kPWM_Submodule0Clock);
     pwmConfig.setInitializationControl (kPWM_Initialize_MasterSync);
+    pwmConfig.setPairOperation (kPWM_Independent);
     pwmConfig.setPwmFreqHz(config.Pwm.Tm2.Sm21.PwmFrequency);
 
     if (!Sm21.configure (pwmConfig)) {
@@ -2323,20 +2338,22 @@ void configureModule2() {
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
 
-  // Enable output trigger, used to synchronise other PWM modules
-  /*
-  Refer to page 3095 in i.MX RT1060 Processor Reference Manual, Rev. 3
-  55.3.1 PWM Capabilities
+  if(config.Pwm.SyncPwm) {
+    // Enable output trigger, used to synchronise other PWM modules
+    /*
+    Refer to page 3095 in i.MX RT1060 Processor Reference Manual, Rev. 3
+    55.3.1 PWM Capabilities
 
-      VAL1 ($0100)        /|      /|
-      VAL3               / |     / |
-      VAL5              /  |    /  |
-      VAL0 ($0000)     /   |   /   |
-      VAL4            /    |  /    |  / (etc.)
-      VAL2           /     | /     | /
-      INIT ($FF00)  /      |/      |/
-  */
-  Sm20.enableOutputTrigger(kPWM_ValueRegister_2);
+        VAL1 ($0100)        /|      /|
+        VAL3               / |     / |
+        VAL5              /  |    /  |
+        VAL0 ($0000)     /   |   /   |
+        VAL4            /    |  /    |  / (etc.)
+        VAL2           /     | /     | /
+        INIT ($FF00)  /      |/      |/
+    */
+    Sm20.enableOutputTrigger(kPWM_ValueRegister_2);
+  }
 
   if(config.Pwm.Tm2.UseSpwm) {
     Sm20.setPwmLdok(true);
@@ -2629,6 +2646,7 @@ void configureModule4() {
   }
 
   pwmConfig.setClockSource (kPWM_Submodule0Clock);
+  pwmConfig.setInitializationControl (kPWM_Initialize_MasterSync);
   pwmConfig.setMode(kPWM_SignedCenterAligned);
 
   if (!Sm41.configure (pwmConfig)) {

@@ -155,6 +155,7 @@ struct PwmConfig {
   Module3Config Tm3{};
   Module4Config Tm4{};
   bool PrintRegs = false;
+  bool SyncPwm = false;
 };
 
 struct MainConfig {
@@ -956,7 +957,6 @@ void setup() {
   display.setTextColor(SSD1306_WHITE);
   display.setTextWrap(false);
 
-  // TODO: Move Xbar enable to config
   enableXbar();
   attachInterruptVectors();
   configurePwm();
@@ -998,9 +998,18 @@ void configureTimers() {
   chargeToggleTimer.begin(chargeToggleTimerCallback);
   dischargeToggleTimer.begin(dischargeToggleTimerCallback);
   startupTimer.begin(startupTimerCallback);
-  pwmSyncTimer.begin([] { }, 1us, true); // 10MHz timer used to synchronise PWM modules
 
   startupTimer.trigger(5s);
+}
+
+void configurePwmSyncTimer() {
+  writeLog (F("Stopping PWM sync timer"));
+  pwmSyncTimer.stop();
+
+  if(config.Pwm.SyncPwm) {
+    writeLog (F("Starting PWM sync timer"));
+    pwmSyncTimer.begin([] { }, 1us, true); // 1MHz timer used to synchronise PWM modules
+  }
 }
 
 void startupTimerCallback()
@@ -1183,6 +1192,7 @@ body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Col
 
   res.set("Content-Type", "text/html");
   res.printP(temp);
+  res.flush();
   res.end();
 }
 
@@ -1250,21 +1260,9 @@ void settings_pwm(Request &req, Response &res) {
   config.Pwm.Tm2.SpwmCarrierFrequency,
   config.Pwm.Tm2.SpwmModulationFrequency);
 
-/*
-  int strLen = strlen(temp);
-
-  char buf[30];
-  memset (buf, 0, sizeof(buf));
-  snprintf(buf, sizeof(buf)-1, "%d", strLen);
-
-  Serial.print("String length:");
-  Serial.println(strLen);
-
-  Serial.print("Content length:");
-  Serial.println(buf);
-*/
   res.set("Content-Type", "text/html");
   res.printP(temp);
+  res.flush();
   res.end();
 }
 
@@ -1274,7 +1272,9 @@ void settings_pwm_update(Request &req, Response &res) {
     digitalWriteFast (LED_BUILTIN, HIGH);
     res.set("Content-Type", "text/plain");
     res.printP("Method Not Allowed");
-    res.status(405);
+    res.sendStatus(405);
+    res.flush();
+    res.end();
     digitalWriteFast (LED_BUILTIN, LOW);
   }
   else
@@ -1287,7 +1287,9 @@ void settings_pwm_update(Request &req, Response &res) {
       char value[100];
       char name[50];
       if(!req.form(name, 50, value, 100)) {
-        return res.sendStatus(400);
+        res.sendStatus(400);
+        res.flush();
+        res.end();
       }
 
       res.print(name);
@@ -1452,7 +1454,9 @@ void settings_pwm_update(Request &req, Response &res) {
 
     // Redirect
     res.set("Location", "/settings/pwm");
-    res.status(302);
+    res.sendStatus(302);
+    res.flush();
+    res.end();
 
     digitalWriteFast (LED_BUILTIN, LOW);
   }
@@ -1466,21 +1470,9 @@ void settings_pwm_timer(Request &req, Response &res) {
   config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds,
   config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds);
 
-/*
-  int strLen = strlen(temp);
-
-  char buf[30];
-  memset (buf, 0, sizeof(buf));
-  snprintf(buf, sizeof(buf)-1, "%d", strLen);
-
-  Serial.print("String length:");
-  Serial.println(strLen);
-
-  Serial.print("Content length:");
-  Serial.println(buf);
-*/
   res.set("Content-Type", "text/html");
   res.printP(temp);
+  res.flush();
   res.end();
 }
 
@@ -1490,7 +1482,9 @@ void settings_pwm_timer_update(Request &req, Response &res) {
     digitalWriteFast (LED_BUILTIN, HIGH);
     res.set("Content-Type", "text/plain");
     res.printP("Method Not Allowed");
-    res.status(405);
+    res.sendStatus(405);
+    res.flush();
+    res.end();
     digitalWriteFast (LED_BUILTIN, LOW);
   }
   else
@@ -1524,7 +1518,9 @@ void settings_pwm_timer_update(Request &req, Response &res) {
 
     // Redirect
     res.set("Location", "/settings/pwm-timer");
-    res.status(302);
+    res.sendStatus(302);
+    res.flush();
+    res.end();
 
     digitalWriteFast (LED_BUILTIN, LOW);
   }
@@ -1956,6 +1952,7 @@ void pollConfigSettings() {
 
 void configurePwm() {
   writeLog(F("Initializing PWM"));
+  configurePwmSyncTimer();
   configureModule1();
   configureModule2();
   configureModule3();
@@ -1977,9 +1974,15 @@ void configureModule1() {
   Sm13.disable();
   Sm13.setPwmLdok(false);
 
-  // TODO: Move Xbar enable to config
-  pwmConfig.setInitializationControl (kPWM_Initialize_ExtSync);
-  //pwmConfig.setInitializationControl (kPWM_Initialize_LocalSync);
+  if(config.Pwm.SyncPwm) {
+    writeLog (F("SM13 synchronised with PIT timer"));
+    pwmConfig.setInitializationControl (kPWM_Initialize_ExtSync);
+  }
+  else {
+    writeLog (F("SM13 using local timer"));
+    pwmConfig.setInitializationControl (kPWM_Initialize_LocalSync);
+  }
+
   pwmConfig.setReloadLogic (kPWM_ReloadPwmFullCycle);
   pwmConfig.setPairOperation (kPWM_Independent);
   pwmConfig.setMode(kPWM_SignedEdgeAligned);
@@ -2111,9 +2114,15 @@ void configureModule2() {
   else {
     Serial.println(F("Using PWM for TM2"));
 
-    // TODO: Move xbar option to config
-    pwmConfig.setInitializationControl (kPWM_Initialize_ExtSync);
-    //pwmConfig.setInitializationControl (kPWM_Initialize_LocalSync);
+    if(config.Pwm.SyncPwm) {
+      writeLog (F("SM20 synchronised with PIT timer"));
+      pwmConfig.setInitializationControl (kPWM_Initialize_ExtSync);
+    }
+    else {
+      writeLog (F("SM20 using local timer"));
+      pwmConfig.setInitializationControl (kPWM_Initialize_LocalSync);
+    }
+
     pwmConfig.setReloadLogic (kPWM_ReloadPwmFullCycle);
     pwmConfig.setPairOperation (kPWM_ComplementaryPwmA);
     pwmConfig.setMode(kPWM_SignedCenterAligned);
@@ -2503,7 +2512,15 @@ void configureModule3() {
   Sm31.disable();
   Sm31.setPwmLdok(false);
 
-  pwmConfig.setInitializationControl (kPWM_Initialize_ExtSync);
+  if(config.Pwm.SyncPwm) {
+    writeLog (F("SM31 synchronised with PIT timer"));
+    pwmConfig.setInitializationControl (kPWM_Initialize_ExtSync);
+  }
+  else {
+    writeLog (F("SM31 using local timer"));
+    pwmConfig.setInitializationControl (kPWM_Initialize_LocalSync);
+  }
+
   pwmConfig.setReloadLogic (kPWM_ReloadPwmFullCycle);
   pwmConfig.setPairOperation (kPWM_ComplementaryPwmA);
   pwmConfig.setMode(kPWM_SignedEdgeAligned);
@@ -2592,7 +2609,15 @@ void configureModule4() {
   Tm4.disable();
   Tm4.setPwmLdok(false);
 
-  pwmConfig.setInitializationControl (kPWM_Initialize_ExtSync);
+  if(config.Pwm.SyncPwm) {
+    writeLog (F("SM40 synchronised with PIT timer"));
+    pwmConfig.setInitializationControl (kPWM_Initialize_ExtSync);
+  }
+  else {
+    writeLog (F("SM40 using local timer"));
+    pwmConfig.setInitializationControl (kPWM_Initialize_LocalSync);
+  }
+
   pwmConfig.setReloadLogic (kPWM_ReloadPwmFullCycle);
   pwmConfig.setPairOperation (kPWM_Independent);
   pwmConfig.setMode(kPWM_SignedEdgeAligned);
@@ -2919,14 +2944,14 @@ void enableXbar() {
   // TRIG0 is Channel A
   // TRIG1 is Channel B
 
-  // SM2.0 -> SM1.3
+  // PIT0 -> SM1.3
   // XBARA1_IN_FLEXPWM2_PWM1_OUT_TRIG0
-  writeLog("XBAR connecting PWM2.0 TRIG0 to PWM1.3 EXT_SYNC");
+  writeLog("XBAR connecting PIT TRIG0 to PWM1.3 EXT_SYNC");
   if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM1_PWM3_EXT_SYNC)) {
-    writeLog("XBAR connected PWM2.0 TRIG0 to PWM1.3 EXT_SYNC");
+    writeLog("XBAR connected PIT TRIG0 to PWM1.3 EXT_SYNC");
   }
   else {
-    writeLog("ERROR: XBAR did not connect PWM2.0 TRIG0 to PWM1.3 EXT_SYNC");
+    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM1.3 EXT_SYNC");
   }
 
   // PIT0 -> SM2.0
@@ -2938,67 +2963,22 @@ void enableXbar() {
     writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM2.0 EXT_SYNC");
   }
 
-  // PIT0 -> SM2.1
-  writeLog("XBAR connecting PIT TRIG0 to PWM2.1 EXT_SYNC");
-  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM2_PWM1_EXT_SYNC)) {
-    writeLog("XBAR connected PIT TRIG0 to PWM2.1 EXT_SYNC");
-  }
-  else {
-    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM2.1 EXT_SYNC");
-  }
-
-  // PIT0 -> SM2.2
-  writeLog("XBAR connecting PIT TRIG0 to PWM2.2 EXT_SYNC");
-  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM2_PWM2_EXT_SYNC)) {
-    writeLog("XBAR connected PIT TRIG0 to PWM2.2 EXT_SYNC");
-  }
-  else {
-    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM2.2 EXT_SYNC");
-  }
-
-  // PIT0 -> SM2.3
-  writeLog("XBAR connecting PIT TRIG0 to PWM2.3 EXT_SYNC");
-  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM2_PWM3_EXT_SYNC)) {
-    writeLog("XBAR connected PIT TRIG0 to PWM2.3 EXT_SYNC");
-  }
-  else {
-    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM2.3 EXT_SYNC");
-  }
-
-  // SM2.0 -> SM3.1
-  writeLog("XBAR connecting PWM2.0 TRIG0 to PWM3.1 EXT_SYNC");
+  // PIT0 -> SM3.1
+  writeLog("XBAR connecting PIT TRIG0 to PWM3.1 EXT_SYNC");
   if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM3_EXT_SYNC1)) {
-    writeLog("XBAR connected PWM2.0 TRIG0 to PWM3.1 EXT_SYNC");
+    writeLog("XBAR connected PIT TRIG0 to PWM3.1 EXT_SYNC");
   }
   else {
-    writeLog("ERROR: XBAR did not connect PWM2.0 TRIG0 to PWM3.1 EXT_SYNC");
+    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM3.1 EXT_SYNC");
   }
 
-  // SM2.0 -> SM4.0
-  writeLog("XBAR connecting PWM2.0 TRIG0 to PWM4.0 EXT_SYNC");
+  // PIT0 -> SM4.0
+  writeLog("XBAR connecting PIT TRIG0 to PWM4.0 EXT_SYNC");
   if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM4_EXT_SYNC0)) {
-    writeLog("XBAR connected PWM2.0 TRIG0 to PWM4.0 EXT_SYNC");
+    writeLog("XBAR connected PIT TRIG0 to PWM4.0 EXT_SYNC");
   }
   else {
-    writeLog("ERROR: XBAR did not connect PWM2.0 TRIG0 to PWM4.0 EXT_SYNC");
-  }
-
-  // SM2.0 -> SM4.1
-  writeLog("XBAR connecting PWM2.0 TRIG0 to PWM4.1 EXT_SYNC");
-  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM4_EXT_SYNC1)) {
-    writeLog("XBAR connected PWM2.0 TRIG0 to PWM4.1 EXT_SYNC");
-  }
-  else {
-    writeLog("ERROR: XBAR did not connect PWM2.0 TRIG0 to PWM4.1 EXT_SYNC");
-  }
-
-  // SM2.0 -> SM4.2
-  writeLog("XBAR connecting PWM2.0 TRIG0 to PWM4.2 EXT_SYNC");
-  if(xbarConnect (XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM4_EXT_SYNC2)) {
-    writeLog("XBAR connected PWM2.0 TRIG0 to PWM4.2 EXT_SYNC");
-  }
-  else {
-    writeLog("ERROR: XBAR did not connect PWM2.0 TRIG0 to PWM4.2 EXT_SYNC");
+    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM4.0 EXT_SYNC");
   }
 
   // Select alt 3 for EMC_06 (XBAR), rather than original 5 (GPIO)

@@ -116,6 +116,7 @@ struct ChannelConfig {
   uint32_t OnPeriodMicroseconds;
   uint16_t DutyCycle;
   uint8_t PhaseShift;
+  bool Enabled = true;
 };
 
 struct SubmoduleConfig {
@@ -372,57 +373,115 @@ void printFile(const char *filename);
 int getFreeMemory();
 time_t getNtpTime();
 
-static constexpr char PwmTimerSettingsPageTemplate[] = "<!DOCTYPE html>\
-<html lang=\"en\">\
-<head>\
-<title>PWM Timer Settings</title>\
-<style>\
-body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #000088; }\
-.input { padding-top: 4px; padding-bottom: 4px; padding-left: 4px; padding-right: 4px; }\
-</style>\
-</head>\
-<body onload=\"recalcValues()\">\
-<form method=\"post\" enctype=\"application/x-www-form-urlencoded\" action=\"/settings/pwm-timer/update\" accept-charset=\"utf-8\">\
-    <div>\
-        <div>\
-            <h1>\
-                PWM Timer Settings\
-            </h1>\
-            <div>\
-                <nav>\
-                    <ol>\
-                        <li>\
-                            <a href=\"/\">Home</a>\
-                        </li>\
-                        <li>\
-                            <a href=\"/settings\">Settings</a>\
-                        </li>\
-                        <li>\
-                            PWM Timer\
-                        </li>\
-                    </ol>\
-                </nav>\
-            </div>\
-            <hr>\
-            <p>The periodic timer setting controls the period during which the PWM signal is output. The periods are repeated.</p>\
-            <div class=\"input\">\
-                <label>\
-                    1.3A Period\
-                </label>\
-                <input type=\"number\" style=\"width: 75px;\" id=\"period-13a\" name=\"period-13a\" value=\"%lu\"> us\
-            </div>\
-            <div class=\"input\">\
-                <label>\
-                    1.3B Period\
-                </label>\
-                <input type=\"number\" style=\"width: 75px;\" id=\"period-13b\" name=\"period-13b\" value=\"%lu\"> us\
-            </div>\
-        </div>\
-    </div>\
-    <br>\
-    <input type=\"submit\" value=\"Submit\">\
-</form>\
-</body>\
+static constexpr char PwmTimerSettingsPageTemplate[] = "<!DOCTYPE html>\n\
+<html lang=\"en\">\n\
+<head>\n\
+<title>PWM Timer Settings</title>\n\
+<style>\n\
+body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #000088; }\n\
+.input { padding-top: 4px; padding-bottom: 4px; padding-left: 4px; padding-right: 4px; }\n\
+.switch {\n\
+  position: relative;\n\
+  display: inline-block;\n\
+  width: 60px;\n\
+  height: 34px;\n\
+}\n\
+.switch input {\n\
+  opacity: 0;\n\
+  width: 0;\n\
+  height: 0;\n\
+}\n\
+.slider {\n\
+  position: absolute;\n\
+  cursor: pointer;\n\
+  top: 0;\n\
+  left: 0;\n\
+  right: 0;\n\
+  bottom: 0;\n\
+  background-color: #ccc;\n\
+  -webkit-transition: .4s;\n\
+  transition: .4s;\n\
+}\n\
+.slider:before {\n\
+  position: absolute;\n\
+  content: \"\";\n\
+  height: 26px;\n\
+  width: 26px;\n\
+  left: 4px;\n\
+  bottom: 4px;\n\
+  background-color: white;\n\
+  -webkit-transition: .4s;\n\
+  transition: .4s;\n\
+}\n\
+input:checked + .slider {\n\
+  background-color: #2196F3;\n\
+}\n\
+input:focus + .slider {\n\
+  box-shadow: 0 0 1px #2196F3;\n\
+}\n\
+input:checked + .slider:before {\n\
+  -webkit-transform: translateX(26px);\n\
+  -ms-transform: translateX(26px);\n\
+  transform: translateX(26px);\n\
+}\n\
+.slider.round {\n\
+  border-radius: 34px;\n\
+}\n\
+.slider.round:before {\n\
+  border-radius: 50%%;\n\
+}\n\
+</style>\n\
+</head>\n\
+<body onload=\"recalcValues()\">\n\
+<form method=\"post\" enctype=\"application/x-www-form-urlencoded\" action=\"/settings/pwm-timer/update\" accept-charset=\"utf-8\">\n\
+    <div>\n\
+        <div>\n\
+            <h1>\n\
+                PWM Timer Settings\n\
+            </h1>\n\
+            <div>\n\
+                <nav>\n\
+                    <ol>\n\
+                        <li>\n\
+                            <a href=\"/\">Home</a>\n\
+                        </li>\n\
+                        <li>\n\
+                            <a href=\"/settings\">Settings</a>\n\
+                        </li>\n\
+                        <li>\n\
+                            PWM Timer\n\
+                        </li>\n\
+                    </ol>\n\
+                </nav>\n\
+            </div>\n\
+            <hr>\n\
+            <p>The periodic timer setting controls the period during which the PWM signal is output. The periods are repeated.</p>\n\
+            <div class=\"input\">\n\
+                <label>\n\
+                    1.3A Period\n\
+                </label>\n\
+                <input type=\"number\" style=\"width: 75px;\" id=\"period-13a\" name=\"period-13a\" value=\"%lu\"> us\n\
+                <label class=\"switch\">\n\
+                  <input type=\"checkbox\" id=\"toggle-13a\" name=\"toggle-13a\" value=\"on\"%s>\n\
+                  <span class=\"slider round\"></span>\n\
+                </label>\n\
+            </div>\n\
+            <div class=\"input\">\n\
+                <label>\n\
+                    1.3B Period\n\
+                </label>\n\
+                <input type=\"number\" style=\"width: 75px;\" id=\"period-13b\" name=\"period-13b\" value=\"%lu\"> us\n\
+                <label class=\"switch\">\n\
+                  <input type=\"checkbox\" id=\"toggle-13b\" name=\"toggle-13b\" value=\"on\"%s>\n\
+                  <span class=\"slider round\"></span>\n\
+                </label>\n\
+            </div>\n\
+        </div>\n\
+    </div>\n\
+    <br>\n\
+    <input type=\"submit\" value=\"Submit\">\n\
+</form>\n\
+</body>\n\
 </html>";
 
 static constexpr char PwmSettingsPageTemplate[] = "<!DOCTYPE html>\
@@ -964,7 +1023,6 @@ void setup() {
   display.setTextWrap(false);
 
   enableXbar();
-  attachInterruptVectors();
   configurePwm();
   configureSensors();
   configureEthernet();
@@ -1029,8 +1087,16 @@ void startupTimerCallback()
 void chargeToggleTimerCallback()
 {
   digitalWriteFast(LED_BUILTIN, HIGH);
-  Sm13.setPwmForceOutputToZero(ChanB, true);
-  Sm13.setPwmForceOutputToZero(ChanA, false);
+
+  if(config.Pwm.Tm1.Sm13.ChannelA.Enabled) {
+    Sm13.setPwmForceOutputToZero(ChanB, true);
+    Sm13.setPwmForceOutputToZero(ChanA, false);
+  }
+  else {
+    Sm13.setPwmForceOutputToZero(ChanB, true);
+    Sm13.setPwmForceOutputToZero(ChanA, true);
+  }
+
   dischargeToggleTimer.trigger(std::chrono::microseconds(config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds));
   digitalWriteFast(LED_BUILTIN, LOW);
 }
@@ -1038,8 +1104,16 @@ void chargeToggleTimerCallback()
 void dischargeToggleTimerCallback()
 {
   digitalWriteFast(LED_BUILTIN, HIGH);
-  Sm13.setPwmForceOutputToZero(ChanA, true);
-  Sm13.setPwmForceOutputToZero(ChanB, false);
+
+  if(config.Pwm.Tm1.Sm13.ChannelB.Enabled) {
+    Sm13.setPwmForceOutputToZero(ChanA, true);
+    Sm13.setPwmForceOutputToZero(ChanB, false);
+  }
+  else {
+    Sm13.setPwmForceOutputToZero(ChanB, true);
+    Sm13.setPwmForceOutputToZero(ChanA, true);
+  }
+
   chargeToggleTimer.trigger(std::chrono::microseconds(config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds));
   digitalWriteFast(LED_BUILTIN, LOW);
 }
@@ -1483,8 +1557,9 @@ void settings_pwm_timer(Request &req, Response &res) {
   snprintf(temp, BUFFER_SIZE - 1,
   PwmTimerSettingsPageTemplate,
   config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds,
-  config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds);
-
+  config.Pwm.Tm1.Sm13.ChannelA.Enabled ? " checked" : "",
+  config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds,
+  config.Pwm.Tm1.Sm13.ChannelB.Enabled ? " checked" : "");
   res.set("Content-Type", "text/html");
   res.printP(temp);
   res.flush();
@@ -1506,6 +1581,11 @@ void settings_pwm_timer_update(Request &req, Response &res) {
   {
     digitalWriteFast (LED_BUILTIN, HIGH);
 
+    writeLog(F("Disabling SM13 channel A"));
+    writeLog(F("Disabling SM13 channel B"));
+    config.Pwm.Tm1.Sm13.ChannelA.Enabled = false;
+    config.Pwm.Tm1.Sm13.ChannelB.Enabled = false;
+
     while (req.left()) {
       char value[100];
       char name[50];
@@ -1520,8 +1600,20 @@ void settings_pwm_timer_update(Request &req, Response &res) {
       if(strcmp( name, "period-13a") == 0) {
         config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds = strtol(value, nullptr, 10);
       }
+      else if(strcmp( name, "toggle-13a") == 0) {
+        if(strcmp( value, "on") == 0) {
+          writeLog(F("Enabling SM13 channel A"));
+          config.Pwm.Tm1.Sm13.ChannelA.Enabled = true;
+        }
+      }
       else if(strcmp( name, "period-13b") == 0) {
         config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds = strtol(value, nullptr, 10);
+      }
+      else if(strcmp( name, "toggle-13b") == 0) {
+        if(strcmp( value, "on") == 0) {
+          writeLog(F("Enabling SM13 channel B"));
+          config.Pwm.Tm1.Sm13.ChannelB.Enabled = true;
+        }
       }
     }
 
@@ -1625,12 +1717,12 @@ void loop() {
   pin13_val = 1 - pin13_val;
 
   processWebServer();
-
+/*
   if (currentMillis - prevSensorMillis >= sensorUpdateInterval) {
     pollMetrics();
     prevSensorMillis = currentMillis;
   }
-
+*/
   if (currentMillis - prevPrintStatsMillis >= printStatsUpdateInterval) {
     printStats();
     prevPrintStatsMillis = currentMillis;
@@ -1967,6 +2059,7 @@ void pollConfigSettings() {
 
 void configurePwm() {
   writeLog(F("Initializing PWM"));
+  attachInterruptVectors();
   configurePwmSyncTimer();
   configureModule1();
   configureModule2();
@@ -2796,7 +2889,10 @@ void configureModule4() {
 void attachInterruptVectors() {
   Serial.println(F("Attaching PWM interrupt vectors"));
 
-  attachModule2PwmInterruptVectors();
+  if(config.Pwm.Tm2.UseSpwm) {
+    attachModule2PwmInterruptVectors();
+    enablePwmInterrupts();
+  }
 }
 
 void attachModule2PwmInterruptVectors() {
@@ -2826,7 +2922,6 @@ void disableModule2PwmInterrupts() {
   Serial.println(F("Disabling module 2 PWM interrupts"));
   Sm20.disableInterrupts (kPWM_CompareVal1InterruptEnable);
   NVIC_DISABLE_IRQ (IRQ_FLEXPWM2_0);
-  delay(1000);
 }
 
 // PWM Waveforms
@@ -3026,8 +3121,6 @@ void printStats() {
     Sm13.printRegs();
   }
 
-  delay(500);
-
   pwmFrequency = Sm20.pwmFrequency();
   pwmMode = Sm20.pwmMode();
   deadtimeSettingChanA = Sm20.deadtimeSetting(ChanA);
@@ -3043,8 +3136,6 @@ void printStats() {
     Sm20.printRegs();
   }
 
-  delay(500);
-
   pwmFrequency = Sm21.pwmFrequency();
   pwmMode = Sm21.pwmMode();
   deadtimeSettingChanA = Sm21.deadtimeSetting(ChanA);
@@ -3057,8 +3148,6 @@ void printStats() {
   if(config.Pwm.PrintRegs) {
     Sm21.printRegs();
   }
-
-  delay(500);
 
   pwmFrequency = Sm22.pwmFrequency();
   pwmMode = Sm22.pwmMode();
@@ -3075,8 +3164,6 @@ void printStats() {
     Sm22.printRegs();
   }
 
-  delay(500);
-
   pwmFrequency = Sm23.pwmFrequency();
   pwmMode = Sm23.pwmMode();
   deadtimeSettingChanA = Sm23.deadtimeSetting(ChanA);
@@ -3091,8 +3178,6 @@ void printStats() {
   if(config.Pwm.PrintRegs) {
     Sm23.printRegs();
   }
-
-  delay(500);
 
   pwmFrequency = Sm31.pwmFrequency();
   pwmMode = Sm31.pwmMode();
@@ -3109,8 +3194,6 @@ void printStats() {
     Sm31.printRegs();
   }
 
-  delay(500);
-
   pwmFrequency = Sm40.pwmFrequency();
   pwmMode = Sm40.pwmMode();
   deadtimeSettingChanA = Sm40.deadtimeSetting(ChanA);
@@ -3124,8 +3207,6 @@ void printStats() {
     Sm40.printRegs();
   }
 
-  delay(500);
-
   pwmFrequency = Sm41.pwmFrequency();
   pwmMode = Sm41.pwmMode();
   deadtimeSettingChanA = Sm41.deadtimeSetting(ChanA);
@@ -3138,8 +3219,6 @@ void printStats() {
   if(config.Pwm.PrintRegs) {
     Sm41.printRegs();
   }
-
-  delay(500);
 
   pwmFrequency = Sm42.pwmFrequency();
   pwmMode = Sm42.pwmMode();
@@ -3155,8 +3234,6 @@ void printStats() {
   if(config.Pwm.PrintRegs) {
     Sm42.printRegs();
   }
-
-  delay(500);
 
   sprintf(strBuf, "IP: %d.%d.%d.%d", Ethernet.localIP()[0], Ethernet.localIP()[1], Ethernet.localIP()[2], Ethernet.localIP()[3]);
   writeLog(strBuf);
@@ -3316,9 +3393,11 @@ void loadConfiguration(const char *filename, MainConfig &config) {
   config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds = Config_Pwm_Tm1_Sm13[F("ChannelA")][F("OnPeriodMicroseconds")] | 1000;
   config.Pwm.Tm1.Sm13.ChannelA.DutyCycle = Config_Pwm_Tm1_Sm13[F("ChannelA")][F("DutyCycle")] | 32768;
   config.Pwm.Tm1.Sm13.ChannelA.PhaseShift = Config_Pwm_Tm1_Sm13[F("ChannelA")][F("PhaseShift")] | 0;
+  config.Pwm.Tm1.Sm13.ChannelA.Enabled = Config_Pwm_Tm1_Sm13[F("ChannelA")][F("Enabled")] | true;
   config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds = Config_Pwm_Tm1_Sm13[F("ChannelB")][F("OnPeriodMicroseconds")] | 1000;
   config.Pwm.Tm1.Sm13.ChannelB.DutyCycle = Config_Pwm_Tm1_Sm13[F("ChannelB")][F("DutyCycle")] | 32768;
   config.Pwm.Tm1.Sm13.ChannelB.PhaseShift = Config_Pwm_Tm1_Sm13[F("ChannelB")][F("PhaseShift")] | 0;
+  config.Pwm.Tm1.Sm13.ChannelB.Enabled = Config_Pwm_Tm1_Sm13[F("ChannelB")][F("Enabled")] | true;
 
   JsonObject Config_Pwm_Tm2 = Config_Pwm[F("Tm2")];
   config.Pwm.Tm2.UseSpwm = Config_Pwm_Tm2[F("UseSpwm")] | false;
@@ -3432,11 +3511,13 @@ void saveConfiguration(const char *filename, const MainConfig &config) {
   Config_Pwm_Tm1_Sm13_ChannelA[F("OnPeriodMicroseconds")] = config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds;
   Config_Pwm_Tm1_Sm13_ChannelA[F("DutyCycle")] = config.Pwm.Tm1.Sm13.ChannelA.DutyCycle;
   Config_Pwm_Tm1_Sm13_ChannelA[F("PhaseShift")] = config.Pwm.Tm1.Sm13.ChannelA.PhaseShift;
+  Config_Pwm_Tm1_Sm13_ChannelA[F("Enabled")] = config.Pwm.Tm1.Sm13.ChannelA.Enabled;
 
   JsonObject Config_Pwm_Tm1_Sm13_ChannelB = Config_Pwm_Tm1_Sm13.createNestedObject(F("ChannelB"));
   Config_Pwm_Tm1_Sm13_ChannelB[F("OnPeriodMicroseconds")] = config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds;
   Config_Pwm_Tm1_Sm13_ChannelB[F("DutyCycle")] = config.Pwm.Tm1.Sm13.ChannelB.DutyCycle;
   Config_Pwm_Tm1_Sm13_ChannelB[F("PhaseShift")] = config.Pwm.Tm1.Sm13.ChannelB.PhaseShift;
+  Config_Pwm_Tm1_Sm13_ChannelB[F("Enabled")] = config.Pwm.Tm1.Sm13.ChannelB.Enabled;
 
   JsonObject Config_Pwm_Tm2 = Config_Pwm.createNestedObject(F("Tm2"));
   Config_Pwm_Tm2[F("UseSpwm")] = config.Pwm.Tm2.UseSpwm;

@@ -750,15 +750,6 @@ body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Col
             </div>\
             <div class=\"input\">\
                 <label>\
-                    4.0B Duty Cycle\
-                </label>\
-                <input type=\"number\" style=\"width: 75px;\" id=\"duty-cycle-40b\" name=\"duty-cycle-40b\" value=\"%u\" oninput=\"calcDutyCycle(this)\">\
-                <text class=\"input\" id=\"duty-cycle-40b-percent\" name=\"duty-cycle-40b-percent\"></text>\
-                <text class=\"input\" id=\"duty-cycle-40b-period\" name=\"duty-cycle-40b-period\"></text>\
-                <text class=\"input\" id=\"duty-cycle-40b-pulse-width\" name=\"duty-cycle-40b-pulse-width\"></text>\
-            </div>\
-            <div class=\"input\">\
-                <label>\
                     4.1A Duty Cycle\
                 </label>\
                 <input type=\"number\" style=\"width: 75px;\" id=\"duty-cycle-41a\" name=\"duty-cycle-41a\" value=\"%u\" oninput=\"calcDutyCycle(this)\">\
@@ -814,6 +805,24 @@ body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Col
                     2.3B Phase Shift\
                 </label>\
                 <input type=\"number\" style=\"width: 75px;\" id=\"phase-shift-23b\" name=\"phase-shift-23b\" value=\"%u\">\
+            </div>\
+            <div class=\"input\">\
+                <label>\
+                    4.1A Phase Shift\
+                </label>\
+                <input type=\"number\" style=\"width: 75px;\" id=\"phase-shift-41a\" name=\"phase-shift-41a\" value=\"%u\">\
+            </div>\
+            <div class=\"input\">\
+                <label>\
+                    4.2A Phase Shift\
+                </label>\
+                <input type=\"number\" style=\"width: 75px;\" id=\"phase-shift-42a\" name=\"phase-shift-42a\" value=\"%u\">\
+            </div>\
+            <div class=\"input\">\
+                <label>\
+                    4.2B Phase Shift\
+                </label>\
+                <input type=\"number\" style=\"width: 75px;\" id=\"phase-shift-42b\" name=\"phase-shift-42b\" value=\"%u\">\
             </div>\
             <div class=\"input\">\
                 <label>\
@@ -1326,7 +1335,6 @@ void settings_pwm(Request &req, Response &res) {
   config.Pwm.Tm3.Sm31.ChannelA.DutyCycle,
   config.Pwm.Tm3.Sm31.ChannelB.DutyCycle,
   config.Pwm.Tm4.Sm40.ChannelA.DutyCycle,
-  config.Pwm.Tm4.Sm40.ChannelB.DutyCycle,
   config.Pwm.Tm4.Sm41.ChannelA.DutyCycle,
   config.Pwm.Tm4.Sm42.ChannelA.DutyCycle,
   config.Pwm.Tm4.Sm42.ChannelB.DutyCycle,
@@ -1335,6 +1343,9 @@ void settings_pwm(Request &req, Response &res) {
   config.Pwm.Tm2.Sm22.ChannelB.PhaseShift,
   config.Pwm.Tm2.Sm23.ChannelA.PhaseShift,
   config.Pwm.Tm2.Sm23.ChannelB.PhaseShift,
+  config.Pwm.Tm4.Sm41.ChannelA.PhaseShift,
+  config.Pwm.Tm4.Sm42.ChannelA.PhaseShift,
+  config.Pwm.Tm4.Sm42.ChannelB.PhaseShift,
   config.Pwm.PrintRegs ? "Yes" : "No",
   config.Pwm.SyncPwm ? "Yes" : "No",
   config.Pwm.Tm2.UseSpwm ? "Yes" : "No",
@@ -1473,9 +1484,6 @@ void settings_pwm_update(Request &req, Response &res) {
       else if(strcmp( name, "duty-cycle-40a") == 0) {
         config.Pwm.Tm4.Sm40.ChannelA.DutyCycle = strtol(value, nullptr, 10);
       }
-      else if(strcmp( name, "duty-cycle-40b") == 0) {
-        config.Pwm.Tm4.Sm40.ChannelB.DutyCycle = strtol(value, nullptr, 10);
-      }
       else if(strcmp( name, "duty-cycle-41a") == 0) {
         config.Pwm.Tm4.Sm41.ChannelA.DutyCycle = strtol(value, nullptr, 10);
       }
@@ -1499,6 +1507,15 @@ void settings_pwm_update(Request &req, Response &res) {
       }
       else if(strcmp( name, "phase-shift-23b") == 0) {
         config.Pwm.Tm2.Sm23.ChannelB.PhaseShift = strtol(value, nullptr, 10);
+      }
+      else if(strcmp( name, "phase-shift-41a") == 0) {
+        config.Pwm.Tm4.Sm41.ChannelA.PhaseShift = strtol(value, nullptr, 10);
+      }
+      else if(strcmp( name, "phase-shift-42a") == 0) {
+        config.Pwm.Tm4.Sm42.ChannelA.PhaseShift = strtol(value, nullptr, 10);
+      }
+      else if(strcmp( name, "phase-shift-42b") == 0) {
+        config.Pwm.Tm4.Sm42.ChannelB.PhaseShift = strtol(value, nullptr, 10);
       }
       else if(strcmp( name, "print-regs") == 0) {
         if(strcmp( value, "Yes") == 0) {
@@ -2037,6 +2054,18 @@ void pollConfigSettings() {
 
   ultoa(config.Pwm.Tm2.Sm23.ChannelB.PhaseShift, buffer, DEC);
   snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm23ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
+  postRequest += temp;
+
+  ultoa(config.Pwm.Tm4.Sm41.ChannelA.PhaseShift, buffer, DEC);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm41ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
+  postRequest += temp;
+
+  ultoa(config.Pwm.Tm4.Sm42.ChannelA.PhaseShift, buffer, DEC);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm42ChA,setting_category=pwm value=%s %llu\n", buffer, timestamp);
+  postRequest += temp;
+
+  ultoa(config.Pwm.Tm4.Sm42.ChannelB.PhaseShift, buffer, DEC);
+  snprintf(temp, sizeof(temp), "configSettings,setting_id=phaseShiftSm42ChB,setting_category=pwm value=%s %llu\n", buffer, timestamp);
   postRequest += temp;
 
   // SPWM
@@ -2729,7 +2758,6 @@ void configureModule4() {
   }
 
   pwmConfig.setReloadLogic (kPWM_ReloadPwmFullCycle);
-  pwmConfig.setPairOperation (kPWM_Independent);
   pwmConfig.setMode(kPWM_SignedEdgeAligned);
   pwmConfig.setPwmFreqHz(config.Pwm.Tm4.Sm40.PwmFrequency);
 
@@ -2740,20 +2768,27 @@ void configureModule4() {
 
   pwmConfig.setClockSource (kPWM_Submodule0Clock);
   pwmConfig.setInitializationControl (kPWM_Initialize_MasterSync);
-  pwmConfig.setMode(kPWM_SignedCenterAligned);
 
   if (!Sm41.configure (pwmConfig)) {
     writeLog (F("SM41 init failed"));
     exit (EXIT_FAILURE);
   }
 
-  pwmConfig.setPairOperation (kPWM_ComplementaryPwmA);
-  pwmConfig.setMode(kPWM_SignedEdgeAligned);
+  //TODO: pwmConfig.setPairOperation (kPWM_ComplementaryPwmA);
+
+  writeLog (F("-----#1 Printing SM42 register values"));
+  Sm42.printRegs();
+
+  pwmConfig.setClockSource (kPWM_BusClock);
+  pwmConfig.setInitializationControl (kPWM_Initialize_LocalSync);
 
   if (!Sm42.configure (pwmConfig)) {
     writeLog (F("SM42 init failed"));
     exit (EXIT_FAILURE);
   }
+
+  writeLog (F("-----#2 Printing SM42 register values"));
+  Sm42.printRegs();
 
   char strBuf[150];
 
@@ -2769,16 +2804,19 @@ void configureModule4() {
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
 
+  /*
   deadTimeCycles = (static_cast<uint64_t>(Tm4.srcClockHz()) * config.Pwm.Tm4.Sm42.DeadTime) / 1000000000;
   Sm42.setupDeadtime(deadTimeCycles);
   sprintf(strBuf, "Set TM4.2 deadtime to %hu cycles", deadTimeCycles);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
+  */
 
-  // Inverted to get pulse at end of waveform
-  Sm42.setChannelOutput(ChanB, kPWM_InvertState);
+  Sm41.setChannelOutput(ChanA, kPWM_InvertState);
+  writeLog(F("Set Sm41 ChanA to inverted"));
 
-  writeLog(F("Set SM42 ChanB to inverted"));
+  //Sm42.setChannelOutput(ChanB, kPWM_InvertState);
+  //writeLog(F("Set Sm42 ChanB to inverted"));
 
   if(Sm40.setPwmFrequency(config.Pwm.Tm4.Sm40.PwmFrequency, false, true)) {
     sprintf(strBuf, "Set SM40 PWM freq. to %luHz", config.Pwm.Tm4.Sm40.PwmFrequency);
@@ -2813,7 +2851,7 @@ void configureModule4() {
   sprintf(strBuf, "Setting SM41 ChanA duty cycle to %u", config.Pwm.Tm4.Sm41.ChannelA.DutyCycle);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
-
+/*
   if(Sm42.setPwmFrequency(config.Pwm.Tm4.Sm42.PwmFrequency, false, true)) {
     sprintf(strBuf, "Set SM42 PWM freq. to %luHz", config.Pwm.Tm4.Sm42.PwmFrequency);
     writeLog(strBuf);
@@ -2836,6 +2874,90 @@ void configureModule4() {
   sprintf(strBuf, "Setting SM42 ChanB duty cycle to %u", config.Pwm.Tm4.Sm42.ChannelB.DutyCycle);
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
+*/
+  if(config.Pwm.Tm4.Sm41.ChannelA.PhaseShift != 0) {
+    Sm41.setupDutyCycle(ChanA, FIFTY_PERCENT_DUTY);
+
+    sprintf(strBuf, "SM41 ChanA phase shift was %u, setting duty cycle to %u", config.Pwm.Tm4.Sm41.ChannelA.PhaseShift, FIFTY_PERCENT_DUTY);
+    writeLog(strBuf);
+    memset(strBuf, 0, sizeof(strBuf));
+  }
+  else {
+    Sm41.setupDutyCycle(ChanA, config.Pwm.Tm4.Sm41.ChannelA.DutyCycle);
+
+    sprintf(strBuf, "Setting SM41 ChanA duty cycle to %u", config.Pwm.Tm4.Sm41.ChannelA.DutyCycle);
+    writeLog(strBuf);
+    memset(strBuf, 0, sizeof(strBuf));
+  }
+/*
+  if(config.Pwm.Tm4.Sm42.ChannelA.PhaseShift != 0) {
+    Sm42.setupDutyCycle(ChanA, FIFTY_PERCENT_DUTY);
+
+    sprintf(strBuf, "SM42 ChanA phase shift was %u, setting duty cycle to %u", config.Pwm.Tm4.Sm42.ChannelA.PhaseShift, FIFTY_PERCENT_DUTY);
+    writeLog(strBuf);
+    memset(strBuf, 0, sizeof(strBuf));
+  }
+  else {
+    Sm42.setupDutyCycle(ChanA, config.Pwm.Tm4.Sm42.ChannelA.DutyCycle);
+
+    sprintf(strBuf, "Setting SM42 ChanA duty cycle to %u", config.Pwm.Tm4.Sm42.ChannelA.DutyCycle);
+    writeLog(strBuf);
+    memset(strBuf, 0, sizeof(strBuf));
+  }
+
+  if(config.Pwm.Tm4.Sm42.ChannelB.PhaseShift != 0) {
+    Sm42.setupDutyCycle(ChanB, FIFTY_PERCENT_DUTY);
+
+    sprintf(strBuf, "SM42 ChanB phase shift was %u, setting duty cycle to %u", config.Pwm.Tm4.Sm42.ChannelB.PhaseShift, FIFTY_PERCENT_DUTY);
+    writeLog(strBuf);
+    memset(strBuf, 0, sizeof(strBuf));
+  }
+  else {
+    Sm42.setupDutyCycle(ChanB, config.Pwm.Tm4.Sm42.ChannelB.DutyCycle);
+
+    sprintf(strBuf, "Setting SM42 ChanB duty cycle to %u", config.Pwm.Tm4.Sm42.ChannelB.DutyCycle);
+    writeLog(strBuf);
+    memset(strBuf, 0, sizeof(strBuf));
+  }
+*/
+  // EXPERIMENTAL
+  // Multi-phase PWM
+
+  uint16_t range = (F_CPU_ACTUAL / config.Pwm.Tm4.Sm42.PwmFrequency) / 4; // 600MHz/1MHz = 600;
+  uint16_t dutycycle1 = (range * 20)/100; /* 20% duty cycle */
+  uint16_t halfRange = range/2;
+  uint16_t thirdRange = range/3;
+
+  Sm42.setInitValue(-halfRange); /* Set Initial count register as -300, 600MHz/1MHz/2 = 300 */
+  Sm42.setVal0Value(0x00U); /* Set Value 0 register as 0, middle point of PWM period */
+  Sm42.setVal1Value(halfRange-1); /* Set Value 1 register as 299, 600MHz/1MHz/2-1 = 299 */
+  Sm42.setVal2Value(0x00U); /* Set Value 2 register as 0 */
+  Sm42.setVal3Value(0x00U); /* Set Value 3 register as 0 to generate low level for PWM1A, and high level for PWM1B */
+  Sm42.setVal4Value(0x00U);
+  Sm42.setVal5Value(0x00U);
+  Sm42.setupDeadtime(0);
+
+  sprintf(strBuf, "SM42 duty cycle was %u, range was %u, half range was %u, third range was %u", dutycycle1, range, halfRange, thirdRange);
+  writeLog(strBuf);
+  memset(strBuf, 0, sizeof(strBuf));
+
+  Sm42.disableOutput(ChanA);
+  Sm42.disableOutput(ChanB);
+
+  // Chan A
+  //Sm42.setVal2Value(-thirdRange-(dutycycle1/2)); // -200-(120/2) = -260
+  //Sm42.setVal3Value(-thirdRange+(dutycycle1/2-1)); // -200+(120/2-1) = -141
+  Sm42.setVal2Value(-74);
+  Sm42.setVal3Value(-50);
+
+  // Chan B
+  //Sm42.setVal4Value(-(dutycycle1/2)); //-(120/2) = -60
+  //Sm42.setVal5Value((dutycycle1/2-1)); // (120/2-1)) = 59
+  Sm42.setVal4Value(-59);
+  Sm42.setVal5Value(74);
+
+  writeLog (F("-----#3 Printing SM42 register values"));
+  Sm42.printRegs();
 
   uint32_t pwmFrequency = Sm40.pwmFrequency();
   uint32_t pwmMode = Sm40.pwmMode();
@@ -2866,13 +2988,37 @@ void configureModule4() {
   writeLog(strBuf);
   memset(strBuf, 0, sizeof(strBuf));
 
+  writeLog (F("-----#4 Printing SM42 register values"));
+  Sm42.printRegs();
+
   Tm4.setPwmLdok(true);
   Tm4.enable();
 
-  if (!Tm4.begin()) {
-    writeLog (F("Failed to start TM4"));
+  writeLog (F("-----#5 Printing SM42 register values"));
+  Sm42.printRegs();
+
+  if (!Sm40.begin()) {
+    writeLog (F("Failed to start SM40"));
     exit (EXIT_FAILURE);
   }
+
+  if (!Sm41.begin()) {
+    writeLog (F("Failed to start SM41"));
+    exit (EXIT_FAILURE);
+  }
+
+  Sm42.setPwmLdok(true);
+
+  if (!Sm42.begin(true, true, false)) {
+    writeLog (F("Failed to start SM42"));
+    exit (EXIT_FAILURE);
+  }
+
+  Sm42.enableOutput(ChanA);
+  Sm42.enableOutput(ChanB);
+
+  writeLog (F("-----#6 Printing SM42 register values"));
+  Sm42.printRegs();
 
   if(config.Pwm.PrintRegs) {
     writeLog (F("Printing SM40 register values"));
@@ -3448,8 +3594,6 @@ void loadConfiguration(const char *filename, MainConfig &config) {
   config.Pwm.Tm4.Sm40.PwmFrequency = Config_Pwm_Tm4_Sm40[F("PwmFrequency")] | 1000;
   config.Pwm.Tm4.Sm40.ChannelA.DutyCycle = Config_Pwm_Tm4_Sm40[F("ChannelA")][F("DutyCycle")] | 32768;
   config.Pwm.Tm4.Sm40.ChannelA.PhaseShift = Config_Pwm_Tm4_Sm40[F("ChannelA")][F("PhaseShift")] | 0;
-  config.Pwm.Tm4.Sm40.ChannelB.DutyCycle = Config_Pwm_Tm4_Sm40[F("ChannelB")][F("DutyCycle")] | 32768;
-  config.Pwm.Tm4.Sm40.ChannelB.PhaseShift = Config_Pwm_Tm4_Sm40[F("ChannelB")][F("PhaseShift")] | 0;
 
   JsonObject Config_Pwm_Tm4_Sm41 = Config_Pwm_Tm4[F("Sm41")];
   config.Pwm.Tm4.Sm41.DeadTime = Config_Pwm_Tm4_Sm41[F("DeadTime")] | 50;
@@ -3589,10 +3733,6 @@ void saveConfiguration(const char *filename, const MainConfig &config) {
   JsonObject Config_Pwm_Tm4_Sm40_ChannelA = Config_Pwm_Tm4_Sm40.createNestedObject(F("ChannelA"));
   Config_Pwm_Tm4_Sm40_ChannelA[F("DutyCycle")] = config.Pwm.Tm4.Sm40.ChannelA.DutyCycle;
   Config_Pwm_Tm4_Sm40_ChannelA[F("PhaseShift")] = config.Pwm.Tm4.Sm40.ChannelA.PhaseShift;
-
-  JsonObject Config_Pwm_Tm4_Sm40_ChannelB = Config_Pwm_Tm4_Sm40.createNestedObject(F("ChannelB"));
-  Config_Pwm_Tm4_Sm40_ChannelB[F("DutyCycle")] = config.Pwm.Tm4.Sm40.ChannelB.DutyCycle;
-  Config_Pwm_Tm4_Sm40_ChannelB[F("PhaseShift")] = config.Pwm.Tm4.Sm40.ChannelB.PhaseShift;
 
   JsonObject Config_Pwm_Tm4_Sm41 = Config_Pwm_Tm4.createNestedObject(F("Sm41"));
   Config_Pwm_Tm4_Sm41[F("DeadTime")] = config.Pwm.Tm4.Sm41.DeadTime;

@@ -2953,7 +2953,7 @@ void configureModule4() {
   // Chan B
   //Sm42.setVal4Value(-(dutycycle1/2)); //-(120/2) = -60
   //Sm42.setVal5Value((dutycycle1/2-1)); // (120/2-1)) = 59
-  Sm42.setVal4Value(-59);
+  Sm42.setVal4Value(-51);
   Sm42.setVal5Value(74);
 
   writeLog (F("-----#3 Printing SM42 register values"));
@@ -3127,7 +3127,7 @@ void IsrOverflowSm20() {
   digitalWriteFast (TriggerPin, pin13_val) ;
   pin13_val = 1 - pin13_val;
 
-  s = roundf ( (MidDutyCycle - 1) * arm_sin_f32 (vSpwmUpdateSpeed * ++vSample));
+  s = roundf ( (MidDutyCycle - 1) * arm_sin_f32 (vSpwmUpdateSpeed * static_cast<float32_t>(++vSample)));
 
   Tm2.setPwmLdok(false);
 
@@ -3515,7 +3515,7 @@ void loadConfiguration(const char *filename, MainConfig &config) {
   // Use arduinojson.org/v6/assistant to compute the capacity.
 
   // Deserialize the JSON document
-  StaticJsonDocument<2048> doc;
+  JsonDocument doc;
 
   Serial.println(F("Deserializing config from file"));
 
@@ -3642,115 +3642,115 @@ void saveConfiguration(const char *filename, const MainConfig &config) {
   // Use arduinojson.org/assistant to compute the capacity.
 
   // Set the values in the document
-  StaticJsonDocument<2048> doc;
+  JsonDocument doc;
 
-  JsonObject Config_Pwm = doc[F("Config")].createNestedObject(F("Pwm"));
+  JsonObject Config_Pwm = doc[F("Config")][F("Pwm")].to<JsonObject>();
   Config_Pwm[F("PrintRegs")] = config.Pwm.PrintRegs;
 
-  JsonObject Config_Pwm_Tm1_Sm13 = Config_Pwm[F("Tm1")].createNestedObject(F("Sm13"));
+  JsonObject Config_Pwm_Tm1_Sm13 = Config_Pwm[F("Tm1")][F("Sm13")].to<JsonObject>();
   Config_Pwm_Tm1_Sm13[F("DeadTime")] = config.Pwm.Tm1.Sm13.DeadTime;
   Config_Pwm_Tm1_Sm13[F("PwmFrequency")] = config.Pwm.Tm1.Sm13.PwmFrequency;
 
-  JsonObject Config_Pwm_Tm1_Sm13_ChannelA = Config_Pwm_Tm1_Sm13.createNestedObject(F("ChannelA"));
+  JsonObject Config_Pwm_Tm1_Sm13_ChannelA = Config_Pwm_Tm1_Sm13[F("ChannelA")].to<JsonObject>();
   Config_Pwm_Tm1_Sm13_ChannelA[F("OnPeriodMicroseconds")] = config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds;
   Config_Pwm_Tm1_Sm13_ChannelA[F("DutyCycle")] = config.Pwm.Tm1.Sm13.ChannelA.DutyCycle;
   Config_Pwm_Tm1_Sm13_ChannelA[F("PhaseShift")] = config.Pwm.Tm1.Sm13.ChannelA.PhaseShift;
   Config_Pwm_Tm1_Sm13_ChannelA[F("Enabled")] = config.Pwm.Tm1.Sm13.ChannelA.Enabled;
 
-  JsonObject Config_Pwm_Tm1_Sm13_ChannelB = Config_Pwm_Tm1_Sm13.createNestedObject(F("ChannelB"));
+  JsonObject Config_Pwm_Tm1_Sm13_ChannelB = Config_Pwm_Tm1_Sm13[F("ChannelB")].to<JsonObject>();
   Config_Pwm_Tm1_Sm13_ChannelB[F("OnPeriodMicroseconds")] = config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds;
   Config_Pwm_Tm1_Sm13_ChannelB[F("DutyCycle")] = config.Pwm.Tm1.Sm13.ChannelB.DutyCycle;
   Config_Pwm_Tm1_Sm13_ChannelB[F("PhaseShift")] = config.Pwm.Tm1.Sm13.ChannelB.PhaseShift;
   Config_Pwm_Tm1_Sm13_ChannelB[F("Enabled")] = config.Pwm.Tm1.Sm13.ChannelB.Enabled;
 
-  JsonObject Config_Pwm_Tm2 = Config_Pwm.createNestedObject(F("Tm2"));
+  JsonObject Config_Pwm_Tm2 = Config_Pwm[F("Tm2")].to<JsonObject>();
   Config_Pwm_Tm2[F("UseSpwm")] = config.Pwm.Tm2.UseSpwm;
   Config_Pwm_Tm2[F("SpwmCarrierFrequency")] = config.Pwm.Tm2.SpwmCarrierFrequency;
   Config_Pwm_Tm2[F("SpwmModulationFrequency")] = config.Pwm.Tm2.SpwmModulationFrequency;
 
-  JsonObject Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2.createNestedObject(F("Sm20"));
+  JsonObject Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2[F("Sm20")].to<JsonObject>();
   Config_Pwm_Tm2_Sm20[F("DeadTime")] = config.Pwm.Tm2.Sm20.DeadTime;
   Config_Pwm_Tm2_Sm20[F("PwmFrequency")] = config.Pwm.Tm2.Sm20.PwmFrequency;
 
-  JsonObject Config_Pwm_Tm2_Sm20_ChannelA = Config_Pwm_Tm2_Sm20.createNestedObject(F("ChannelA"));
+  JsonObject Config_Pwm_Tm2_Sm20_ChannelA = Config_Pwm_Tm2_Sm20[F("ChannelA")].to<JsonObject>();
   Config_Pwm_Tm2_Sm20_ChannelA[F("DutyCycle")] = config.Pwm.Tm2.Sm20.ChannelA.DutyCycle;
   Config_Pwm_Tm2_Sm20_ChannelA[F("PhaseShift")] = config.Pwm.Tm2.Sm20.ChannelA.PhaseShift;
 
-  JsonObject Config_Pwm_Tm2_Sm20_ChannelB = Config_Pwm_Tm2_Sm20.createNestedObject(F("ChannelB"));
+  JsonObject Config_Pwm_Tm2_Sm20_ChannelB = Config_Pwm_Tm2_Sm20[F("ChannelB")].to<JsonObject>();
   Config_Pwm_Tm2_Sm20_ChannelB[F("DutyCycle")] = config.Pwm.Tm2.Sm20.ChannelB.DutyCycle;
   Config_Pwm_Tm2_Sm20_ChannelB[F("PhaseShift")] = config.Pwm.Tm2.Sm20.ChannelB.PhaseShift;
 
-  JsonObject Config_Pwm_Tm2_Sm21 = Config_Pwm_Tm2.createNestedObject(F("Sm21"));
+  JsonObject Config_Pwm_Tm2_Sm21 = Config_Pwm_Tm2[F("Sm21")].to<JsonObject>();
   Config_Pwm_Tm2_Sm21[F("DeadTime")] = config.Pwm.Tm2.Sm21.DeadTime;
   Config_Pwm_Tm2_Sm21[F("PwmFrequency")] = config.Pwm.Tm2.Sm21.PwmFrequency;
 
-  JsonObject Config_Pwm_Tm2_Sm21_ChannelA = Config_Pwm_Tm2_Sm21.createNestedObject(F("ChannelA"));
+  JsonObject Config_Pwm_Tm2_Sm21_ChannelA = Config_Pwm_Tm2_Sm21[F("ChannelA")].to<JsonObject>();
   Config_Pwm_Tm2_Sm21_ChannelA[F("DutyCycle")] = config.Pwm.Tm2.Sm21.ChannelA.DutyCycle;
   Config_Pwm_Tm2_Sm21_ChannelA[F("PhaseShift")] = config.Pwm.Tm2.Sm21.ChannelA.PhaseShift;
 
-  JsonObject Config_Pwm_Tm2_Sm22 = Config_Pwm_Tm2.createNestedObject(F("Sm22"));
+  JsonObject Config_Pwm_Tm2_Sm22 = Config_Pwm_Tm2[F("Sm22")].to<JsonObject>();
   Config_Pwm_Tm2_Sm22[F("DeadTime")] = config.Pwm.Tm2.Sm22.DeadTime;
   Config_Pwm_Tm2_Sm22[F("PwmFrequency")] = config.Pwm.Tm2.Sm22.PwmFrequency;
 
-  JsonObject Config_Pwm_Tm2_Sm22_ChannelA = Config_Pwm_Tm2_Sm22.createNestedObject(F("ChannelA"));
+  JsonObject Config_Pwm_Tm2_Sm22_ChannelA = Config_Pwm_Tm2_Sm22[F("ChannelA")].to<JsonObject>();
   Config_Pwm_Tm2_Sm22_ChannelA[F("DutyCycle")] = config.Pwm.Tm2.Sm22.ChannelA.DutyCycle;
   Config_Pwm_Tm2_Sm22_ChannelA[F("PhaseShift")] = config.Pwm.Tm2.Sm22.ChannelA.PhaseShift;
 
-  JsonObject Config_Pwm_Tm2_Sm22_ChannelB = Config_Pwm_Tm2_Sm22.createNestedObject(F("ChannelB"));
+  JsonObject Config_Pwm_Tm2_Sm22_ChannelB = Config_Pwm_Tm2_Sm22[F("ChannelB")].to<JsonObject>();
   Config_Pwm_Tm2_Sm22_ChannelB[F("DutyCycle")] = config.Pwm.Tm2.Sm22.ChannelB.DutyCycle;
   Config_Pwm_Tm2_Sm22_ChannelB[F("PhaseShift")] = config.Pwm.Tm2.Sm22.ChannelB.PhaseShift;
 
-  JsonObject Config_Pwm_Tm2_Sm23 = Config_Pwm_Tm2.createNestedObject(F("Sm23"));
+  JsonObject Config_Pwm_Tm2_Sm23 = Config_Pwm_Tm2[F("Sm23")].to<JsonObject>();
   Config_Pwm_Tm2_Sm23[F("DeadTime")] = config.Pwm.Tm2.Sm23.DeadTime;
   Config_Pwm_Tm2_Sm23[F("PwmFrequency")] = config.Pwm.Tm2.Sm23.PwmFrequency;
 
-  JsonObject Config_Pwm_Tm2_Sm23_ChannelA = Config_Pwm_Tm2_Sm23.createNestedObject(F("ChannelA"));
+  JsonObject Config_Pwm_Tm2_Sm23_ChannelA = Config_Pwm_Tm2_Sm23[F("ChannelA")].to<JsonObject>();
   Config_Pwm_Tm2_Sm23_ChannelA[F("DutyCycle")] = config.Pwm.Tm2.Sm23.ChannelA.DutyCycle;
   Config_Pwm_Tm2_Sm23_ChannelA[F("PhaseShift")] = config.Pwm.Tm2.Sm23.ChannelA.PhaseShift;
 
-  JsonObject Config_Pwm_Tm2_Sm23_ChannelB = Config_Pwm_Tm2_Sm23.createNestedObject(F("ChannelB"));
+  JsonObject Config_Pwm_Tm2_Sm23_ChannelB = Config_Pwm_Tm2_Sm23[F("ChannelB")].to<JsonObject>();
   Config_Pwm_Tm2_Sm23_ChannelB[F("DutyCycle")] = config.Pwm.Tm2.Sm23.ChannelB.DutyCycle;
   Config_Pwm_Tm2_Sm23_ChannelB[F("PhaseShift")] = config.Pwm.Tm2.Sm23.ChannelB.PhaseShift;
 
-  JsonObject Config_Pwm_Tm3_Sm31 = Config_Pwm[F("Tm3")].createNestedObject(F("Sm31"));
+  JsonObject Config_Pwm_Tm3_Sm31 = Config_Pwm[F("Tm3")][F("Sm31")].to<JsonObject>();
   Config_Pwm_Tm3_Sm31[F("DeadTime")] = config.Pwm.Tm3.Sm31.DeadTime;
   Config_Pwm_Tm3_Sm31[F("PwmFrequency")] = config.Pwm.Tm3.Sm31.PwmFrequency;
 
-  JsonObject Config_Pwm_Tm3_Sm31_ChannelA = Config_Pwm_Tm3_Sm31.createNestedObject(F("ChannelA"));
+  JsonObject Config_Pwm_Tm3_Sm31_ChannelA = Config_Pwm_Tm3_Sm31[F("ChannelA")].to<JsonObject>();
   Config_Pwm_Tm3_Sm31_ChannelA[F("DutyCycle")] = config.Pwm.Tm3.Sm31.ChannelA.DutyCycle;
   Config_Pwm_Tm3_Sm31_ChannelA[F("PhaseShift")] = config.Pwm.Tm3.Sm31.ChannelA.PhaseShift;
 
-  JsonObject Config_Pwm_Tm3_Sm31_ChannelB = Config_Pwm_Tm3_Sm31.createNestedObject(F("ChannelB"));
+  JsonObject Config_Pwm_Tm3_Sm31_ChannelB = Config_Pwm_Tm3_Sm31[F("ChannelB")].to<JsonObject>();
   Config_Pwm_Tm3_Sm31_ChannelB[F("DutyCycle")] = config.Pwm.Tm3.Sm31.ChannelB.DutyCycle;
   Config_Pwm_Tm3_Sm31_ChannelB[F("PhaseShift")] = config.Pwm.Tm3.Sm31.ChannelB.PhaseShift;
 
-  JsonObject Config_Pwm_Tm4 = Config_Pwm.createNestedObject(F("Tm4"));
+  JsonObject Config_Pwm_Tm4 = Config_Pwm[F("Tm4")].to<JsonObject>();
 
-  JsonObject Config_Pwm_Tm4_Sm40 = Config_Pwm_Tm4.createNestedObject(F("Sm40"));
+  JsonObject Config_Pwm_Tm4_Sm40 = Config_Pwm_Tm4[F("Sm40")].to<JsonObject>();
   Config_Pwm_Tm4_Sm40[F("DeadTime")] = config.Pwm.Tm4.Sm40.DeadTime;
   Config_Pwm_Tm4_Sm40[F("PwmFrequency")] = config.Pwm.Tm4.Sm40.PwmFrequency;
 
-  JsonObject Config_Pwm_Tm4_Sm40_ChannelA = Config_Pwm_Tm4_Sm40.createNestedObject(F("ChannelA"));
+  JsonObject Config_Pwm_Tm4_Sm40_ChannelA = Config_Pwm_Tm4_Sm40[F("ChannelA")].to<JsonObject>();
   Config_Pwm_Tm4_Sm40_ChannelA[F("DutyCycle")] = config.Pwm.Tm4.Sm40.ChannelA.DutyCycle;
   Config_Pwm_Tm4_Sm40_ChannelA[F("PhaseShift")] = config.Pwm.Tm4.Sm40.ChannelA.PhaseShift;
 
-  JsonObject Config_Pwm_Tm4_Sm41 = Config_Pwm_Tm4.createNestedObject(F("Sm41"));
+  JsonObject Config_Pwm_Tm4_Sm41 = Config_Pwm_Tm4[F("Sm41")].to<JsonObject>();
   Config_Pwm_Tm4_Sm41[F("DeadTime")] = config.Pwm.Tm4.Sm41.DeadTime;
   Config_Pwm_Tm4_Sm41[F("PwmFrequency")] = config.Pwm.Tm4.Sm41.PwmFrequency;
 
-  JsonObject Config_Pwm_Tm4_Sm41_ChannelA = Config_Pwm_Tm4_Sm41.createNestedObject(F("ChannelA"));
+  JsonObject Config_Pwm_Tm4_Sm41_ChannelA = Config_Pwm_Tm4_Sm41[F("ChannelA")].to<JsonObject>();
   Config_Pwm_Tm4_Sm41_ChannelA[F("DutyCycle")] = config.Pwm.Tm4.Sm41.ChannelA.DutyCycle;
   Config_Pwm_Tm4_Sm41_ChannelA[F("PhaseShift")] = config.Pwm.Tm4.Sm41.ChannelA.PhaseShift;
 
-  JsonObject Config_Pwm_Tm4_Sm42 = Config_Pwm_Tm4.createNestedObject(F("Sm42"));
+  JsonObject Config_Pwm_Tm4_Sm42 = Config_Pwm_Tm4[F("Sm42")].to<JsonObject>();
   Config_Pwm_Tm4_Sm42[F("DeadTime")] = config.Pwm.Tm4.Sm42.DeadTime;
   Config_Pwm_Tm4_Sm42[F("PwmFrequency")] = config.Pwm.Tm4.Sm42.PwmFrequency;
 
-  JsonObject Config_Pwm_Tm4_Sm42_ChannelA = Config_Pwm_Tm4_Sm42.createNestedObject(F("ChannelA"));
+  JsonObject Config_Pwm_Tm4_Sm42_ChannelA = Config_Pwm_Tm4_Sm42[F("ChannelA")].to<JsonObject>();
   Config_Pwm_Tm4_Sm42_ChannelA[F("DutyCycle")] = config.Pwm.Tm4.Sm42.ChannelA.DutyCycle;
   Config_Pwm_Tm4_Sm42_ChannelA[F("PhaseShift")] = config.Pwm.Tm4.Sm42.ChannelA.PhaseShift;
 
-  JsonObject Config_Pwm_Tm4_Sm42_ChannelB = Config_Pwm_Tm4_Sm42.createNestedObject(F("ChannelB"));
+  JsonObject Config_Pwm_Tm4_Sm42_ChannelB = Config_Pwm_Tm4_Sm42[F("ChannelB")].to<JsonObject>();
   Config_Pwm_Tm4_Sm42_ChannelB[F("DutyCycle")] = config.Pwm.Tm4.Sm42.ChannelB.DutyCycle;
   Config_Pwm_Tm4_Sm42_ChannelB[F("PhaseShift")] = config.Pwm.Tm4.Sm42.ChannelB.PhaseShift;
 

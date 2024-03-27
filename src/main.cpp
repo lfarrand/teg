@@ -2947,14 +2947,15 @@ void configureModule4() {
   // Chan A
   //Sm42.setVal2Value(-thirdRange-(dutycycle1/2)); // -200-(120/2) = -260
   //Sm42.setVal3Value(-thirdRange+(dutycycle1/2-1)); // -200+(120/2-1) = -141
-  Sm42.setVal2Value(-74);
-  Sm42.setVal3Value(-50);
+  //SM42 duty cycle was 1500, range was 7500, half range was 3750, third range was 2500
+  Sm42.setVal2Value(-3750);
+  Sm42.setVal3Value(-3000);
 
   // Chan B
   //Sm42.setVal4Value(-(dutycycle1/2)); //-(120/2) = -60
   //Sm42.setVal5Value((dutycycle1/2-1)); // (120/2-1)) = 59
-  Sm42.setVal4Value(-51);
-  Sm42.setVal5Value(74);
+  Sm42.setVal4Value(-3050);
+  Sm42.setVal5Value(3700);
 
   writeLog (F("-----#3 Printing SM42 register values"));
   Sm42.printRegs();

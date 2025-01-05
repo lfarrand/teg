@@ -32,3 +32,6 @@
 *.app
 
 .pio
+
+# IntelliJ
+.idea

@@ -152,8 +152,8 @@ struct Module4Config {
 
 struct AsymmetricInductionConfig {
     bool IsEnabled = true;
-    uint16_t PreShiftNanos = 250;
-    uint16_t PostShiftNanos = 500;
+    int32_t PreShiftNanos = 250;
+    int32_t PostShiftNanos = 500;
 };
 
 struct PwmConfig {
@@ -961,13 +961,13 @@ body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Col
                 <label>
                     Pre Shift Nanos
                 </label>
-                <input type="number" style="width: 75px;" id="asymmetric-induction-preshiftnanos" name="asymmetric-induction-preshiftnanos" value="%u"> ns
+                <input type="number" style="width: 75px;" id="asymmetric-induction-preshiftnanos" name="asymmetric-induction-preshiftnanos" value="%ld"> ns
             </div>
             <div class="input">
                 <label>
                     Post Shift Nanos
                 </label>
-                <input type="number" style="width: 75px;" id="asymmetric-induction-postshiftnanos" name="asymmetric-induction-postshiftnanos" value="%u"> ns
+                <input type="number" style="width: 75px;" id="asymmetric-induction-postshiftnanos" name="asymmetric-induction-postshiftnanos" value="%ld"> ns
             </div>
         </div>
     </div>
@@ -1607,9 +1607,9 @@ void settings_pwm_update(Request &req, Response &res) {
                     config.AsymmetricInduction.IsEnabled = false;
                 }
             } else if (strcmp(name, "pwm-frequency-42") == 0) {
-                config.Pwm.Tm4.Sm42.PwmFrequency = strtol(value, nullptr, 10);
+                config.Pwm.Tm4.Sm42.PwmFrequency = strtoul(value, nullptr, 10);
             } else if (strcmp(name, "duty-cycle-42a") == 0) {
-                config.Pwm.Tm4.Sm42.ChannelA.DutyCycle = strtol(value, nullptr, 10);
+                config.Pwm.Tm4.Sm42.ChannelA.DutyCycle = static_cast<unsigned short>(strtoul(value, nullptr, 10));
             } else if (strcmp(name, "asymmetric-induction-preshiftnanos") == 0) {
                 config.AsymmetricInduction.PreShiftNanos = strtol(value, nullptr, 10);
             } else if (strcmp(name, "asymmetric-induction-postshiftnanos") == 0) {
@@ -3041,29 +3041,44 @@ void configureModule4() {
     if (config.AsymmetricInduction.IsEnabled) {
         const uint8_t prescalerIndex = calculateBestPrescaler(config.Pwm.Tm4.Sm42.PwmFrequency);
         const float32_t dutyCycleA = static_cast<float32_t>(config.Pwm.Tm4.Sm42.ChannelA.DutyCycle) / 65536;
-        const uint16_t preShiftNanos = config.AsymmetricInduction.PreShiftNanos;
-        const uint16_t postShiftNanos = config.AsymmetricInduction.PostShiftNanos;
+        const int32_t preShiftNanos = config.AsymmetricInduction.PreShiftNanos;
+        const int32_t postShiftNanos = config.AsymmetricInduction.PostShiftNanos;
         constexpr int32_t nanosecondsPerSecond = 1000000000;
-        constexpr float32_t nanosecondsPerSecondFloat = static_cast<float32_t>(nanosecondsPerSecond);
+        constexpr auto nanosecondsPerSecondFloat = static_cast<float32_t>(nanosecondsPerSecond);
         const float32_t clockTicksPerNanosecond = F_BUS_ACTUAL / nanosecondsPerSecondFloat;
-        const int32_t periodTicks = F_BUS_ACTUAL / config.Pwm.Tm4.Sm42.PwmFrequency;
-        const uint16_t pulseTicksA = periodTicks * dutyCycleA;
-        const uint16_t preShiftTicks = clockTicksPerNanosecond * preShiftNanos;
-        const uint16_t postShiftTicks = clockTicksPerNanosecond * postShiftNanos;
-        constexpr uint16_t periodStart = 0;
-        const uint16_t periodEnd = periodTicks - 1;
-        constexpr uint16_t startChanA = periodStart;
-        const uint16_t stopChanA = startChanA + pulseTicksA;
-        const uint16_t startChanB = stopChanA - preShiftTicks;
-        const uint16_t stopChanB = periodEnd - postShiftTicks;
+        const uint32_t periodTicks = F_BUS_ACTUAL / config.Pwm.Tm4.Sm42.PwmFrequency;
+        const int16_t pulseTicksA = periodTicks * dutyCycleA;
+        const int16_t preShiftTicks = clockTicksPerNanosecond * preShiftNanos;
+        const int16_t postShiftTicks = clockTicksPerNanosecond * postShiftNanos;
+        constexpr int16_t periodStart = 0;
+        const int16_t periodEnd = periodTicks - 1;
+        constexpr int16_t startChanA = periodStart;
+        const int16_t stopChanA = startChanA + pulseTicksA;
+        const int16_t startChanB = stopChanA - preShiftTicks;
+        const int16_t stopChanB = periodEnd - postShiftTicks;
+
+        /*
+Format specifiers:
+https://utat-ss.readthedocs.io/en/master/c-programming/print-formatting.html
+
+uint8_t, uint16_t: %u (Unsigned)
+uint32_t: %lu (Long Unsigned)
+int8_t, int16_t: %d (Decimal - Signed)
+int32_t: %ld (Long Decimal - Signed)
+float, double: %f (Float)
+uint8_t, uint16_t, int8_t, int16_t: %x (Hexadecimal - Lowercase), %X (Hexadecimal - Uppercase)
+uint32_t, int32_t: %lx (Long Hexadecimal - Lowercase), %lX (Long Hexadecimal - Uppercase)
+*/
 
         sprintf(strBuf,
-            "PWM 4.2 %ldHz %s periodTicks:%ld pulseTicksA:%u preShiftTicks:%u postShiftTicks:%u periodStart:%u periodEnd:%u startChanA:%u stopChanA:%u startChanB:%u stopChanB:%u",
+            "PWM 4.2 %ldHz %s periodTicks:%lu pulseTicksA:%d preShiftNanos:%ld preShiftTicks:%d postShiftNanos:%ld postShiftTicks:%d periodStart:%d periodEnd:%d startChanA:%d stopChanA:%d startChanB:%d stopChanB:%d",
             config.Pwm.Tm4.Sm42.PwmFrequency,
             prescaleStr[prescalerIndex],
             periodTicks,
             pulseTicksA,
+            preShiftNanos,
             preShiftTicks,
+            postShiftNanos,
             postShiftTicks,
             periodStart,
             periodEnd,

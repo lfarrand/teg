@@ -97,9 +97,6 @@ in the pair to the inactive state.
 #include <Fonts/FreeSans9pt7b.h>
 #include <TeensyID.h>
 #include <eFlexPwm.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
-#include <InternalTemperature.h>
 #include <aWOT.h>
 #include <HttpClient.h>
 #include <TimeLib.h>
@@ -328,8 +325,6 @@ void DumpText(EthernetClient &client);
 void processWebServer();
 
 void configureNtp();
-
-void printAddress(DeviceAddress deviceAddress);
 
 void pollMetrics();
 
@@ -1769,15 +1764,7 @@ void loop() {
 }
 
 
-void printAddress(DeviceAddress deviceAddress) {
-    for (uint8_t i = 0; i < 8; i++) {
-        Serial.print(F("0x"));
-        if (deviceAddress[i] < 0x10) Serial.print(F("0"));
-        Serial.print(deviceAddress[i], HEX);
-        if (i < 7) Serial.print(F(", "));
-    }
-    Serial.println(F(""));
-}
+
 
 void pollMetrics() {
     pollConfigSettings();

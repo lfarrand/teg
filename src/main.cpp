@@ -189,14 +189,6 @@ char timeServer[] = "uk.pool.ntp.org";
 EthernetUDP ntpUDP;
 constexpr uint16_t localPort = 8888; // local port to listen for UDP packets
 
-// Data wire is plugged into pin 34 on the Arduino
-#define ONE_WIRE_BUS 34
-// The resolution of the temperature sensor is user-configurable to 9, 10, 11, or 12 bits, corresponding to increments of 0.5°C, 0.25°C, 0.125°C, and 0.0625°C, respectively. The default resolution at power-up is 12-bit.
-#define TEMP_PRECISION 9 // Range 9-12. Larger values are slower. 9 (0.5°C): 93.75ms, 10 (0.25°C): 187.5ms, 11 (0.125°C): 375ms, 12 (0.0625°C): 750ms
-
-// Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
-OneWire oneWire(ONE_WIRE_BUS);
-
 // OLED screen
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -209,9 +201,6 @@ OneWire oneWire(ONE_WIRE_BUS);
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // Sensors
-// Pass our oneWire reference to Dallas Temperature.
-DallasTemperature sensors(&oneWire);
-DeviceAddress Thermometer;
 // TODO:
 /*
 It looks like you are hardcoding the device addresses, so I assume this is a static installation where the sensors are not being swapped in and out.
@@ -239,34 +228,6 @@ const char string3[] PROGMEM = "Doghouse";
 const char string4[] PROGMEM = "Basement";
 
 */
-struct temperatureSensor {
-    DeviceAddress address;
-    // Max string length is 11 characters +1 extra for NULL as string terminator
-    const char addressString[24];
-    const char name[20];
-};
-
-int tempSensorCount = 11;
-
-temperatureSensor temperatureSensors[] = {
-    {{0x28, 0x82, 0xDF, 0x7E, 0x0E, 0x00, 0x00, 0xE2}, "28-82-DF-7E-0E-00-00-E2", "Ambient"},
-    {{0x28, 0x1B, 0xAA, 0x7D, 0x0E, 0x00, 0x00, 0xF2}, "28-1B-AA-7D-0E-00-00-F2", "S01-MOSFET"},
-    {{0x28, 0xC8, 0xBD, 0x7D, 0x0E, 0x00, 0x00, 0x42}, "28-C8-BD-7D-0E-00-00-42", "S01-GateDriver"},
-    {{0x28, 0x6F, 0x9C, 0x7E, 0x0E, 0x00, 0x00, 0x26}, "28-6F-9C-7E-0E-00-00-26", "S02-MOSFET"},
-    {{0x28, 0x04, 0x4E, 0x7E, 0x0E, 0x00, 0x00, 0xC0}, "28-04-4E-7E-0E-00-00-C0", "S02-GateDriver"},
-    {{0x28, 0xE7, 0xC8, 0x7E, 0x0E, 0x00, 0x00, 0xE7}, "28-E7-C8-7E-0E-00-00-E7", "S03-MOSFET"},
-    {{0x28, 0x37, 0x15, 0x7F, 0x0E, 0x00, 0x00, 0x1E}, "28-37-15-7F-0E-00-00-1E", "S03-GateDriver"},
-    {{0x28, 0x4D, 0xD1, 0x7D, 0x0E, 0x00, 0x00, 0x73}, "28-4D-D1-7D-0E-00-00-73", "S04-MOSFET"},
-    {{0x28, 0x59, 0xC2, 0x7E, 0x0E, 0x00, 0x00, 0x4E}, "28-59-C2-7E-0E-00-00-4E", "S04-GateDriver"},
-    {{0x28, 0x51, 0xBD, 0x7E, 0x0E, 0x00, 0x00, 0xED}, "28-51-BD-7E-0E-00-00-ED", "S05-MOSFET"},
-    {{0x28, 0xC7, 0xEB, 0x7D, 0x0E, 0x00, 0x00, 0x6F}, "28-C7-EB-7D-0E-00-00-6F", "S05-GateDriver"}
-    //{{  }, "", "S06-MOSFET"},
-    //{{  }, "", "S06-GateDriver"}
-};
-
-int deviceCount = 0;
-float tempC;
-
 // PWM
 using namespace eFlex;
 
@@ -367,8 +328,6 @@ void DumpText(EthernetClient &client);
 void processWebServer();
 
 void configureNtp();
-
-void configureSensors();
 
 void printAddress(DeviceAddress deviceAddress);
 
@@ -1141,7 +1100,6 @@ void setup() {
 
     enableXbar();
     configurePwm();
-    configureSensors();
     configureEthernet();
     configureTimers();
 
@@ -1810,52 +1768,6 @@ void loop() {
     digitalWriteFast(LED_BUILTIN, LOW);
 }
 
-void configureSensors() {
-    sensors.begin();
-
-    Serial.print(F("Parasite power is: "));
-    if (sensors.isParasitePowerMode()) {
-        Serial.println(F("ON"));
-    } else {
-        Serial.println(F("OFF"));
-    }
-
-    Serial.print(F("Locating devices..."));
-    Serial.print(F("Found "));
-    deviceCount = sensors.getDeviceCount();
-    Serial.print(deviceCount, DEC);
-    Serial.println(F(" devices."));
-    Serial.println(F(""));
-
-    for (int i = 0; i < tempSensorCount; i++) {
-        const temperatureSensor s = temperatureSensors[i];
-
-        /*
-            char hexAddrText[24];
-            snprintf(hexAddrText,sizeof(hexAddrText),"%02X-%02X-%02X-%02X-%02X-%02X-%02X-%02X",
-              s.address[0], s.address[1], s.address[2], s.address[3], s.address[4], s.address[5], s.address[6], s.address[7]);
-
-            strncpy(s.addressString, hexAddrText, sizeof(s.addressString)-1);
-        */
-        Serial.print(F("Setting temperature sensor precision for "));
-        Serial.print(s.name);
-        Serial.print(F(" ("));
-        Serial.print(s.addressString);
-        Serial.print(F(") to "));
-        Serial.println(TEMP_PRECISION);
-
-        sensors.setResolution(s.address, TEMP_PRECISION);
-    }
-
-    Serial.println(F("Printing addresses..."));
-    for (int i = 0; i < deviceCount; i++) {
-        Serial.print(F("Sensor "));
-        Serial.print(i + 1);
-        Serial.print(F(" : "));
-        sensors.getAddress(Thermometer, i);
-        printAddress(Thermometer);
-    }
-}
 
 void printAddress(DeviceAddress deviceAddress) {
     for (uint8_t i = 0; i < 8; i++) {
@@ -1873,56 +1785,6 @@ void pollMetrics() {
     pollVoltage();
     pollCurrent();
     pollFreeMemory();
-}
-
-void lookupSensorAddresses() {
-    // Use this to determine sensor address mappings
-    for (int i = 0; i < deviceCount; i++) {
-        sensors.getAddress(Thermometer, i);
-        char hexAddrText[24];
-        snprintf(hexAddrText, sizeof(hexAddrText), "%02X-%02X-%02X-%02X-%02X-%02X-%02X-%02X",
-                 Thermometer[0], Thermometer[1], Thermometer[2], Thermometer[3], Thermometer[4], Thermometer[5],
-                 Thermometer[6], Thermometer[7]);
-        tempC = sensors.getTempC(Thermometer);
-        char buffer[10];
-        char temp[500];
-        dtostrf(tempC, 4, 6, buffer);
-        snprintf(temp, sizeof(temp), "sensor_address=%s temperature=%s", hexAddrText, buffer);
-        Serial.println(temp);
-    }
-}
-
-void pollTemperature() {
-    sensors.requestTemperatures();
-
-    String postRequest = F("");
-    const uint64_t timestamp = now() * 1000000000;
-    char buffer[10];
-    char temp[200];
-
-    for (int i = 0; i < tempSensorCount; i++) {
-        const temperatureSensor s = temperatureSensors[i];
-        tempC = sensors.getTempC(s.address);
-
-        // Handle sensor issues by
-        if (tempC == -127) {
-            tempC = 0;
-        }
-
-        dtostrf(tempC, 4, 6, buffer);
-        snprintf(temp, sizeof(temp), "temperatureSensors,sensor_id=%s,sensor_address=%s temperature=%s %llu\n", s.name,
-                 s.addressString, buffer, timestamp);
-        postRequest += temp;
-    }
-
-    tempC = InternalTemperatureClass::readTemperatureC();
-    dtostrf(tempC, 4, 6, buffer);
-    snprintf(temp, sizeof(temp), "temperatureSensors,sensor_id=%s temperature=%s %llu\n", "CPU", buffer, timestamp);
-    postRequest += temp;
-
-    //Serial.print(postRequest);
-
-    writeInfluxDb(postRequest);
 }
 
 void pollVoltage() {

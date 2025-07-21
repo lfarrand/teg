@@ -6,7 +6,6 @@
   Built by Khoi Hoang https://github.com/khoih-prog/EthernetWebServer
   Licensed under MIT license
  ***************************************************************************************************************************************/
-
 #ifndef defines_h
 #define defines_h
 

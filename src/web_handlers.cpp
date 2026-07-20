@@ -8,7 +8,11 @@ extern MainConfig config;
 extern EthernetServer server;
 extern const char* filename;
 
-void configureWebServer() {
+// Set by the update handlers after applying changes to the hardware; loop()
+// persists the config to SD so the HTTP response never waits on the card.
+volatile bool configSaveNeeded = false;
+
+FLASHMEM void configureWebServer() {
   app.get("/", &index);
   app.get("/settings/pwm", &settings_pwm);
   app.post("/settings/pwm/update", &settings_pwm_update);
@@ -24,11 +28,11 @@ void processWebServer() {
   }
 }
 
-void index(Request &req, Response &res) {
+FLASHMEM void index(Request &req, Response &res) {
   res.print("Welcome to PWM Control System");
 }
 
-void settings_pwm(Request &req, Response &res) {
+FLASHMEM void settings_pwm(Request &req, Response &res) {
   char buf[32768];
   snprintf(buf, sizeof(buf), PwmSettingsPageTemplate,
            config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds,
@@ -88,7 +92,7 @@ void settings_pwm(Request &req, Response &res) {
   res.print(buf);
 }
 
-void settings_pwm_update(Request &req, Response &res) {
+FLASHMEM void settings_pwm_update(Request &req, Response &res) {
   if (req.method() != Request::MethodType::POST) {
     res.set("Content-Type", "text/plain");
     res.printP("Method Not Allowed");
@@ -97,21 +101,27 @@ void settings_pwm_update(Request &req, Response &res) {
     res.end();
   }
   else {
-    disablePwmInterrupts();
+    const bool spwmWasEnabled = config.Pwm.Tm2.UseSpwm;
+    if (spwmWasEnabled) {
+      disablePwmInterrupts();
+    }
+
+    // Snapshot (memcpy so padding compares equal) to detect which timers changed
+    MainConfig previous;
+    memcpy(&previous, &config, sizeof(previous));
 
     while (req.left()) {
       char value[100];
       char name[50];
       if (!req.form(name, 50, value, 100)) {
+        if (spwmWasEnabled) {
+          enablePwmInterrupts();
+        }
         res.sendStatus(400);
         res.flush();
         res.end();
         return;
       }
-
-      res.print(name);
-      res.print(": ");
-      res.println(value);
 
       if (strcmp(name, "period-13a") == 0) {
         config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds = strtol(value, nullptr, 10);
@@ -227,10 +237,6 @@ void settings_pwm_update(Request &req, Response &res) {
         } else {
           config.AsymmetricInduction.IsEnabled = false;
         }
-      } else if (strcmp(name, "pwm-frequency-42") == 0) {
-        config.Pwm.Tm4.Sm42.PwmFrequency = strtoul(value, nullptr, 10);
-      } else if (strcmp(name, "duty-cycle-42a") == 0) {
-        config.Pwm.Tm4.Sm42.ChannelA.DutyCycle = static_cast<unsigned short>(strtoul(value, nullptr, 10));
       } else if (strcmp(name, "asymmetric-induction-preshiftnanos") == 0) {
         config.AsymmetricInduction.PreShiftNanos = strtol(value, nullptr, 10);
       } else if (strcmp(name, "asymmetric-induction-postshiftnanos") == 0) {
@@ -238,17 +244,12 @@ void settings_pwm_update(Request &req, Response &res) {
       }
     }
 
-    Serial.println(F("Saving configuration..."));
-    saveConfiguration(filename);
-
-    Serial.println(F("Print config file..."));
-    printFile(filename);
-
-    delay(1000);
-
-    configurePwm();
+    // Apply to hardware first: the register writes are buffered and take
+    // effect at the next PWM reload, i.e. within one PWM period.
+    applyPwmConfig(previous);
 
     if (config.Pwm.Tm2.UseSpwm) {
+      attachModule2PwmInterruptVectors(); // required if SPWM was off at boot
       enablePwmInterrupts();
     }
 
@@ -257,10 +258,13 @@ void settings_pwm_update(Request &req, Response &res) {
     res.sendStatus(302);
     res.flush();
     res.end();
+
+    // Persist from loop() so the response doesn't wait on the SD card
+    configSaveNeeded = true;
   }
 }
 
-void settings_pwm_timer(Request &req, Response &res) {
+FLASHMEM void settings_pwm_timer(Request &req, Response &res) {
   char buf[8192]; // template is ~3.2 KB; formatted page comfortably fits
   snprintf(buf, sizeof(buf),
          PwmTimerSettingsPageTemplate,
@@ -274,7 +278,7 @@ void settings_pwm_timer(Request &req, Response &res) {
   res.end();
 }
 
-void settings_pwm_timer_update(Request &req, Response &res) {
+FLASHMEM void settings_pwm_timer_update(Request &req, Response &res) {
   if (req.method() != Request::MethodType::POST) {
     res.set("Content-Type", "text/plain");
     res.printP("Method Not Allowed");
@@ -295,10 +299,6 @@ void settings_pwm_timer_update(Request &req, Response &res) {
         return res.sendStatus(400);
       }
 
-      res.print(name);
-      res.print(": ");
-      res.println(value);
-
       if (strcmp(name, "period-13a") == 0) {
         config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds = strtol(value, nullptr, 10);
       } else if (strcmp(name, "toggle-13a") == 0) {
@@ -316,17 +316,14 @@ void settings_pwm_timer_update(Request &req, Response &res) {
       }
     }
 
-    Serial.println(F("Saving configuration..."));
-    saveConfiguration(filename);
-
-    Serial.println(F("Print config file..."));
-    printFile(filename);
-
     // Redirect
     res.set("Location", "/settings/pwm-timer");
     res.sendStatus(302);
     res.flush();
     res.end();
+
+    // Persist from loop() so the response doesn't wait on the SD card
+    configSaveNeeded = true;
   }
 }
 

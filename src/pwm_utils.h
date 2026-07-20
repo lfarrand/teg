@@ -13,8 +13,8 @@ constexpr uint16_t MidDutyCycle = 32768;
 constexpr uint16_t MaxDutyCycle = 65535;
 constexpr uint16_t MAX_COUNTER_VALUE = 0xFFFF;
 
-extern volatile uint32_t vSample;
-extern volatile float32_t vSpwmUpdateSpeed;
+extern volatile uint32_t vPhase;
+extern volatile uint32_t vIsrCycles;
 
 extern const uint8_t PrescalerValues[];
 extern const char *prescaleStr[];
@@ -52,6 +52,11 @@ void chargeToggleTimerCallback();
 void dischargeToggleTimerCallback();
 
 void configurePwm();
+
+struct MainConfig;
+void applyPwmConfig(const MainConfig &previous);
+
+void buildSpwmLut();
 
 void configureModule1();
 

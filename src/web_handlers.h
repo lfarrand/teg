@@ -6,6 +6,8 @@
 void configureWebServer();
 void processWebServer();
 
+extern volatile bool configSaveNeeded;
+
 void index(Request &req, Response &res);
 void settings_pwm(Request &req, Response &res);
 void settings_pwm_update(Request &req, Response &res);

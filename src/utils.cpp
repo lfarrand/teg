@@ -1,4 +1,5 @@
 #include "utils.h"
+#include "ntp_utils.h"
 #include "Adafruit_SSD1306.h"
 #include "qnethernet/QNEthernetClient.h"
 #include "qnethernet/QNEthernetUDP.h"
@@ -101,13 +102,10 @@ time_t getNtpTime() {
     if (size >= NTP_PACKET_SIZE) {
       Serial.println(F("Receive NTP Response"));
       ntpUDP.read(packetBuffer, NTP_PACKET_SIZE);
-      unsigned long secsSince1900 = static_cast<unsigned long>(packetBuffer[40]) << 24;
-      secsSince1900 |= static_cast<unsigned long>(packetBuffer[41]) << 16;
-      secsSince1900 |= static_cast<unsigned long>(packetBuffer[42]) << 8;
-      secsSince1900 |= static_cast<unsigned long>(packetBuffer[43]);
+      uint32_t secsSince1900 = parseNtpSeconds(packetBuffer);
       Serial.print(F("Seconds since 1 Jan 1900: "));
       Serial.println(secsSince1900);
-      time_t time = secsSince1900 - 2208988800UL;
+      time_t time = ntpToUnixEpoch(secsSince1900);
       Serial.print(F("Seconds since 1 Jan 1970: "));
       Serial.println(time);
       return time;
@@ -118,15 +116,7 @@ time_t getNtpTime() {
 }
 
 void sendNTPpacket(const char *host) {
-  memset(packetBuffer, 0, NTP_PACKET_SIZE);
-  packetBuffer[0] = 0b11100011;
-  packetBuffer[1] = 0;
-  packetBuffer[2] = 6;
-  packetBuffer[3] = 0xEC;
-  packetBuffer[12] = 49;
-  packetBuffer[13] = 0x4E;
-  packetBuffer[14] = 49;
-  packetBuffer[15] = 52;
+  buildNtpRequest(packetBuffer);
   ntpUDP.beginPacket(host, 123);
   ntpUDP.write(packetBuffer, NTP_PACKET_SIZE);
   ntpUDP.endPacket();

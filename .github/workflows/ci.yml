@@ -60,8 +60,11 @@ jobs:
             ~/.platformio
           key: pio-test-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
 
-      - name: Install PlatformIO
-        run: pip install --upgrade platformio
+      - name: Install PlatformIO and gcovr
+        run: pip install --upgrade platformio gcovr
 
       - name: Run tests
         run: pio test -e native --verbose
+
+      - name: Coverage report (tested units, line coverage gated at 80%)
+        run: gcovr --root . --filter 'src/' --print-summary --fail-under-line 80

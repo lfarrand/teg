@@ -1,7 +1,7 @@
 #ifndef CONFIG_JSON_H
 #define CONFIG_JSON_H
 
-#include <Arduino.h>
+#include <stdint.h>
 
 struct ChannelConfig {
   uint32_t OnPeriodMicroseconds{};

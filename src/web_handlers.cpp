@@ -30,7 +30,7 @@ void index(Request &req, Response &res) {
 
 void settings_pwm(Request &req, Response &res) {
   char buf[32768];
-  snprintf(buf, sizeof(buf), static_cast<const char *>(PwmSettingsPageTemplate),
+  snprintf(buf, sizeof(buf), PwmSettingsPageTemplate,
            config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds,
            config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds,
            config.Pwm.Tm1.Sm13.PwmFrequency,
@@ -84,6 +84,7 @@ void settings_pwm(Request &req, Response &res) {
            config.Pwm.Tm4.Sm42.ChannelA.DutyCycle,
            config.AsymmetricInduction.PreShiftNanos,
            config.AsymmetricInduction.PostShiftNanos);
+  res.set("Content-Type", "text/html");
   res.print(buf);
 }
 
@@ -105,6 +106,7 @@ void settings_pwm_update(Request &req, Response &res) {
         res.sendStatus(400);
         res.flush();
         res.end();
+        return;
       }
 
       res.print(name);
@@ -243,7 +245,12 @@ void settings_pwm_update(Request &req, Response &res) {
     printFile(filename);
 
     delay(1000);
+
     configurePwm();
+
+    if (config.Pwm.Tm2.UseSpwm) {
+      enablePwmInterrupts();
+    }
 
     // Redirect
     res.set("Location", "/settings/pwm");
@@ -254,15 +261,15 @@ void settings_pwm_update(Request &req, Response &res) {
 }
 
 void settings_pwm_timer(Request &req, Response &res) {
-  char buf[32768];
-  snprintf(buf, sizeof(buf) - 1,
+  char buf[8192]; // template is ~3.2 KB; formatted page comfortably fits
+  snprintf(buf, sizeof(buf),
          PwmTimerSettingsPageTemplate,
          config.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds,
          config.Pwm.Tm1.Sm13.ChannelA.Enabled ? " checked" : "",
          config.Pwm.Tm1.Sm13.ChannelB.OnPeriodMicroseconds,
          config.Pwm.Tm1.Sm13.ChannelB.Enabled ? " checked" : "");
   res.set("Content-Type", "text/html");
-  res.printP(buf);
+  res.print(buf);
   res.flush();
   res.end();
 }

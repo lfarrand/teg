@@ -24,8 +24,14 @@ void initMemory() {
 }
 
 void reportMemoryUsage() {
-  char buf[100];
-  snprintf(buf, sizeof(buf), "DTCM Free: %d | OCRAM Free: %d | PSRAM: %s",
-           getFreeMemory(), freeram(), testPsram() ? "OK" : "Fail");
-  writeLog(buf);
+  int dtcmFree = getFreeMemory();
+  int ocramFree = freeram();
+
+  char buf[64];
+  snprintf(buf, sizeof(buf), "DTCM Free: %d | OCRAM Free: %d", dtcmFree, ocramFree);
+  Serial.println(buf);
+
+  // Compact form for the dedicated OLED status line (21 chars max at size-1 font)
+  snprintf(buf, sizeof(buf), "DTCM %dk OCRAM %dk", dtcmFree / 1024, ocramFree / 1024);
+  setStatusLine(buf);
 }

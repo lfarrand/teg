@@ -69,7 +69,7 @@ input:checked + .slider:before {
   border-radius: 34px;
 }
 .slider.round:before {
-  border-radius: 50%;
+  border-radius: 50%%;
 }
 </style>
 </head>

@@ -7,6 +7,8 @@ constexpr int16_t LogSize = 5;
 extern String logs[];
 
 void writeLog(const String &msg);
+void setStatusLine(const String &line);
+void flushDisplay();
 int getFreeMemory();
 int freeram();
 void printDigits(int digits);

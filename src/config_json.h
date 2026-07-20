@@ -25,6 +25,12 @@ struct Module2Config {
   bool UseSpwm = false;
   uint32_t SpwmCarrierFrequency = 20000;
   uint32_t SpwmModulationFrequency = 50;
+  uint8_t ModulationScheme = 1;         // modulation.h ModScheme* (1 = unipolar SPWM)
+  uint16_t ModulationIndexMilli = 1000; // thousandths; up to 1155 with THIPWM/SVPWM
+  uint8_t ModulationCells = 2;          // 1-4 legs/cells, driven in order Sm20, Sm22, Sm21, Sm23
+  uint8_t CarrierDisposition = 0;       // level-shifted only: 0 PD, 1 POD, 2 APOD
+  bool DeadTimeCompensation = false;    // polarity-signed duty correction of 2*td*fsw
+  uint16_t SoftStartMs = 0;             // modulation index ramp time; 0 = instant
   SubmoduleConfig Sm20;
   SubmoduleConfig Sm21;
   SubmoduleConfig Sm22;
@@ -47,6 +53,29 @@ struct AsymmetricInductionConfig {
   int32_t PostShiftNanos = 500;
 };
 
+// Closed-loop amplitude regulation: the feedback pin expects a DC voltage
+// proportional to the regulated quantity (e.g. rectified+filtered output, or
+// the DC bus). The PI output drives the modulation index target.
+struct FeedbackConfig {
+  bool Enabled = false;
+  uint8_t AnalogPin = 41;              // A17
+  uint32_t SetpointMillivolts = 0;     // regulate the feedback pin to this voltage
+  uint32_t FullScaleMillivolts = 3300; // feedback voltage at full ADC scale
+  uint16_t KpMilli = 200;              // index per volt of error, thousandths
+  uint16_t KiMilli = 2000;             // index per volt-second, thousandths
+  uint16_t LoopHz = 1000;
+};
+
+// Fast software trip: a transition on the fault pin masks every FlexPWM
+// output from a high-priority GPIO interrupt (~1us). Latched until the next
+// settings apply. Pin should be XBAR-capable (30/31/32) so a future hardware
+// fault path can reuse it.
+struct FaultProtectionConfig {
+  bool Enabled = false;
+  uint8_t Pin = 32;
+  bool ActiveHigh = true;
+};
+
 struct PwmConfig {
   Module1Config Tm1;
   Module2Config Tm2;
@@ -60,6 +89,8 @@ struct PwmConfig {
 struct MainConfig {
   PwmConfig Pwm;
   AsymmetricInductionConfig AsymmetricInduction;
+  FeedbackConfig Feedback;
+  FaultProtectionConfig FaultProtection;
 };
 
 extern MainConfig config;

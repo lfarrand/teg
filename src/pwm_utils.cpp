@@ -1,6 +1,7 @@
 #include "pwm_utils.h"
 #include "spwm_math.h"
 #include "pwm_timing.h"
+#include "modulation.h"
 #include "utils.h"
 #include <QNEthernet.h>
 #include "config_json.h"
@@ -10,15 +11,38 @@ extern qindesign::network::EthernetServer server;
 volatile uint32_t vPhase = 0;
 volatile uint32_t vIsrCycles = 0;
 
-// SPWM sine generation is a fixed-point DDS (see spwm_math.h): a 32-bit phase
-// accumulator advances by vPhaseIncrement every carrier cycle and wraps
+// The reference generator is a fixed-point DDS (see spwm_math.h): a 32-bit
+// phase accumulator advances by vPhaseIncrement every carrier cycle and wraps
 // naturally on overflow — any modulation frequency, no drift, no wrap glitch.
-// Table lives in DTCM (zero-wait-state).
-static uint16_t spwmLut[SpwmLutSize];
+// The LUT holds the SIGNED unit reference waveform (see modulation.h); the
+// amplitude is applied at runtime via vIndexQ15 so closed-loop control and
+// soft-start never rebuild the table. Lives in DTCM (zero-wait-state).
+static int16_t spwmLut[SpwmLutSize];
 static volatile uint32_t vPhaseIncrement = 0;
 
-// Submodules 0 and 2 of FlexPWM2 (Sm20/Sm22) — the only LDOK bits the SPWM ISR touches
-constexpr uint8_t Sm20Sm22Mask = (1U << 0) | (1U << 2);
+// Runtime amplitude: current index ramps toward the target by vIndexStepQ15
+// per carrier cycle (soft-start / slew limit). The feedback loop moves the
+// target; the ISR moves the current value.
+static volatile uint32_t vIndexQ15 = 0;
+static volatile uint32_t vIndexTargetQ15 = 0;
+static volatile uint32_t vIndexStepQ15 = 1UL << 30;
+static volatile int32_t vDtCompQ15 = 0;
+
+volatile bool vFaultTripped = false;
+
+// Modulation cells map onto FlexPWM2 submodules in this order; cells=2 drives
+// Sm20+Sm22 (the original SPWM pair), 3-4 add Sm21/Sm23.
+static SubModule *const CellSm[MaxModulationCells] = {&Sm20, &Sm22, &Sm21, &Sm23};
+static const uint8_t CellLdokMasks[MaxModulationCells + 1] = {0, 0b0001, 0b0101, 0b0111, 0b1111};
+
+static CellPlan cellPlan[MaxModulationCells]; // written only with the SPWM IRQ disabled
+static volatile uint8_t vModScheme = ModSchemeSpwmUnipolar;
+static volatile uint8_t vModCells = 2;
+static volatile uint8_t vCellLdokMask = 0b0101;
+
+bool spwmActive() {
+  return config.Pwm.Tm2.UseSpwm && config.Pwm.Tm2.ModulationScheme != ModSchemeFixed;
+}
 
 const uint8_t PrescalerValues[] = {1, 2, 4, 8, 16, 32, 64, 128};
 
@@ -116,6 +140,17 @@ void configurePwm() {
 // Reconfigure only the timers whose settings actually changed, so an update to
 // one submodule never disturbs the others' outputs or phase.
 void applyPwmConfig(const MainConfig &previous) {
+  if (vFaultTripped) {
+    vFaultTripped = false;
+    writeLog("Fault cleared; re-enabling PWM outputs");
+    Tm1.enable();
+    Tm2.enable();
+    Tm3.enable();
+    Tm4.enable();
+  }
+  if (memcmp(&previous.FaultProtection, &config.FaultProtection, sizeof(config.FaultProtection)) != 0) {
+    configureFaultProtection();
+  }
   if (memcmp(&previous.Pwm.Tm1, &config.Pwm.Tm1, sizeof(config.Pwm.Tm1)) != 0) {
     configureModule1();
   }
@@ -133,23 +168,53 @@ void applyPwmConfig(const MainConfig &previous) {
 }
 
 void buildSpwmLut() {
-  // The table is one pure sine cycle; its contents don't depend on the config,
-  // so it only needs to be generated once (boot-time, so plain sinf is fine).
-  static bool lutBuilt = false;
-  if (!lutBuilt) {
-    fillSpwmLut(spwmLut, SpwmLutSize);
-    lutBuilt = true;
-  }
+  const Module2Config &tm2 = config.Pwm.Tm2;
 
-  const uint32_t carrier = config.Pwm.Tm2.SpwmCarrierFrequency;
-  vPhaseIncrement = spwmPhaseIncrement(carrier, config.Pwm.Tm2.SpwmModulationFrequency);
+  uint8_t cells = tm2.ModulationCells;
+  if (cells < 1) cells = 1;
+  if (cells > MaxModulationCells) cells = MaxModulationCells;
+  if (tm2.ModulationScheme == ModSchemeSvpwm) cells = 3; // three phase legs, always
+
+  uint16_t indexMilli = tm2.ModulationIndexMilli;
+  if (indexMilli > MaxModulationIndexMilli) indexMilli = MaxModulationIndexMilli;
+
+  buildUnitReferenceLut(spwmLut, SpwmLutSize, tm2.ModulationScheme == ModSchemeThipwm);
+
+  for (uint8_t k = 0; k < MaxModulationCells; k++) {
+    cellPlan[k] = modulationCellPlan(tm2.ModulationScheme, tm2.CarrierDisposition, k, cells);
+  }
+  vModScheme = tm2.ModulationScheme;
+  vModCells = cells;
+  vCellLdokMask = CellLdokMasks[cells];
+
+  const uint32_t carrier = tm2.SpwmCarrierFrequency;
+  vPhaseIncrement = spwmPhaseIncrement(carrier, tm2.SpwmModulationFrequency);
   vPhase = 0;
+
+  // Amplitude: the ISR ramps the current index toward the target. The
+  // current value persists across reconfigures, so soft-start ramps from
+  // wherever the output already is, and from zero on a cold start.
+  const uint32_t targetQ15 = indexMilliToQ15(indexMilli);
+  vIndexStepQ15 = softStartStepQ15(targetQ15, tm2.SoftStartMs, carrier);
+  vIndexTargetQ15 = targetQ15;
+
+  vDtCompQ15 = tm2.DeadTimeCompensation ? deadtimeCompQ15(tm2.Sm20.DeadTime, carrier) : 0;
 
   const uint64_t actualMilliHz = spwmActualMilliHz(vPhaseIncrement, carrier);
   char strBuf[LOG_BUF_SIZE];
-  snprintf(strBuf, sizeof(strBuf), "SPWM DDS: %lu.%03luHz modulation on %luHz carrier",
-           static_cast<uint32_t>(actualMilliHz / 1000), static_cast<uint32_t>(actualMilliHz % 1000), carrier);
+  snprintf(strBuf, sizeof(strBuf),
+           "Modulation: scheme %u, %u cell(s), index %u/1000, %lu.%03luHz on %luHz carrier, dtcomp %ld/32768",
+           vModScheme, cells, indexMilli,
+           static_cast<uint32_t>(actualMilliHz / 1000), static_cast<uint32_t>(actualMilliHz % 1000), carrier,
+           static_cast<long>(vDtCompQ15));
   writeLog(strBuf);
+}
+
+// Clamped setter for the closed-loop controller (and anything else that wants
+// live amplitude control without touching the LUT)
+void setModulationIndexTargetQ15(uint32_t targetQ15) {
+  const uint32_t maxQ15 = indexMilliToQ15(MaxModulationIndexMilli);
+  vIndexTargetQ15 = targetQ15 > maxQ15 ? maxQ15 : targetQ15;
 }
 
 void configureModule1() {
@@ -165,9 +230,17 @@ void configureModule1() {
 }
 
 void configureModule2() {
-  // Precompute the sine table if SPWM is enabled
-  if (config.Pwm.Tm2.UseSpwm) {
+  // Precompute the reference table and cell plans if modulation is enabled
+  if (spwmActive()) {
     buildSpwmLut();
+  }
+
+  // Carrier geometry: 180deg-shifted cells run with inverted output polarity
+  // (the ISR complements their duty). Everything else is explicitly restored
+  // to normal polarity so scheme changes never leave a leg inverted.
+  for (uint8_t k = 0; k < MaxModulationCells; k++) {
+    const bool inverted = spwmActive() && k < vModCells && cellPlan[k].polarityInverted;
+    CellSm[k]->setupLevel(inverted ? kPWM_LowTrue : kPWM_HighTrue);
   }
 
   // Configure Sm20 (Channels A and B)
@@ -329,7 +402,7 @@ uint8_t calculateBestPrescaler(uint32_t pwmFrequency) {
 void attachInterruptVectors() {
   Serial.println(F("Attaching PWM interrupt vectors"));
 
-  if (config.Pwm.Tm2.UseSpwm) {
+  if (spwmActive()) {
     attachModule2PwmInterruptVectors();
     enablePwmInterrupts();
   }
@@ -377,20 +450,123 @@ FASTRUN void IsrOverflowSm20() {
   const uint32_t phase = vPhase;
   vPhase = phase + vPhaseIncrement; // wraps on overflow = seamless cycle boundary
 
-  const uint16_t dutyA = spwmDutyFromPhase(spwmLut, phase);
+  // Slew-limited amplitude: soft-start ramp and closed-loop target tracking
+  const uint32_t idx = rampIndexQ15(vIndexQ15, vIndexTargetQ15, vIndexStepQ15);
+  vIndexQ15 = idx;
 
-  Tm2.setPwmLdok(Sm20Sm22Mask, false);
+  const uint8_t scheme = vModScheme;
+  const uint8_t cells = vModCells;
+  const uint8_t mask = vCellLdokMask;
+  const int32_t comp = vDtCompQ15;
 
-  Sm20.updateDutyCycle(dutyA);
-  Sm22.updateDutyCycle(static_cast<uint16_t>(0U - dutyA)); // 65536 - dutyA == MidDutyCycle - s
+  Tm2.setPwmLdok(mask, false);
+
+  if (scheme == ModSchemeSvpwm) {
+    int32_t s[3];
+    svmUnitRefs(spwmLut, phase, s);
+    for (uint8_t k = 0; k < 3; k++) {
+      CellSm[k]->updateDutyCycle(refToDuty(s[k], idx, comp));
+    }
+  } else {
+    const int32_t s = refFromPhase(spwmLut, phase);
+    // Dead-time compensation applies to full-reference legs; the band-sliced
+    // level-shifted cells switch at most one pair per instant, handled per cell
+    const uint16_t ref = refToDuty(s, idx, scheme == ModSchemeLevelShifted ? 0 : comp);
+    for (uint8_t k = 0; k < cells; k++) {
+      const uint16_t duty = modulationFinalDuty(modulationCellDuty(scheme, ref, k, cells), cellPlan[k]);
+      CellSm[k]->updateDutyCycle(duty);
+    }
+  }
 
   Sm20.clearStatusFlags(kPWM_CompareVal1Flag);
 
-  Tm2.setPwmLdok(Sm20Sm22Mask, true);
+  Tm2.setPwmLdok(mask, true);
 
   vIsrCycles = ARM_DWT_CYCCNT - t0;
 
   asm volatile("dsb");
+}
+
+// ---------------------------------------------------------------------------
+// Closed-loop amplitude regulation (item: feedback). Runs from loop() at
+// Feedback.LoopHz; the feedback pin carries a DC voltage proportional to the
+// regulated quantity. The PI output drives the modulation index target, which
+// the ISR tracks with its slew limit.
+// ---------------------------------------------------------------------------
+#include "pi_controller.h"
+
+void runFeedbackLoop() {
+  if (!config.Feedback.Enabled || !spwmActive()) {
+    return;
+  }
+
+  static elapsedMicros sinceLastRun;
+  const uint32_t loopHz = config.Feedback.LoopHz > 0 ? config.Feedback.LoopHz : 1000;
+  const uint32_t periodUs = 1000000UL / loopHz;
+  if (sinceLastRun < periodUs) {
+    return;
+  }
+  const float dt = static_cast<float>(static_cast<uint32_t>(sinceLastRun)) / 1000000.0f;
+  sinceLastRun = 0;
+
+  const int raw = analogRead(config.Feedback.AnalogPin);
+  const float measuredMv = static_cast<float>(raw) * (static_cast<float>(config.Feedback.FullScaleMillivolts) / 1023.0f);
+  const float errorVolts = (static_cast<float>(config.Feedback.SetpointMillivolts) - measuredMv) / 1000.0f;
+
+  static PiController pi;
+  pi.kp = static_cast<float>(config.Feedback.KpMilli) / 1000.0f;
+  pi.ki = static_cast<float>(config.Feedback.KiMilli) / 1000.0f;
+  pi.outMin = 0.0f;
+  pi.outMax = static_cast<float>(MaxModulationIndexMilli) / 1000.0f;
+
+  const float indexOut = piUpdate(pi, errorVolts, dt);
+  setModulationIndexTargetQ15(static_cast<uint32_t>(indexOut * 32768.0f));
+}
+
+// ---------------------------------------------------------------------------
+// Fault protection (item: protection). Fast software trip: a transition on
+// the fault pin masks every FlexPWM output from a high-priority GPIO
+// interrupt (~1us pin-to-off). Latched until the next settings apply.
+// A true hardware fault path (XBAR -> FlexPWM FAULT0, <10ns, zero software)
+// can reuse the same pin; see docs/RT1170_PSPWM.md for the bring-up notes.
+// ---------------------------------------------------------------------------
+FASTRUN static void faultTripIsr() {
+  // Mask all outputs on all four timers (MASK register + local FORCE)
+  Tm1.disable();
+  Tm2.disable();
+  Tm3.disable();
+  Tm4.disable();
+  NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
+  vFaultTripped = true;
+  asm volatile("dsb");
+}
+
+void configureFaultProtection() {
+  static bool attached = false;
+  static uint8_t attachedPin = 0;
+
+  if (attached) {
+    detachInterrupt(digitalPinToInterrupt(attachedPin));
+    attached = false;
+  }
+
+  if (!config.FaultProtection.Enabled) {
+    return;
+  }
+
+  const uint8_t pin = config.FaultProtection.Pin;
+  pinMode(pin, config.FaultProtection.ActiveHigh ? INPUT_PULLDOWN : INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(pin), faultTripIsr,
+                  config.FaultProtection.ActiveHigh ? RISING : FALLING);
+  // Trip must preempt everything, including the modulation ISR (priority 32)
+  NVIC_SET_PRIORITY(IRQ_GPIO6789, 16);
+  attached = true;
+  attachedPin = pin;
+
+  char strBuf[LOG_BUF_SIZE];
+  snprintf(strBuf, sizeof(strBuf), "Fault trip armed on pin %u (active %s)",
+           pin, config.FaultProtection.ActiveHigh ? "high" : "low");
+  writeLog(strBuf);
 }
 
 bool xbarConnect(uint8_t input, uint8_t output) {

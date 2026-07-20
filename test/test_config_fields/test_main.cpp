@@ -24,11 +24,14 @@ static const char *const numericFields[] = {
   "phase-shift-21a", "phase-shift-22a", "phase-shift-22b", "phase-shift-23a",
   "phase-shift-23b", "phase-shift-41a", "phase-shift-42a", "phase-shift-42b",
   "spwm-carrier-signal-frequency", "spwm-modulation-frequency",
+  "modulation-scheme", "modulation-index", "modulation-cells", "carrier-disposition",
+  "soft-start-ms", "feedback-setpoint-mv", "feedback-kp", "feedback-ki", "fault-pin",
   "asymmetric-induction-preshiftnanos", "asymmetric-induction-postshiftnanos",
 };
 
 static const char *const booleanFields[] = {
   "print-regs", "sync-pwm", "use-spwm", "enable-asymmetric-induction",
+  "deadtime-compensation", "feedback-enabled", "fault-enabled", "fault-active-high",
 };
 
 void test_all_numeric_fields_recognised() {
@@ -53,7 +56,28 @@ void test_numeric_fields_reach_the_right_slots() {
   applyConfigFormField(cfg, "spwm-carrier-signal-frequency", "24000");
   applyConfigFormField(cfg, "spwm-modulation-frequency", "60");
   applyConfigFormField(cfg, "asymmetric-induction-preshiftnanos", "-250");
+  applyConfigFormField(cfg, "modulation-scheme", "4");
+  applyConfigFormField(cfg, "modulation-index", "1155");
+  applyConfigFormField(cfg, "modulation-cells", "4");
+  applyConfigFormField(cfg, "carrier-disposition", "2");
 
+  applyConfigFormField(cfg, "soft-start-ms", "750");
+  applyConfigFormField(cfg, "feedback-setpoint-mv", "2400");
+  applyConfigFormField(cfg, "feedback-kp", "333");
+  applyConfigFormField(cfg, "fault-pin", "31");
+  applyConfigFormField(cfg, "feedback-enabled", "Yes");
+  applyConfigFormField(cfg, "fault-active-high", "No");
+
+  TEST_ASSERT_EQUAL_UINT8(4, cfg.Pwm.Tm2.ModulationScheme);
+  TEST_ASSERT_EQUAL_UINT16(1155, cfg.Pwm.Tm2.ModulationIndexMilli);
+  TEST_ASSERT_EQUAL_UINT8(4, cfg.Pwm.Tm2.ModulationCells);
+  TEST_ASSERT_EQUAL_UINT8(2, cfg.Pwm.Tm2.CarrierDisposition);
+  TEST_ASSERT_EQUAL_UINT16(750, cfg.Pwm.Tm2.SoftStartMs);
+  TEST_ASSERT_EQUAL_UINT32(2400, cfg.Feedback.SetpointMillivolts);
+  TEST_ASSERT_EQUAL_UINT16(333, cfg.Feedback.KpMilli);
+  TEST_ASSERT_EQUAL_UINT8(31, cfg.FaultProtection.Pin);
+  TEST_ASSERT_TRUE(cfg.Feedback.Enabled);
+  TEST_ASSERT_FALSE(cfg.FaultProtection.ActiveHigh);
   TEST_ASSERT_EQUAL_UINT32(20000, cfg.Pwm.Tm2.Sm20.PwmFrequency);
   TEST_ASSERT_EQUAL_UINT16(75, cfg.Pwm.Tm4.Sm42.DeadTime);
   TEST_ASSERT_EQUAL_UINT16(40000, cfg.Pwm.Tm1.Sm13.ChannelB.DutyCycle);

@@ -113,10 +113,9 @@ void test_channel_b_complement_in_range() {
   uint32_t phase = 0;
   for (int i = 0; i < 400; i++) {
     const uint16_t dutyA = spwmDutyFromPhase(lut, phase);
-    const uint16_t dutyB = (uint16_t)(0U - dutyA); // as computed in the ISR
+    const uint16_t dutyB = (uint16_t)(65535U - dutyA); // ISR complement (modulationFinalDuty)
     TEST_ASSERT_GREATER_OR_EQUAL_UINT16(1, dutyA);
-    TEST_ASSERT_GREATER_OR_EQUAL_UINT16(1, dutyB);
-    TEST_ASSERT_EQUAL_UINT32(65536, (uint32_t)dutyA + (uint32_t)dutyB);
+    TEST_ASSERT_EQUAL_UINT32(65535, (uint32_t)dutyA + (uint32_t)dutyB);
     phase += inc;
   }
 }

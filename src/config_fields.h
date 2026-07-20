@@ -108,6 +108,32 @@ inline bool applyConfigFormField(MainConfig &config, const char *name, const cha
     config.Pwm.Tm2.SpwmCarrierFrequency = strtol(value, nullptr, 10);
   } else if (strcmp(name, "spwm-modulation-frequency") == 0) {
     config.Pwm.Tm2.SpwmModulationFrequency = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "modulation-scheme") == 0) {
+    config.Pwm.Tm2.ModulationScheme = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "modulation-index") == 0) {
+    config.Pwm.Tm2.ModulationIndexMilli = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "modulation-cells") == 0) {
+    config.Pwm.Tm2.ModulationCells = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "carrier-disposition") == 0) {
+    config.Pwm.Tm2.CarrierDisposition = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "deadtime-compensation") == 0) {
+    config.Pwm.Tm2.DeadTimeCompensation = (strcmp(value, "Yes") == 0);
+  } else if (strcmp(name, "soft-start-ms") == 0) {
+    config.Pwm.Tm2.SoftStartMs = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "feedback-enabled") == 0) {
+    config.Feedback.Enabled = (strcmp(value, "Yes") == 0);
+  } else if (strcmp(name, "feedback-setpoint-mv") == 0) {
+    config.Feedback.SetpointMillivolts = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "feedback-kp") == 0) {
+    config.Feedback.KpMilli = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "feedback-ki") == 0) {
+    config.Feedback.KiMilli = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "fault-enabled") == 0) {
+    config.FaultProtection.Enabled = (strcmp(value, "Yes") == 0);
+  } else if (strcmp(name, "fault-pin") == 0) {
+    config.FaultProtection.Pin = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "fault-active-high") == 0) {
+    config.FaultProtection.ActiveHigh = (strcmp(value, "Yes") == 0);
   } else if (strcmp(name, "enable-asymmetric-induction") == 0) {
     config.AsymmetricInduction.IsEnabled = (strcmp(value, "Yes") == 0);
   } else if (strcmp(name, "asymmetric-induction-preshiftnanos") == 0) {

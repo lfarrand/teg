@@ -58,6 +58,19 @@ void applyPwmConfig(const MainConfig &previous);
 
 void buildSpwmLut();
 
+// True when the Tm2 modulation ISR should run (SPWM enabled and scheme is not fixed-duty)
+bool spwmActive();
+
+// Live amplitude control (clamped to the maximum modulation index)
+void setModulationIndexTargetQ15(uint32_t targetQ15);
+
+// Closed-loop amplitude regulation; call from loop()
+void runFeedbackLoop();
+
+// Fast software fault trip on a GPIO pin; call after configurePwm() and on config change
+void configureFaultProtection();
+extern volatile bool vFaultTripped;
+
 void configureModule1();
 
 void configureModule2();

@@ -1,5 +1,6 @@
 #include "pwm_utils.h"
 #include "spwm_math.h"
+#include "pwm_timing.h"
 #include "utils.h"
 #include <QNEthernet.h>
 #include "config_json.h"
@@ -248,30 +249,16 @@ void configureModule4() {
   // Configure Sm42 (Channels A and B, with phase shift and Asymmetric Induction)
   if (config.AsymmetricInduction.IsEnabled) {
     // Asymmetric Induction mode: Custom timing for Sm42
-    const uint8_t prescalerIndex = calculateBestPrescaler(config.Pwm.Tm4.Sm42.PwmFrequency);
-    const float32_t dutyCycleA = static_cast<float32_t>(config.Pwm.Tm4.Sm42.ChannelA.DutyCycle) / 65536.0f;
-    constexpr int32_t nanosecondsPerSecond = 1000000000;
-    constexpr float32_t nanosecondsPerSecondFloat = static_cast<float32_t>(nanosecondsPerSecond);
-    const float32_t clockTicksPerNanosecond = F_BUS_ACTUAL / nanosecondsPerSecondFloat;
-    const uint32_t periodTicks = static_cast<uint32_t>(roundf(
-      F_BUS_ACTUAL / static_cast<float32_t>(config.Pwm.Tm4.Sm42.PwmFrequency)));
-    const int16_t pulseTicksA = static_cast<int16_t>(roundf(periodTicks * dutyCycleA));
-    const int16_t preShiftTicks = static_cast<int16_t>(roundf(
-      clockTicksPerNanosecond * config.AsymmetricInduction.PreShiftNanos));
-    const int16_t postShiftTicks = static_cast<int16_t>(roundf(
-      clockTicksPerNanosecond * config.AsymmetricInduction.PostShiftNanos));
-    constexpr int16_t periodStart = 0;
-    const int16_t periodEnd = periodTicks - 1;
-    const int16_t startChanA = periodStart;
-    const int16_t stopChanA = startChanA + pulseTicksA;
-    const int16_t startChanB = stopChanA - preShiftTicks;
-    const int16_t stopChanB = periodEnd - postShiftTicks;
+    const AsymmetricTimings t = computeAsymmetricTimings(
+      F_BUS_ACTUAL, config.Pwm.Tm4.Sm42.PwmFrequency, config.Pwm.Tm4.Sm42.ChannelA.DutyCycle,
+      config.AsymmetricInduction.PreShiftNanos, config.AsymmetricInduction.PostShiftNanos,
+      MAX_COUNTER_VALUE);
 
     Sm42.disableOutput(ChanA);
     Sm42.disableOutput(ChanB);
 
     Sm42.setPwmLdok(false);
-    Sm42.setPrescaler(static_cast<pwm_clock_prescale_t>(prescalerIndex));
+    Sm42.setPrescaler(static_cast<pwm_clock_prescale_t>(t.prescalerIndex));
     Sm42.setupDeadtime(config.Pwm.Tm4.Sm42.DeadTime, 1000000000);
 
     if (!Sm42.setPwmFrequency(config.Pwm.Tm4.Sm42.PwmFrequency, false, true)) {
@@ -289,13 +276,13 @@ void configureModule4() {
     }
 
     // ...which the custom asymmetric edge timings then overwrite
-    Sm42.setInitValue(periodStart);
-    Sm42.setVal0Value(periodStart);
-    Sm42.setVal1Value(periodEnd);
-    Sm42.setVal2Value(startChanA);
-    Sm42.setVal3Value(stopChanA);
-    Sm42.setVal4Value(startChanB);
-    Sm42.setVal5Value(stopChanB);
+    Sm42.setInitValue(t.periodStart);
+    Sm42.setVal0Value(t.periodStart);
+    Sm42.setVal1Value(t.periodEnd);
+    Sm42.setVal2Value(t.startChanA);
+    Sm42.setVal3Value(t.stopChanA);
+    Sm42.setVal4Value(t.startChanB);
+    Sm42.setVal5Value(t.stopChanB);
 
     Sm42.setPwmLdok(true);
     Tm4.enable();

@@ -8,7 +8,7 @@ extern SdFs sd;
 extern LittleFS_QSPIFlash flashFS;
 extern MainConfig config;
 
-void loadConfiguration(const char *filename) {
+FLASHMEM void loadConfiguration(const char *filename) {
   Serial.println(F("Loading configuration from file"));
   Serial.println(F("Opening existing config file"));
 
@@ -132,7 +132,7 @@ void loadConfiguration(const char *filename) {
   file.close();
 }
 
-void saveConfiguration(const char *filename) {
+FLASHMEM void saveConfiguration(const char *filename) {
   Serial.println(F("Saving configuration to file"));
 
   if (sd.exists(filename)) {
@@ -280,7 +280,7 @@ void saveConfiguration(const char *filename) {
   file.close();
 }
 
-void printFile(const char *filename) {
+FLASHMEM void printFile(const char *filename) {
   FsFile file = sd.open(filename);
   if (!file) {
     Serial.println(F("Failed to read file"));
@@ -295,7 +295,7 @@ void printFile(const char *filename) {
   file.close();
 }
 
-void loadConfigurationFromFlash(const char* filename) {
+FLASHMEM void loadConfigurationFromFlash(const char* filename) {
   File file = flashFS.open(filename, FILE_READ);
   if (!file) {
     Serial.println(F("Failed to open config file from flash for reading"));
@@ -317,7 +317,7 @@ void loadConfigurationFromFlash(const char* filename) {
   file.close();
 }
 
-void saveConfigurationToFlash(const char* filename) {
+FLASHMEM void saveConfigurationToFlash(const char* filename) {
   if (flashFS.exists(filename)) {
     flashFS.remove(filename);
   }

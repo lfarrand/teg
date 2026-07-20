@@ -27,8 +27,11 @@ void reportMemoryUsage() {
   int dtcmFree = getFreeMemory();
   int ocramFree = freeram();
 
-  char buf[64];
-  snprintf(buf, sizeof(buf), "DTCM Free: %d | OCRAM Free: %d", dtcmFree, ocramFree);
+  extern volatile uint32_t vIsrCycles; // last SPWM ISR duration, 600MHz DWT cycles
+
+  char buf[80];
+  snprintf(buf, sizeof(buf), "DTCM Free: %d | OCRAM Free: %d | SPWM ISR: %lu cycles",
+           dtcmFree, ocramFree, vIsrCycles);
   Serial.println(buf);
 
   // Compact form for the dedicated OLED status line (21 chars max at size-1 font)

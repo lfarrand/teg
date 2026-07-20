@@ -140,6 +140,14 @@ void setup() {
 void loop() {
   processWebServer();
 
+  if (configSaveNeeded) {
+    configSaveNeeded = false;
+    saveConfiguration(filename);
+    if (config.Pwm.Verbose) {
+      printFile(filename);
+    }
+  }
+
   static unsigned long lastRamCheck = 0;
   if (millis() - lastRamCheck >= 5000) {
     reportMemoryUsage();
@@ -148,5 +156,5 @@ void loop() {
 
   flushDisplay();
 
-  delay(10);
+  delay(1);
 }

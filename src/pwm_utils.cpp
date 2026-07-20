@@ -5,8 +5,23 @@
 
 extern qindesign::network::EthernetServer server;
 
-volatile uint32_t vSample = 0;
-volatile float32_t vSpwmUpdateSpeed = 0.0f;
+volatile uint32_t vPhase = 0;
+volatile uint32_t vIsrCycles = 0;
+
+// SPWM sine generation is a fixed-point DDS: a 32-bit phase accumulator advances
+// by vPhaseIncrement every carrier cycle and wraps naturally on overflow, so any
+// modulation frequency is exact (resolution carrier/2^32 Hz) with no drift and
+// no glitch at the wrap. The top SpwmLutBits of the phase index a sine table of
+// channel-A duty values; the next 8 bits linearly interpolate between entries,
+// keeping the ISR integer-only (no FPU context stacking on exception entry).
+// Table lives in DTCM (zero-wait-state). Channel B duty is derived as 65536 - dutyA.
+constexpr uint32_t SpwmLutBits = 11;
+constexpr uint32_t SpwmLutSize = 1U << SpwmLutBits; // 2048 entries, 4 KB
+static uint16_t spwmLut[SpwmLutSize];
+static volatile uint32_t vPhaseIncrement = 0;
+
+// Submodules 0 and 2 of FlexPWM2 (Sm20/Sm22) — the only LDOK bits the SPWM ISR touches
+constexpr uint8_t Sm20Sm22Mask = (1U << 0) | (1U << 2);
 
 const uint8_t PrescalerValues[] = {1, 2, 4, 8, 16, 32, 64, 128};
 
@@ -58,29 +73,36 @@ struct SubmoduleSettings {
 };
 
 void setupSubmodule(SubModule &sm, const SubmoduleSettings &settings, bool printRegs) {
-  if (settings.deadtimeNs > 0) {
-    sm.setupDeadtime(settings.deadtimeNs, ChanA);
-    if (settings.hasChanB) sm.setupDeadtime(settings.deadtimeNs, ChanB);
-  }
+  constexpr uint32_t NanosecondsUnit = 1000000000;
 
-  if (!sm.setPwmFrequency(settings.frequency, false, true)) {
-    // Log error only
-    writeLog("Failed to set PWM freq");
-  }
+  sm.setPwmLdok(false); // clear any pending LDOK so the buffered register writes below take
+
+  // unit must be passed explicitly: setupDeadtime(value, ChanA) resolves to the
+  // all-channels overload with unit=0 and silently divides by zero
+  sm.setupDeadtime(settings.deadtimeNs, NanosecondsUnit);
 
   sm.setupDutyCycle(ChanA, settings.dutyA);
   if (settings.hasChanB && settings.dutyB != UINT16_MAX) {
     sm.setupDutyCycle(ChanB, settings.dutyB);
   }
 
-  sm.timer().setPwmLdok(true); // Batch this if possible
-  sm.timer().enable();
-
-  bool started = sm.begin(settings.hasChanB, settings.hasChanB, false); // Adjust params
-  if (!started) {
-    writeLog("Failed to start submodule");
-    // Handle error
+  if (!sm.setPwmFrequency(settings.frequency, false, true)) {
+    writeLog("Failed to set PWM freq");
   }
+
+  // First call only: pin mux + counter start. No-op on reconfiguration.
+  if (!sm.begin(true, false, false)) {
+    writeLog("Failed to start submodule");
+  }
+
+  // Programs deadtime (DTCNT), output enable (OUTEN), polarity and duty registers.
+  // begin() skips this on reconfiguration, so it must be called explicitly every time.
+  if (!sm.updateSetting(false)) {
+    writeLog("Failed to apply submodule settings");
+  }
+
+  sm.timer().enable();
+  sm.setPwmLdok(true); // hardware loads the buffered values at the next PWM reload
 
   if (printRegs) {
     sm.printRegs();
@@ -88,15 +110,60 @@ void setupSubmodule(SubModule &sm, const SubmoduleSettings &settings, bool print
 }
 
 void configurePwm() {
-  if (config.Pwm.Tm2.UseSpwm) {
-    vSpwmUpdateSpeed = (2.0f * PI * static_cast<float32_t>(config.Pwm.Tm2.SpwmModulationFrequency)) / static_cast<
-                         float32_t>(config.Pwm.Tm2.SpwmCarrierFrequency);
-  }
-
   configureModule1();
   configureModule2();
   configureModule3();
   configureModule4();
+}
+
+// Reconfigure only the timers whose settings actually changed, so an update to
+// one submodule never disturbs the others' outputs or phase.
+void applyPwmConfig(const MainConfig &previous) {
+  if (memcmp(&previous.Pwm.Tm1, &config.Pwm.Tm1, sizeof(config.Pwm.Tm1)) != 0) {
+    configureModule1();
+  }
+  if (memcmp(&previous.Pwm.Tm2, &config.Pwm.Tm2, sizeof(config.Pwm.Tm2)) != 0) {
+    configureModule2();
+  }
+  if (memcmp(&previous.Pwm.Tm3, &config.Pwm.Tm3, sizeof(config.Pwm.Tm3)) != 0) {
+    configureModule3();
+  }
+  if (memcmp(&previous.Pwm.Tm4, &config.Pwm.Tm4, sizeof(config.Pwm.Tm4)) != 0 ||
+      memcmp(&previous.AsymmetricInduction, &config.AsymmetricInduction,
+             sizeof(config.AsymmetricInduction)) != 0) {
+    configureModule4();
+  }
+}
+
+void buildSpwmLut() {
+  // The table is one pure sine cycle; its contents don't depend on the config,
+  // so it only needs to be generated once.
+  static bool lutBuilt = false;
+  if (!lutBuilt) {
+    constexpr float32_t TwoPi = 6.28318530717958648f;
+    const float32_t phaseStep = TwoPi / static_cast<float32_t>(SpwmLutSize);
+    for (uint32_t i = 0; i < SpwmLutSize; i++) {
+      const float32_t s = roundf((MidDutyCycle - 1) * arm_sin_f32(phaseStep * static_cast<float32_t>(i)));
+      spwmLut[i] = static_cast<uint16_t>(MidDutyCycle + s);
+    }
+    lutBuilt = true;
+  }
+
+  // DDS tuning word: the modulation phase advances by mod/carrier of a full
+  // cycle (2^32) per carrier period, so the output frequency is exact to
+  // carrier/2^32 Hz for ANY carrier/modulation ratio.
+  const uint32_t carrier = config.Pwm.Tm2.SpwmCarrierFrequency;
+  const uint32_t modulation = config.Pwm.Tm2.SpwmModulationFrequency;
+  vPhaseIncrement = carrier > 0
+                      ? static_cast<uint32_t>((static_cast<uint64_t>(modulation) << 32) / carrier)
+                      : 0;
+  vPhase = 0;
+
+  const uint64_t actualMilliHz = (static_cast<uint64_t>(vPhaseIncrement) * carrier * 1000ULL) >> 32;
+  char strBuf[LOG_BUF_SIZE];
+  snprintf(strBuf, sizeof(strBuf), "SPWM DDS: %lu.%03luHz modulation on %luHz carrier",
+           static_cast<uint32_t>(actualMilliHz / 1000), static_cast<uint32_t>(actualMilliHz % 1000), carrier);
+  writeLog(strBuf);
 }
 
 void configureModule1() {
@@ -112,10 +179,9 @@ void configureModule1() {
 }
 
 void configureModule2() {
-  // Calculate SPWM update speed if enabled
+  // Precompute the sine table if SPWM is enabled
   if (config.Pwm.Tm2.UseSpwm) {
-    vSpwmUpdateSpeed = (2.0f * PI * static_cast<float32_t>(config.Pwm.Tm2.SpwmModulationFrequency)) /
-                       static_cast<float32_t>(config.Pwm.Tm2.SpwmCarrierFrequency);
+    buildSpwmLut();
   }
 
   // Configure Sm20 (Channels A and B)
@@ -219,7 +285,25 @@ void configureModule4() {
     Sm42.disableOutput(ChanA);
     Sm42.disableOutput(ChanB);
 
+    Sm42.setPwmLdok(false);
     Sm42.setPrescaler(static_cast<pwm_clock_prescale_t>(prescalerIndex));
+    Sm42.setupDeadtime(config.Pwm.Tm4.Sm42.DeadTime, 1000000000);
+
+    if (!Sm42.setPwmFrequency(config.Pwm.Tm4.Sm42.PwmFrequency, false, true)) {
+      writeLog("Failed to set SM42 PWM freq.");
+    }
+
+    // First call only: pin mux + counter start. No-op on reconfiguration.
+    if (!Sm42.begin(true, false, false)) {
+      writeLog("Failed to start SM42");
+    }
+
+    // Programs deadtime/output-enable/polarity plus standard VALx values...
+    if (!Sm42.updateSetting(false)) {
+      writeLog("Failed to apply SM42 settings");
+    }
+
+    // ...which the custom asymmetric edge timings then overwrite
     Sm42.setInitValue(periodStart);
     Sm42.setVal0Value(periodStart);
     Sm42.setVal1Value(periodEnd);
@@ -228,14 +312,8 @@ void configureModule4() {
     Sm42.setVal4Value(startChanB);
     Sm42.setVal5Value(stopChanB);
 
-    Sm42.setupDeadtime(config.Pwm.Tm4.Sm42.DeadTime, ChanA);
-    Sm42.setupDeadtime(config.Pwm.Tm4.Sm42.DeadTime, ChanB);
-
-    if (!Sm42.setPwmFrequency(config.Pwm.Tm4.Sm42.PwmFrequency, false, true)) {
-      writeLog("Failed to set SM42 PWM freq.");
-    }
-
     Sm42.setPwmLdok(true);
+    Tm4.enable();
     Sm42.enableOutput(ChanA);
     Sm42.enableOutput(ChanB);
   } else {
@@ -252,14 +330,6 @@ void configureModule4() {
       .hasChanB = true
     };
     setupSubmodule(Sm42, sm42Settings, config.Pwm.PrintRegs);
-  }
-
-  Tm4.setPwmLdok(true);
-  Tm4.enable();
-
-  if (!Sm42.begin(true, true, false)) {
-    writeLog("Failed to start SM42");
-    // Handle error
   }
 
   // Log summary for all submodules
@@ -323,6 +393,9 @@ void disablePwmInterrupts() {
 
 void enableModule2PwmInterrupts() {
   Serial.println(F("Enabling module 2 PWM interrupts"));
+  // Default priority is 128, shared with USB/Ethernet/systick; raise the SPWM
+  // duty-update IRQ above them so their handlers can't add jitter.
+  NVIC_SET_PRIORITY(IRQ_FLEXPWM2_0, 32);
   NVIC_ENABLE_IRQ(IRQ_FLEXPWM2_0);
   Sm20.enableInterrupts(kPWM_CompareVal1InterruptEnable);
 }
@@ -333,26 +406,34 @@ void disableModule2PwmInterrupts() {
   NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
 }
 
+// Integer-only on purpose: an FPU instruction here would trigger the M7's lazy
+// FPU context stacking (~17 extra cycles and a 26-word exception frame).
 FASTRUN void IsrOverflowSm20() {
-  if (!config.Pwm.Tm2.UseSpwm) {
-    return;
-  }
-  static volatile byte pin13_val = 0;
-  digitalWriteFast(TriggerPin, pin13_val);
-  pin13_val = 1 - pin13_val;
+  const uint32_t t0 = ARM_DWT_CYCCNT;
 
-  if (++vSample >= UINT32_MAX) vSample = 0;
+  digitalToggleFast(TriggerPin);
 
-  float32_t s = roundf((MidDutyCycle - 1) * arm_sin_f32(vSpwmUpdateSpeed * static_cast<float32_t>(vSample)));
+  const uint32_t phase = vPhase;
+  vPhase = phase + vPhaseIncrement; // wraps on overflow = seamless cycle boundary
 
-  Tm2.setPwmLdok(false);
+  // Top bits index the sine table, the next 8 bits interpolate linearly between
+  // adjacent entries (max slope is ~100 counts/entry, so the maths stays small).
+  const uint32_t idx = phase >> (32 - SpwmLutBits);
+  const int32_t frac = (phase >> (32 - SpwmLutBits - 8)) & 0xFF;
+  const int32_t a = spwmLut[idx];
+  const int32_t b = spwmLut[(idx + 1) & (SpwmLutSize - 1)];
+  const uint16_t dutyA = static_cast<uint16_t>(a + (((b - a) * frac) >> 8));
 
-  Sm20.updateDutyCycle(static_cast<uint16_t>(MidDutyCycle + s));
-  Sm22.updateDutyCycle(static_cast<uint16_t>(MidDutyCycle - s));
+  Tm2.setPwmLdok(Sm20Sm22Mask, false);
+
+  Sm20.updateDutyCycle(dutyA);
+  Sm22.updateDutyCycle(static_cast<uint16_t>(0U - dutyA)); // 65536 - dutyA == MidDutyCycle - s
 
   Sm20.clearStatusFlags(kPWM_CompareVal1Flag);
 
-  Tm2.setPwmLdok(true);
+  Tm2.setPwmLdok(Sm20Sm22Mask, true);
+
+  vIsrCycles = ARM_DWT_CYCCNT - t0;
 
   asm volatile("dsb");
 }

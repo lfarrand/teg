@@ -23,6 +23,15 @@ extern char influxDbServerAddress[];
 extern int influxDbPort;
 extern qindesign::network::EthernetClient influxDbClient;
 
+// OLED redraws are deferred and rate-limited: a full display.display() pushes
+// the 1KB framebuffer over I2C (~25-30ms blocking), so writers only mark the
+// display dirty and flushDisplay() coalesces changes into at most one redraw
+// per DisplayFlushIntervalMs.
+static String statusLine;
+static bool displayDirty = false;
+static unsigned long lastDisplayFlush = 0;
+constexpr unsigned long DisplayFlushIntervalMs = 250;
+
 void writeLog(const String &msg) {
   for (int i = 0; i < LogSize - 1; i++) {
     logs[i] = logs[i + 1];
@@ -32,7 +41,26 @@ void writeLog(const String &msg) {
 
   Serial.println(msg);
 
+  displayDirty = true;
+  flushDisplay();
+}
+
+void setStatusLine(const String &line) {
+  if (statusLine != line) {
+    statusLine = line;
+    displayDirty = true;
+  }
+}
+
+void flushDisplay() {
+  if (!displayDirty || millis() - lastDisplayFlush < DisplayFlushIntervalMs) {
+    return;
+  }
+
   display.clearDisplay();
+
+  display.setCursor(0, 0);
+  display.println(statusLine);
 
   for (int16_t i = 0; i < LogSize; i++) {
     display.setCursor(10, (i + 1) * 10);
@@ -40,6 +68,9 @@ void writeLog(const String &msg) {
   }
 
   display.display();
+
+  displayDirty = false;
+  lastDisplayFlush = millis();
 }
 
 int getFreeMemory() {

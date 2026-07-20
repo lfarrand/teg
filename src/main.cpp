@@ -132,6 +132,8 @@ void setup() {
 
   printStats();
 
+  reportMemoryUsage();
+
   digitalWriteFast(LED_BUILTIN, HIGH);
 }
 
@@ -139,10 +141,12 @@ void loop() {
   processWebServer();
 
   static unsigned long lastRamCheck = 0;
-  if (millis() - lastRamCheck >= 1000) {
+  if (millis() - lastRamCheck >= 5000) {
     reportMemoryUsage();
     lastRamCheck = millis();
   }
+
+  flushDisplay();
 
   delay(10);
 }

@@ -54,6 +54,7 @@ struct PwmConfig {
   Module4Config Tm4;
   bool PrintRegs = false;
   bool SyncPwm = false;
+  bool Verbose = false;
 };
 
 struct MainConfig {

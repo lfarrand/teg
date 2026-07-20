@@ -108,6 +108,14 @@ inline bool applyConfigFormField(MainConfig &config, const char *name, const cha
     config.Pwm.Tm2.SpwmCarrierFrequency = strtol(value, nullptr, 10);
   } else if (strcmp(name, "spwm-modulation-frequency") == 0) {
     config.Pwm.Tm2.SpwmModulationFrequency = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "modulation-scheme") == 0) {
+    config.Pwm.Tm2.ModulationScheme = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "modulation-index") == 0) {
+    config.Pwm.Tm2.ModulationIndexMilli = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "modulation-cells") == 0) {
+    config.Pwm.Tm2.ModulationCells = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "carrier-disposition") == 0) {
+    config.Pwm.Tm2.CarrierDisposition = strtol(value, nullptr, 10);
   } else if (strcmp(name, "enable-asymmetric-induction") == 0) {
     config.AsymmetricInduction.IsEnabled = (strcmp(value, "Yes") == 0);
   } else if (strcmp(name, "asymmetric-induction-preshiftnanos") == 0) {

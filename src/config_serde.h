@@ -34,6 +34,10 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Pwm.Tm2.UseSpwm = Config_Pwm_Tm2["UseSpwm"] | false;
   config.Pwm.Tm2.SpwmCarrierFrequency = Config_Pwm_Tm2["SpwmCarrierFrequency"] | 20000;
   config.Pwm.Tm2.SpwmModulationFrequency = Config_Pwm_Tm2["SpwmModulationFrequency"] | 50;
+  config.Pwm.Tm2.ModulationScheme = Config_Pwm_Tm2["ModulationScheme"] | 1;
+  config.Pwm.Tm2.ModulationIndexMilli = Config_Pwm_Tm2["ModulationIndexMilli"] | 1000;
+  config.Pwm.Tm2.ModulationCells = Config_Pwm_Tm2["ModulationCells"] | 2;
+  config.Pwm.Tm2.CarrierDisposition = Config_Pwm_Tm2["CarrierDisposition"] | 0;
 
   JsonObjectConst Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2["Sm20"];
   config.Pwm.Tm2.Sm20.DeadTime = Config_Pwm_Tm2_Sm20["DeadTime"] | 50;
@@ -134,6 +138,10 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm_Tm2["UseSpwm"] = config.Pwm.Tm2.UseSpwm;
   Config_Pwm_Tm2["SpwmCarrierFrequency"] = config.Pwm.Tm2.SpwmCarrierFrequency;
   Config_Pwm_Tm2["SpwmModulationFrequency"] = config.Pwm.Tm2.SpwmModulationFrequency;
+  Config_Pwm_Tm2["ModulationScheme"] = config.Pwm.Tm2.ModulationScheme;
+  Config_Pwm_Tm2["ModulationIndexMilli"] = config.Pwm.Tm2.ModulationIndexMilli;
+  Config_Pwm_Tm2["ModulationCells"] = config.Pwm.Tm2.ModulationCells;
+  Config_Pwm_Tm2["CarrierDisposition"] = config.Pwm.Tm2.CarrierDisposition;
 
   JsonObject Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2["Sm20"].to<JsonObject>();
   Config_Pwm_Tm2_Sm20["DeadTime"] = config.Pwm.Tm2.Sm20.DeadTime;

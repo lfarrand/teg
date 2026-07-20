@@ -25,6 +25,10 @@ struct Module2Config {
   bool UseSpwm = false;
   uint32_t SpwmCarrierFrequency = 20000;
   uint32_t SpwmModulationFrequency = 50;
+  uint8_t ModulationScheme = 1;         // modulation.h ModScheme* (1 = unipolar SPWM)
+  uint16_t ModulationIndexMilli = 1000; // thousandths; up to 1155 with THIPWM
+  uint8_t ModulationCells = 2;          // 1-4 legs/cells, driven in order Sm20, Sm22, Sm21, Sm23
+  uint8_t CarrierDisposition = 0;       // level-shifted only: 0 PD, 1 POD, 2 APOD
   SubmoduleConfig Sm20;
   SubmoduleConfig Sm21;
   SubmoduleConfig Sm22;

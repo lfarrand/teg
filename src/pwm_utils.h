@@ -58,6 +58,9 @@ void applyPwmConfig(const MainConfig &previous);
 
 void buildSpwmLut();
 
+// True when the Tm2 modulation ISR should run (SPWM enabled and scheme is not fixed-duty)
+bool spwmActive();
+
 void configureModule1();
 
 void configureModule2();

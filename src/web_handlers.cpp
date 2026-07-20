@@ -84,6 +84,10 @@ FLASHMEM void settings_pwm(Request &req, Response &res) {
            config.Pwm.Tm2.UseSpwm ? "Yes" : "No",
            config.Pwm.Tm2.SpwmCarrierFrequency,
            config.Pwm.Tm2.SpwmModulationFrequency,
+           config.Pwm.Tm2.ModulationScheme,
+           config.Pwm.Tm2.ModulationIndexMilli,
+           config.Pwm.Tm2.ModulationCells,
+           config.Pwm.Tm2.CarrierDisposition,
            config.AsymmetricInduction.IsEnabled ? "Yes" : "No",
            config.Pwm.Tm4.Sm42.PwmFrequency,
            config.Pwm.Tm4.Sm42.ChannelA.DutyCycle,
@@ -102,7 +106,7 @@ FLASHMEM void settings_pwm_update(Request &req, Response &res) {
     res.end();
   }
   else {
-    const bool spwmWasEnabled = config.Pwm.Tm2.UseSpwm;
+    const bool spwmWasEnabled = spwmActive();
     if (spwmWasEnabled) {
       disablePwmInterrupts();
     }
@@ -131,7 +135,7 @@ FLASHMEM void settings_pwm_update(Request &req, Response &res) {
     // effect at the next PWM reload, i.e. within one PWM period.
     applyPwmConfig(previous);
 
-    if (config.Pwm.Tm2.UseSpwm) {
+    if (spwmActive()) {
       attachModule2PwmInterruptVectors(); // required if SPWM was off at boot
       enablePwmInterrupts();
     }

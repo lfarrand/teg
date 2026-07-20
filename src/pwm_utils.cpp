@@ -1,6 +1,7 @@
 #include "pwm_utils.h"
 #include "spwm_math.h"
 #include "pwm_timing.h"
+#include "modulation.h"
 #include "utils.h"
 #include <QNEthernet.h>
 #include "config_json.h"
@@ -10,15 +11,27 @@ extern qindesign::network::EthernetServer server;
 volatile uint32_t vPhase = 0;
 volatile uint32_t vIsrCycles = 0;
 
-// SPWM sine generation is a fixed-point DDS (see spwm_math.h): a 32-bit phase
-// accumulator advances by vPhaseIncrement every carrier cycle and wraps
+// The reference generator is a fixed-point DDS (see spwm_math.h): a 32-bit
+// phase accumulator advances by vPhaseIncrement every carrier cycle and wraps
 // naturally on overflow — any modulation frequency, no drift, no wrap glitch.
-// Table lives in DTCM (zero-wait-state).
+// The LUT holds the reference waveform (sine or THIPWM, scaled by the
+// modulation index; see modulation.h) and lives in DTCM (zero-wait-state).
 static uint16_t spwmLut[SpwmLutSize];
 static volatile uint32_t vPhaseIncrement = 0;
 
-// Submodules 0 and 2 of FlexPWM2 (Sm20/Sm22) — the only LDOK bits the SPWM ISR touches
-constexpr uint8_t Sm20Sm22Mask = (1U << 0) | (1U << 2);
+// Modulation cells map onto FlexPWM2 submodules in this order; cells=2 drives
+// Sm20+Sm22 (the original SPWM pair), 3-4 add Sm21/Sm23.
+static SubModule *const CellSm[MaxModulationCells] = {&Sm20, &Sm22, &Sm21, &Sm23};
+static const uint8_t CellLdokMasks[MaxModulationCells + 1] = {0, 0b0001, 0b0101, 0b0111, 0b1111};
+
+static CellPlan cellPlan[MaxModulationCells]; // written only with the SPWM IRQ disabled
+static volatile uint8_t vModScheme = ModSchemeSpwmUnipolar;
+static volatile uint8_t vModCells = 2;
+static volatile uint8_t vCellLdokMask = 0b0101;
+
+bool spwmActive() {
+  return config.Pwm.Tm2.UseSpwm && config.Pwm.Tm2.ModulationScheme != ModSchemeFixed;
+}
 
 const uint8_t PrescalerValues[] = {1, 2, 4, 8, 16, 32, 64, 128};
 
@@ -133,21 +146,32 @@ void applyPwmConfig(const MainConfig &previous) {
 }
 
 void buildSpwmLut() {
-  // The table is one pure sine cycle; its contents don't depend on the config,
-  // so it only needs to be generated once (boot-time, so plain sinf is fine).
-  static bool lutBuilt = false;
-  if (!lutBuilt) {
-    fillSpwmLut(spwmLut, SpwmLutSize);
-    lutBuilt = true;
-  }
+  const Module2Config &tm2 = config.Pwm.Tm2;
 
-  const uint32_t carrier = config.Pwm.Tm2.SpwmCarrierFrequency;
-  vPhaseIncrement = spwmPhaseIncrement(carrier, config.Pwm.Tm2.SpwmModulationFrequency);
+  uint8_t cells = tm2.ModulationCells;
+  if (cells < 1) cells = 1;
+  if (cells > MaxModulationCells) cells = MaxModulationCells;
+
+  uint16_t indexMilli = tm2.ModulationIndexMilli;
+  if (indexMilli > MaxModulationIndexMilli) indexMilli = MaxModulationIndexMilli;
+
+  buildReferenceLut(spwmLut, SpwmLutSize, tm2.ModulationScheme == ModSchemeThipwm, indexMilli);
+
+  for (uint8_t k = 0; k < MaxModulationCells; k++) {
+    cellPlan[k] = modulationCellPlan(tm2.ModulationScheme, tm2.CarrierDisposition, k, cells);
+  }
+  vModScheme = tm2.ModulationScheme;
+  vModCells = cells;
+  vCellLdokMask = CellLdokMasks[cells];
+
+  const uint32_t carrier = tm2.SpwmCarrierFrequency;
+  vPhaseIncrement = spwmPhaseIncrement(carrier, tm2.SpwmModulationFrequency);
   vPhase = 0;
 
   const uint64_t actualMilliHz = spwmActualMilliHz(vPhaseIncrement, carrier);
   char strBuf[LOG_BUF_SIZE];
-  snprintf(strBuf, sizeof(strBuf), "SPWM DDS: %lu.%03luHz modulation on %luHz carrier",
+  snprintf(strBuf, sizeof(strBuf), "Modulation: scheme %u, %u cell(s), index %u/1000, %lu.%03luHz on %luHz carrier",
+           vModScheme, cells, indexMilli,
            static_cast<uint32_t>(actualMilliHz / 1000), static_cast<uint32_t>(actualMilliHz % 1000), carrier);
   writeLog(strBuf);
 }
@@ -165,9 +189,17 @@ void configureModule1() {
 }
 
 void configureModule2() {
-  // Precompute the sine table if SPWM is enabled
-  if (config.Pwm.Tm2.UseSpwm) {
+  // Precompute the reference table and cell plans if modulation is enabled
+  if (spwmActive()) {
     buildSpwmLut();
+  }
+
+  // Carrier geometry: 180deg-shifted cells run with inverted output polarity
+  // (the ISR complements their duty). Everything else is explicitly restored
+  // to normal polarity so scheme changes never leave a leg inverted.
+  for (uint8_t k = 0; k < MaxModulationCells; k++) {
+    const bool inverted = spwmActive() && k < vModCells && cellPlan[k].polarityInverted;
+    CellSm[k]->setupLevel(inverted ? kPWM_LowTrue : kPWM_HighTrue);
   }
 
   // Configure Sm20 (Channels A and B)
@@ -329,7 +361,7 @@ uint8_t calculateBestPrescaler(uint32_t pwmFrequency) {
 void attachInterruptVectors() {
   Serial.println(F("Attaching PWM interrupt vectors"));
 
-  if (config.Pwm.Tm2.UseSpwm) {
+  if (spwmActive()) {
     attachModule2PwmInterruptVectors();
     enablePwmInterrupts();
   }
@@ -377,16 +409,21 @@ FASTRUN void IsrOverflowSm20() {
   const uint32_t phase = vPhase;
   vPhase = phase + vPhaseIncrement; // wraps on overflow = seamless cycle boundary
 
-  const uint16_t dutyA = spwmDutyFromPhase(spwmLut, phase);
+  const uint16_t ref = spwmDutyFromPhase(spwmLut, phase);
+  const uint8_t scheme = vModScheme;
+  const uint8_t cells = vModCells;
+  const uint8_t mask = vCellLdokMask;
 
-  Tm2.setPwmLdok(Sm20Sm22Mask, false);
+  Tm2.setPwmLdok(mask, false);
 
-  Sm20.updateDutyCycle(dutyA);
-  Sm22.updateDutyCycle(static_cast<uint16_t>(0U - dutyA)); // 65536 - dutyA == MidDutyCycle - s
+  for (uint8_t k = 0; k < cells; k++) {
+    const uint16_t duty = modulationFinalDuty(modulationCellDuty(scheme, ref, k, cells), cellPlan[k]);
+    CellSm[k]->updateDutyCycle(duty);
+  }
 
   Sm20.clearStatusFlags(kPWM_CompareVal1Flag);
 
-  Tm2.setPwmLdok(Sm20Sm22Mask, true);
+  Tm2.setPwmLdok(mask, true);
 
   vIsrCycles = ARM_DWT_CYCCNT - t0;
 

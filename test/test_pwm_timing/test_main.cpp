@@ -42,12 +42,16 @@ void test_negative_shifts_move_edges_the_other_way() {
   TEST_ASSERT_EQUAL_INT16(1574, t.stopChanB);  // 1499 + 75 (past period end - caller's concern)
 }
 
-void test_prescaler_reported_for_low_frequencies() {
-  // 1 kHz needs 150000 ticks at /1 -> prescaler /4 (index 2) to fit 16 bits.
-  // NOTE: the VALx values still use the undivided clock (documented quirk kept
-  // from the original code) - this test pins the prescaler selection only.
-  const AsymmetricTimings t = computeAsymmetricTimings(rt(150000000), rt(1000), 32768, 0, 0, 0xFFFF);
+void test_low_frequency_uses_prescaled_clock() {
+  // 1 kHz needs 150000 ticks at /1 -> prescaler /4 (index 2), so the counter
+  // runs at 37.5 MHz and all VALx values must be in 37.5 MHz ticks
+  const AsymmetricTimings t = computeAsymmetricTimings(rt(150000000), rt(1000), 32768, 250, 500, 0xFFFF);
+
   TEST_ASSERT_EQUAL_UINT8(2, t.prescalerIndex);
+  TEST_ASSERT_EQUAL_INT16(37499, t.periodEnd);  // 37500 ticks per period, fits 16 bits
+  TEST_ASSERT_EQUAL_INT16(18750, t.stopChanA);  // 50% duty
+  TEST_ASSERT_EQUAL_INT16(18741, t.startChanB); // 18750 - round(0.0375 * 250) = 18750 - 9
+  TEST_ASSERT_EQUAL_INT16(37480, t.stopChanB);  // 37499 - round(0.0375 * 500) = 37499 - 19
 }
 
 int main() {
@@ -55,6 +59,6 @@ int main() {
   RUN_TEST(test_100khz_half_duty_reference_case);
   RUN_TEST(test_quarter_duty);
   RUN_TEST(test_negative_shifts_move_edges_the_other_way);
-  RUN_TEST(test_prescaler_reported_for_low_frequencies);
+  RUN_TEST(test_low_frequency_uses_prescaled_clock);
   return UNITY_END();
 }

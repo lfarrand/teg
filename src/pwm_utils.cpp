@@ -1,4 +1,5 @@
 #include "pwm_utils.h"
+#include "spwm_math.h"
 #include "utils.h"
 #include <QNEthernet.h>
 #include "config_json.h"
@@ -8,15 +9,10 @@ extern qindesign::network::EthernetServer server;
 volatile uint32_t vPhase = 0;
 volatile uint32_t vIsrCycles = 0;
 
-// SPWM sine generation is a fixed-point DDS: a 32-bit phase accumulator advances
-// by vPhaseIncrement every carrier cycle and wraps naturally on overflow, so any
-// modulation frequency is exact (resolution carrier/2^32 Hz) with no drift and
-// no glitch at the wrap. The top SpwmLutBits of the phase index a sine table of
-// channel-A duty values; the next 8 bits linearly interpolate between entries,
-// keeping the ISR integer-only (no FPU context stacking on exception entry).
-// Table lives in DTCM (zero-wait-state). Channel B duty is derived as 65536 - dutyA.
-constexpr uint32_t SpwmLutBits = 11;
-constexpr uint32_t SpwmLutSize = 1U << SpwmLutBits; // 2048 entries, 4 KB
+// SPWM sine generation is a fixed-point DDS (see spwm_math.h): a 32-bit phase
+// accumulator advances by vPhaseIncrement every carrier cycle and wraps
+// naturally on overflow — any modulation frequency, no drift, no wrap glitch.
+// Table lives in DTCM (zero-wait-state).
 static uint16_t spwmLut[SpwmLutSize];
 static volatile uint32_t vPhaseIncrement = 0;
 
@@ -137,29 +133,18 @@ void applyPwmConfig(const MainConfig &previous) {
 
 void buildSpwmLut() {
   // The table is one pure sine cycle; its contents don't depend on the config,
-  // so it only needs to be generated once.
+  // so it only needs to be generated once (boot-time, so plain sinf is fine).
   static bool lutBuilt = false;
   if (!lutBuilt) {
-    constexpr float32_t TwoPi = 6.28318530717958648f;
-    const float32_t phaseStep = TwoPi / static_cast<float32_t>(SpwmLutSize);
-    for (uint32_t i = 0; i < SpwmLutSize; i++) {
-      const float32_t s = roundf((MidDutyCycle - 1) * arm_sin_f32(phaseStep * static_cast<float32_t>(i)));
-      spwmLut[i] = static_cast<uint16_t>(MidDutyCycle + s);
-    }
+    fillSpwmLut(spwmLut, SpwmLutSize);
     lutBuilt = true;
   }
 
-  // DDS tuning word: the modulation phase advances by mod/carrier of a full
-  // cycle (2^32) per carrier period, so the output frequency is exact to
-  // carrier/2^32 Hz for ANY carrier/modulation ratio.
   const uint32_t carrier = config.Pwm.Tm2.SpwmCarrierFrequency;
-  const uint32_t modulation = config.Pwm.Tm2.SpwmModulationFrequency;
-  vPhaseIncrement = carrier > 0
-                      ? static_cast<uint32_t>((static_cast<uint64_t>(modulation) << 32) / carrier)
-                      : 0;
+  vPhaseIncrement = spwmPhaseIncrement(carrier, config.Pwm.Tm2.SpwmModulationFrequency);
   vPhase = 0;
 
-  const uint64_t actualMilliHz = (static_cast<uint64_t>(vPhaseIncrement) * carrier * 1000ULL) >> 32;
+  const uint64_t actualMilliHz = spwmActualMilliHz(vPhaseIncrement, carrier);
   char strBuf[LOG_BUF_SIZE];
   snprintf(strBuf, sizeof(strBuf), "SPWM DDS: %lu.%03luHz modulation on %luHz carrier",
            static_cast<uint32_t>(actualMilliHz / 1000), static_cast<uint32_t>(actualMilliHz % 1000), carrier);
@@ -351,18 +336,7 @@ void configureModule4() {
 }
 
 uint8_t calculateBestPrescaler(uint32_t pwmFrequency) {
-  const size_t numPrescalers = sizeof(PrescalerValues) / sizeof(PrescalerValues[0]);
-
-  for (uint8_t i = 0; i < numPrescalers; i++) {
-    uint32_t effectiveClock = F_BUS_ACTUAL / PrescalerValues[i];
-    uint32_t periodTicks = effectiveClock / pwmFrequency;
-
-    if (periodTicks <= MAX_COUNTER_VALUE) {
-      return i;
-    }
-  }
-
-  return numPrescalers - 1;
+  return bestPrescalerIndex(F_BUS_ACTUAL, pwmFrequency, MAX_COUNTER_VALUE);
 }
 
 void attachInterruptVectors() {
@@ -416,13 +390,7 @@ FASTRUN void IsrOverflowSm20() {
   const uint32_t phase = vPhase;
   vPhase = phase + vPhaseIncrement; // wraps on overflow = seamless cycle boundary
 
-  // Top bits index the sine table, the next 8 bits interpolate linearly between
-  // adjacent entries (max slope is ~100 counts/entry, so the maths stays small).
-  const uint32_t idx = phase >> (32 - SpwmLutBits);
-  const int32_t frac = (phase >> (32 - SpwmLutBits - 8)) & 0xFF;
-  const int32_t a = spwmLut[idx];
-  const int32_t b = spwmLut[(idx + 1) & (SpwmLutSize - 1)];
-  const uint16_t dutyA = static_cast<uint16_t>(a + (((b - a) * frac) >> 8));
+  const uint16_t dutyA = spwmDutyFromPhase(spwmLut, phase);
 
   Tm2.setPwmLdok(Sm20Sm22Mask, false);
 

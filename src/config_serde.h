@@ -38,6 +38,8 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Pwm.Tm2.ModulationIndexMilli = Config_Pwm_Tm2["ModulationIndexMilli"] | 1000;
   config.Pwm.Tm2.ModulationCells = Config_Pwm_Tm2["ModulationCells"] | 2;
   config.Pwm.Tm2.CarrierDisposition = Config_Pwm_Tm2["CarrierDisposition"] | 0;
+  config.Pwm.Tm2.DeadTimeCompensation = Config_Pwm_Tm2["DeadTimeCompensation"] | false;
+  config.Pwm.Tm2.SoftStartMs = Config_Pwm_Tm2["SoftStartMs"] | 0;
 
   JsonObjectConst Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2["Sm20"];
   config.Pwm.Tm2.Sm20.DeadTime = Config_Pwm_Tm2_Sm20["DeadTime"] | 50;
@@ -96,6 +98,20 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Pwm.Tm4.Sm42.ChannelA.PhaseShift = Config_Pwm_Tm4_Sm42["ChannelA"]["PhaseShift"] | 0;
   config.Pwm.Tm4.Sm42.ChannelB.DutyCycle = Config_Pwm_Tm4_Sm42["ChannelB"]["DutyCycle"] | 32768;
   config.Pwm.Tm4.Sm42.ChannelB.PhaseShift = Config_Pwm_Tm4_Sm42["ChannelB"]["PhaseShift"] | 0;
+
+  JsonObjectConst Config_Feedback = doc["Config"]["Feedback"];
+  config.Feedback.Enabled = Config_Feedback["Enabled"] | false;
+  config.Feedback.AnalogPin = Config_Feedback["AnalogPin"] | 41;
+  config.Feedback.SetpointMillivolts = Config_Feedback["SetpointMillivolts"] | 0;
+  config.Feedback.FullScaleMillivolts = Config_Feedback["FullScaleMillivolts"] | 3300;
+  config.Feedback.KpMilli = Config_Feedback["KpMilli"] | 200;
+  config.Feedback.KiMilli = Config_Feedback["KiMilli"] | 2000;
+  config.Feedback.LoopHz = Config_Feedback["LoopHz"] | 1000;
+
+  JsonObjectConst Config_FaultProtection = doc["Config"]["FaultProtection"];
+  config.FaultProtection.Enabled = Config_FaultProtection["Enabled"] | false;
+  config.FaultProtection.Pin = Config_FaultProtection["Pin"] | 32;
+  config.FaultProtection.ActiveHigh = Config_FaultProtection["ActiveHigh"] | true;
 }
 
 // Clamps out-of-range values; returns true if anything was corrected.
@@ -142,6 +158,8 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm_Tm2["ModulationIndexMilli"] = config.Pwm.Tm2.ModulationIndexMilli;
   Config_Pwm_Tm2["ModulationCells"] = config.Pwm.Tm2.ModulationCells;
   Config_Pwm_Tm2["CarrierDisposition"] = config.Pwm.Tm2.CarrierDisposition;
+  Config_Pwm_Tm2["DeadTimeCompensation"] = config.Pwm.Tm2.DeadTimeCompensation;
+  Config_Pwm_Tm2["SoftStartMs"] = config.Pwm.Tm2.SoftStartMs;
 
   JsonObject Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2["Sm20"].to<JsonObject>();
   Config_Pwm_Tm2_Sm20["DeadTime"] = config.Pwm.Tm2.Sm20.DeadTime;
@@ -228,6 +246,20 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   JsonObject Config_Pwm_Tm4_Sm42_ChannelB = Config_Pwm_Tm4_Sm42["ChannelB"].to<JsonObject>();
   Config_Pwm_Tm4_Sm42_ChannelB["DutyCycle"] = config.Pwm.Tm4.Sm42.ChannelB.DutyCycle;
   Config_Pwm_Tm4_Sm42_ChannelB["PhaseShift"] = config.Pwm.Tm4.Sm42.ChannelB.PhaseShift;
+
+  JsonObject Config_Feedback = doc["Config"]["Feedback"].to<JsonObject>();
+  Config_Feedback["Enabled"] = config.Feedback.Enabled;
+  Config_Feedback["AnalogPin"] = config.Feedback.AnalogPin;
+  Config_Feedback["SetpointMillivolts"] = config.Feedback.SetpointMillivolts;
+  Config_Feedback["FullScaleMillivolts"] = config.Feedback.FullScaleMillivolts;
+  Config_Feedback["KpMilli"] = config.Feedback.KpMilli;
+  Config_Feedback["KiMilli"] = config.Feedback.KiMilli;
+  Config_Feedback["LoopHz"] = config.Feedback.LoopHz;
+
+  JsonObject Config_FaultProtection = doc["Config"]["FaultProtection"].to<JsonObject>();
+  Config_FaultProtection["Enabled"] = config.FaultProtection.Enabled;
+  Config_FaultProtection["Pin"] = config.FaultProtection.Pin;
+  Config_FaultProtection["ActiveHigh"] = config.FaultProtection.ActiveHigh;
 }
 
 #endif

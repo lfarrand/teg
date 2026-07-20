@@ -130,6 +130,8 @@ void setup() {
     enableXbar();
   }
 
+  configureFaultProtection();
+
   printStats();
 
   reportMemoryUsage();
@@ -139,6 +141,16 @@ void setup() {
 
 void loop() {
   processWebServer();
+
+  runFeedbackLoop();
+
+  static bool faultReported = false;
+  if (vFaultTripped && !faultReported) {
+    writeLog("FAULT TRIP: all PWM outputs disabled (save settings to clear)");
+    faultReported = true;
+  } else if (!vFaultTripped) {
+    faultReported = false;
+  }
 
   if (configSaveNeeded) {
     configSaveNeeded = false;

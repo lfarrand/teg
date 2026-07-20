@@ -545,6 +545,68 @@ body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Col
                 </label>
                 <input type="number" style="width: 75px;" id="carrier-disposition" name="carrier-disposition" value="%u"> 0-2
             </div>
+            <p>Dead-Time Compensation adds a polarity-signed duty correction of 2&middot;t<sub>d</sub>&middot;f<sub>sw</sub> to remove the crossover distortion dead-time causes at low modulation.</p>
+            <div class="input">
+                <label>
+                    Dead-Time Compensation
+                </label>
+                <input type="text" style="width: 75px;" id="deadtime-compensation" name="deadtime-compensation" value="%s"> Yes / No
+            </div>
+            <p>Soft Start ramps the modulation index from its current value to the target over this time. 0 = instant. Also limits the slew rate of closed-loop corrections.</p>
+            <div class="input">
+                <label>
+                    Soft Start
+                </label>
+                <input type="number" style="width: 75px;" id="soft-start-ms" name="soft-start-ms" value="%u"> ms
+            </div>
+            <hr>
+            <p><strong>Closed-Loop Regulation</strong></p>
+            <p>Regulates the modulation index so the feedback pin (a DC voltage proportional to the regulated quantity, e.g. rectified output or DC bus) tracks the setpoint. PI gains are in thousandths of index per volt (Kp) and per volt-second (Ki).</p>
+            <div class="input">
+                <label>
+                    Feedback Enabled
+                </label>
+                <input type="text" style="width: 75px;" id="feedback-enabled" name="feedback-enabled" value="%s"> Yes / No
+            </div>
+            <div class="input">
+                <label>
+                    Setpoint
+                </label>
+                <input type="number" style="width: 75px;" id="feedback-setpoint-mv" name="feedback-setpoint-mv" value="%lu"> mV
+            </div>
+            <div class="input">
+                <label>
+                    Kp
+                </label>
+                <input type="number" style="width: 75px;" id="feedback-kp" name="feedback-kp" value="%u"> /1000
+            </div>
+            <div class="input">
+                <label>
+                    Ki
+                </label>
+                <input type="number" style="width: 75px;" id="feedback-ki" name="feedback-ki" value="%u"> /1000
+            </div>
+            <hr>
+            <p><strong>Fault Protection</strong></p>
+            <p>A transition on the fault pin immediately masks every PWM output (software trip, about 1&micro;s). The trip is latched; saving settings clears it. Wire an overcurrent comparator or thermal switch here.</p>
+            <div class="input">
+                <label>
+                    Fault Trip Enabled
+                </label>
+                <input type="text" style="width: 75px;" id="fault-enabled" name="fault-enabled" value="%s"> Yes / No
+            </div>
+            <div class="input">
+                <label>
+                    Fault Pin
+                </label>
+                <input type="number" style="width: 75px;" id="fault-pin" name="fault-pin" value="%u">
+            </div>
+            <div class="input">
+                <label>
+                    Fault Active High
+                </label>
+                <input type="text" style="width: 75px;" id="fault-active-high" name="fault-active-high" value="%s"> Yes / No
+            </div>
             <hr>
             <p><strong>Asymmetric Induction</strong></p>
             <p>This is the configuration for asymmetric induction.</p>

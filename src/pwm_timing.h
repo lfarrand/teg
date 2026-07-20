@@ -18,21 +18,21 @@ struct AsymmetricTimings {
   int16_t stopChanB;
 };
 
-// NOTE: periodTicks is computed from the undivided bus clock, matching the
-// original code: frequencies low enough to need a prescaler > /1 overflow the
-// 16-bit VAL registers. Asymmetric mode is intended for frequencies that fit
-// at /1 (>= ~2289 Hz at 150 MHz).
+// All tick values are in prescaler-divided clock ticks — the rate the counter
+// actually runs at — so low frequencies that need a prescaler > /1 still fit
+// the 16-bit VAL registers.
 inline AsymmetricTimings computeAsymmetricTimings(uint32_t busClockHz, uint32_t pwmFrequencyHz,
                                                   uint16_t dutyCycleA16, int32_t preShiftNanos,
                                                   int32_t postShiftNanos, uint32_t maxCounterValue) {
   AsymmetricTimings t{};
 
   t.prescalerIndex = bestPrescalerIndex(busClockHz, pwmFrequencyHz, maxCounterValue);
+  const uint32_t effectiveClockHz = busClockHz / (1U << t.prescalerIndex);
 
   const float dutyCycleA = static_cast<float>(dutyCycleA16) / 65536.0f;
-  const float clockTicksPerNanosecond = static_cast<float>(busClockHz) / 1000000000.0f;
+  const float clockTicksPerNanosecond = static_cast<float>(effectiveClockHz) / 1000000000.0f;
   const uint32_t periodTicks =
-    static_cast<uint32_t>(roundf(static_cast<float>(busClockHz) / static_cast<float>(pwmFrequencyHz)));
+    static_cast<uint32_t>(roundf(static_cast<float>(effectiveClockHz) / static_cast<float>(pwmFrequencyHz)));
   const int16_t pulseTicksA = static_cast<int16_t>(roundf(static_cast<float>(periodTicks) * dutyCycleA));
   const int16_t preShiftTicks =
     static_cast<int16_t>(roundf(clockTicksPerNanosecond * static_cast<float>(preShiftNanos)));

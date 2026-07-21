@@ -174,6 +174,21 @@ channel A's turn-off, and its turn-off pulled back from the period end by
 **Post-shift** (ns). Tick values use the prescaler-corrected clock, so low
 frequencies fit the 16-bit counters correctly.
 
+## Metrics (InfluxDB)
+
+The firmware can post line-protocol metrics to an **InfluxDB v2** instance. The
+target is configured in the *InfluxDB Metrics* section of the web UI (or the
+`Influx` block of `/settings.cfg`):
+
+| Option | Meaning |
+|---|---|
+| **Host / Port** | InfluxDB server (default `ub-1.lan:8086`) |
+| **Org / Bucket** | InfluxDB v2 organisation ID and target bucket |
+| **Token** | API token with write access to the bucket |
+
+Metrics are **disabled until a token is set** — the token is stored only in the
+device's config file on the SD card, never in firmware source or this repository.
+
 ## Timings
 
 - **Settings apply**: from clicking Save, changes are parsed, applied to the

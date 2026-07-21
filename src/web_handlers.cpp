@@ -170,13 +170,16 @@ FLASHMEM void api_waveform_get(Request &req, Response &res) {
   const uint8_t t = waveformType();
   doc["type"] = t == WaveTypeReference ? "reference" : t == WaveTypeSequence ? "sequence" : "none";
   doc["count"] = waveformCount();
+  doc["streaming"] = waveformIsStreaming();
+  doc["underruns"] = waveformStreamUnderruns();
   if (t == WaveTypeReference) {
-    JsonArray preview = doc["preview"].to<JsonArray>();
-    const int16_t *samples = waveformSamples();
-    const uint32_t n = waveformCount();
-    const uint32_t points = n < 128 ? n : 128;
-    for (uint32_t i = 0; i < points; i++) {
-      preview.add(samples[(static_cast<uint64_t>(i) * n) / points]);
+    const uint32_t points = waveformCount() < 128 ? waveformCount() : 128;
+    static int16_t previewBuf[128];
+    if (waveformPreview(previewBuf, points)) {
+      JsonArray preview = doc["preview"].to<JsonArray>();
+      for (uint32_t i = 0; i < points; i++) {
+        preview.add(previewBuf[i]);
+      }
     }
   } else if (t == WaveTypeSequence) {
     const int16_t *levels;

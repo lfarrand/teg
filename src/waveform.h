@@ -20,7 +20,16 @@ void waveformLoadFromSd(); // call once at boot, after the SD card is up
 
 uint8_t waveformType(); // WaveType* from waveform_parse.h
 uint32_t waveformCount();
-const int16_t *waveformSamples(); // PSRAM store; valid when type==Reference
+const int16_t *waveformSamples(); // PSRAM store; valid when resident reference
 uint32_t waveformSegments(const int16_t **levelsQ15, const uint32_t **micros);
+
+// SD streaming playback (references larger than the PSRAM store)
+bool waveformIsStreaming();
+int16_t waveformStreamNext();       // ISR side: next sample (holds last on underrun)
+void waveformStreamTask();          // loop() side: refills the double buffer
+uint32_t waveformStreamUnderruns();
+
+// Decimated preview for the web UI (works for resident and streaming modes)
+bool waveformPreview(int16_t *outSamples, uint32_t points);
 
 #endif

@@ -121,8 +121,11 @@ void test_binary_header_rejects_bad_input() {
   hdr[0] = 'X'; // bad magic
   TEST_ASSERT_EQUAL_INT32(WaveErrBadBinary, waveBinaryHeaderRead(hdr, &t));
 
-  waveBinaryHeaderWrite(hdr, WaveTypeReference, MaxWaveSamples + 1); // too long
+  waveBinaryHeaderWrite(hdr, WaveTypeReference, MaxStreamSamples + 1); // too long even to stream
   TEST_ASSERT_EQUAL_INT32(WaveErrBadBinary, waveBinaryHeaderRead(hdr, &t));
+
+  waveBinaryHeaderWrite(hdr, WaveTypeReference, MaxWaveSamples + 1); // beyond PSRAM but streamable
+  TEST_ASSERT_EQUAL_INT32(static_cast<int32_t>(MaxWaveSamples + 1), waveBinaryHeaderRead(hdr, &t));
 
   waveBinaryHeaderWrite(hdr, WaveTypeSequence, MaxWaveSegments + 1);
   TEST_ASSERT_EQUAL_INT32(WaveErrBadBinary, waveBinaryHeaderRead(hdr, &t));

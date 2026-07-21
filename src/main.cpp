@@ -202,6 +202,8 @@ void loop() {
 
   thermalTask();
 
+  waveformStreamTask();
+
   static bool faultReported = false;
   if (vFaultTripped && !faultReported) {
     writeLog("FAULT TRIP: all PWM outputs disabled (save settings to clear)");

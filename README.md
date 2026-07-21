@@ -149,8 +149,13 @@ two-leg schemes use the original H-bridge pair.
 
 Set *Reference Waveform* to **Custom** or **Sequence** and upload a
 `teg-wave v1` file from the web UI (persisted to `/waveform.bin` on SD and
-reloaded at boot). References hold up to **2,097,152 samples** (4 MB of the
-PSRAM) with two playback modes:
+reloaded at boot). References up to **2,097,152 samples** live in PSRAM (the
+fast path: bulk-loaded in about a second at boot); **larger references — tens
+of MB — stream from the SD card at playback time** through a double buffer
+(2 × 16384 samples, ~0.8 s of headroom each against SD latency spikes; an
+underrun holds the last sample and is counted in the UI). The file's sample
+count selects the path automatically. PSRAM-resident waveforms offer two
+playback modes:
 
 - **Period mode** (default): the whole file is one fundamental period at the
   modulation frequency, rendered through the 2048-point DDS table (very long
@@ -189,6 +194,12 @@ and faster than text): a 12-byte header — magic `TEGW`, `u8` version (1),
 (little-endian) — followed by `count` little-endian `int16` Q15 samples.
 From Python: `b"TEGW" + bytes([1,1,0,0]) + struct.pack("<I", n) +
 samples.astype("<i2").tobytes()`.
+
+Uploads may additionally be **gzip-compressed** (text or binary — detected by
+the gzip magic bytes and decompressed on the fly during ingest, CRC-verified):
+`gzip.compress(...)` or simply `gzip wave.txt`. The SD copy is always stored
+uncompressed, which is what keeps boot loading a single bulk read and the
+streaming refill loop a plain seek-and-read.
 
 Notes: sequence edges quantize to the carrier period (50 µs at 20 kHz — raise
 the carrier for finer steps). Levels pass through the normal index scaling and

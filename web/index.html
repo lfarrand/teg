@@ -453,7 +453,8 @@ async function refreshWaveform() {
     let pts = [];
     if (d.type === "reference") {
       pts = d.preview.map((y, i) => ({ x: i / (d.preview.length - 1), y }));
-      $("#wave-info").textContent = `reference · ${d.count} points`;
+      $("#wave-info").textContent = `reference · ${d.count.toLocaleString()} points` +
+        (d.streaming ? ` · SD streaming${d.underruns ? ` (${d.underruns} underruns)` : ""}` : "");
     } else {
       const total = d.micros.reduce((a, b) => a + b, 0);
       let t = 0;

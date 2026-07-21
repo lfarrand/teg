@@ -37,7 +37,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-constexpr uint32_t MaxWaveSamples = 2UL * 1024UL * 1024UL; // 4MB of PSRAM as int16
+constexpr uint32_t MaxWaveSamples = 2UL * 1024UL * 1024UL; // PSRAM-resident limit (4MB as int16)
+constexpr uint32_t MaxStreamSamples = 1UL << 29;           // SD-streamed limit (1GB as int16)
 constexpr uint32_t MaxWaveSegments = 64;
 
 enum : uint8_t {
@@ -205,7 +206,7 @@ inline int32_t waveBinaryHeaderRead(const uint8_t *in, uint8_t *outType) {
   const uint32_t count = static_cast<uint32_t>(in[8]) | (static_cast<uint32_t>(in[9]) << 8) |
                          (static_cast<uint32_t>(in[10]) << 16) | (static_cast<uint32_t>(in[11]) << 24);
   if (type == WaveTypeReference) {
-    if (count < 2 || count > MaxWaveSamples) {
+    if (count < 2 || count > MaxStreamSamples) {
       return WaveErrBadBinary;
     }
   } else if (type == WaveTypeSequence) {

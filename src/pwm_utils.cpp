@@ -72,6 +72,9 @@ static const int16_t *vWaveSamples = nullptr;
 static uint32_t vWaveCount = 0;
 static uint32_t waveIndex = 0;
 
+// Beyond-PSRAM waveforms play through the SD double buffer (waveform.cpp)
+static volatile bool vStreamPlayback = false;
+
 bool spwmActive() {
   return config.Pwm.Tm2.UseSpwm && config.Pwm.Tm2.ModulationScheme != ModSchemeFixed;
 }
@@ -204,10 +207,16 @@ void buildSpwmLut() {
   // uploaded segment sequence (which bypasses the DDS entirely)
   vRefSequence = false;
   vSampleStep = false;
+  vStreamPlayback = false;
   if (tm2.ModulationScheme == ModSchemeThipwm) {
     buildUnitReferenceLut(spwmLut, SpwmLutSize, RefWaveSine, true);
   } else if (tm2.ReferenceWaveform == RefWaveCustom) {
-    if (waveformType() == WaveTypeReference) {
+    if (waveformType() == WaveTypeReference && waveformIsStreaming()) {
+      // Too long for PSRAM: one sample per carrier cycle straight off SD
+      // (period mode is meaningless at this scale; the toggle is ignored)
+      vStreamPlayback = true;
+      buildUnitReferenceLut(spwmLut, SpwmLutSize, RefWaveSine, false); // unused
+    } else if (waveformType() == WaveTypeReference) {
       if (tm2.WaveformSampleStep) {
         // Full-resolution playback straight from the PSRAM store
         vWaveSamples = waveformSamples();
@@ -593,7 +602,7 @@ FASTRUN void IsrOverflowSm20() {
   vPhase = phase + increment; // wraps on overflow = seamless cycle boundary
 
   const bool sequence = vRefSequence;
-  const bool stepped = sequence || vSampleStep;
+  const bool stepped = sequence || vSampleStep || vStreamPlayback;
 
   if (!stepped && (scheme == ModSchemeSvpwm || scheme == ModSchemeDpwm || scheme == ModSchemeSvpwm3D)) {
     int32_t v[3];
@@ -626,6 +635,8 @@ FASTRUN void IsrOverflowSm20() {
       if (++waveIndex >= vWaveCount) {
         waveIndex = 0;
       }
+    } else if (vStreamPlayback) {
+      s = waveformStreamNext(); // SD double buffer; holds last sample on underrun
     } else {
       s = refFromPhase(spwmLut, phase);
     }

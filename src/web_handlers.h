@@ -10,6 +10,7 @@ extern volatile bool configSaveNeeded;
 
 void index(Request &req, Response &res);
 void serve_pico_css(Request &req, Response &res);
+void serve_stats(Request &req, Response &res);
 void api_config_get(Request &req, Response &res);
 void api_config_post(Request &req, Response &res);
 void api_status(Request &req, Response &res);

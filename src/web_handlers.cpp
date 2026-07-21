@@ -31,6 +31,7 @@ FLASHMEM void configureWebServer() {
   app.header("X-Auth-Pin", authPinHeader, sizeof(authPinHeader));
   app.get("/", &index);
   app.get("/index.html", &index);
+  app.get("/stats.html", &serve_stats);
   app.get("/pico.min.css", &serve_pico_css);
   app.get("/api/config", &api_config_get);
   app.post("/api/config", &api_config_post);
@@ -63,6 +64,10 @@ FLASHMEM static void sendAsset(Response &res, const char *path, const char *cach
 
 FLASHMEM void index(Request &req, Response &res) {
   sendAsset(res, "/index.html", "no-cache");
+}
+
+FLASHMEM void serve_stats(Request &req, Response &res) {
+  sendAsset(res, "/stats.html", "no-cache");
 }
 
 FLASHMEM void serve_pico_css(Request &req, Response &res) {
@@ -245,6 +250,15 @@ void api_status(Request &req, Response &res) {
   doc["captureActive"] = captureActive();
   doc["captureFrozen"] = captureIsFrozen();
   doc["captureSamples"] = captureSampleCount();
+  // Measured feedback voltage: synchronous capture mean when available,
+  // otherwise a direct (10-bit) read of the configured pin
+  if (captureActive() && !captureIsFrozen()) {
+    doc["feedbackMv"] = (captureMeanRaw(64) * config.Feedback.FullScaleMillivolts) / 4095U;
+  } else {
+    doc["feedbackMv"] =
+      (static_cast<uint32_t>(analogRead(config.Feedback.AnalogPin)) * config.Feedback.FullScaleMillivolts) / 1023U;
+  }
+  doc["streamUnderruns"] = waveformStreamUnderruns();
   doc["derateMilli"] = thermalDerateMilliNow();
   doc["hotDeciC"] = thermalHotDeciC();   // INT16_MIN = unavailable
   doc["coldDeciC"] = thermalColdDeciC();

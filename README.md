@@ -87,6 +87,8 @@ The API underneath is plain JSON:
 | `/api/config` | POST | Replace configuration; applies to hardware first, then persists to SD; returns `{"applyMicros": n}` |
 | `/api/status` | GET | Live telemetry (uptime, fault, ISR cycles, apply time, actual frequency, index, free RAM) |
 | `/api/capture` | GET | Min/max envelope of the waveform capture ring (`?count=&bins=`) |
+| `/api/waveform` | GET | Current uploaded custom waveform (type, size, preview) |
+| `/api/waveform` | POST | Upload a `teg-wave v1` file (body = raw text); applies live if active |
 
 When a **write PIN** is configured (Security section), POSTs require a matching
 `X-Auth-Pin` header — the UI prompts automatically. Secrets (the InfluxDB token
@@ -142,6 +144,68 @@ two-leg schemes use the original H-bridge pair.
 | **Dead-time compensation** | Adds a polarity-signed duty correction of 2·t_d·f_sw to cancel the crossover distortion dead-time causes at low modulation. Applied to full-reference legs and SVPWM phases. |
 | **Soft start** (ms) | Ramps the modulation index from its current value to the target over this time; 0 = instant. Also slew-limits closed-loop corrections. |
 | **Carrier dither** | Spread-spectrum switching (EMI/acoustic noise reduction): the carrier period is re-selected every cycle from a table spanning ±*percent* (max 30 %), either **randomly** (LFSR) or as a **triangular sweep**. Each period entry carries a matched DDS increment, so the fundamental frequency stays exact regardless of the dither. |
+
+## Custom waveforms (arbitrary references and pulse sequences)
+
+Set *Reference Waveform* to **Custom** or **Sequence** and upload a
+`teg-wave v1` file from the web UI (persisted to `/waveform.bin` on SD and
+reloaded at boot). References up to **2,097,152 samples** live in PSRAM (the
+fast path: bulk-loaded in about a second at boot); **larger references — tens
+of MB — stream from the SD card at playback time** through a double buffer
+(2 × 16384 samples, ~0.8 s of headroom each against SD latency spikes; an
+underrun holds the last sample and is counted in the UI). The file's sample
+count selects the path automatically. PSRAM-resident waveforms offer two
+playback modes:
+
+- **Period mode** (default): the whole file is one fundamental period at the
+  modulation frequency, rendered through the 2048-point DDS table (very long
+  files are downsampled for this mode).
+- **Sample-step mode**: exactly one stored sample per carrier cycle at full
+  resolution, repeated ad infinitum — the repeat period is
+  `points ÷ carrier` (2M points at 20 kHz ≈ 105 s), limited only by the
+  PSRAM allocation.
+
+Text format: `#` starts a comment; the first content line declares the type:
+
+```
+# teg-wave v1 — arbitrary reference (AWG-style)
+type=reference
+0.0        # one normalized sample (-1..1) per line, 2..4096 points;
+0.38       # resampled to the internal 2048-point table and played by the
+0.92       # DDS at the modulation frequency, scaled by the index, through
+0.38       # whichever scheme is selected — exactly like the built-in sine
+0.0
+-0.38
+-0.92
+-0.38
+```
+
+```
+# teg-wave v1 — on/off pulse train (function-generator burst style)
+type=sequence
+1.0, 1500   # level (-1..1), duration in microseconds; up to 64 segments
+0.0, 500    # played in order and looped; the effective period is the sum
+-1.0, 300   # of the durations (modulation frequency is ignored)
+```
+
+For bulk uploads there is also a **binary format** (auto-detected, ~4× smaller
+and faster than text): a 12-byte header — magic `TEGW`, `u8` version (1),
+`u8` type (1 = reference, 2 = sequence), `u16` reserved, `u32` count
+(little-endian) — followed by `count` little-endian `int16` Q15 samples.
+From Python: `b"TEGW" + bytes([1,1,0,0]) + struct.pack("<I", n) +
+samples.astype("<i2").tobytes()`.
+
+Uploads may additionally be **gzip-compressed** (text or binary — detected by
+the gzip magic bytes and decompressed on the fly during ingest, CRC-verified):
+`gzip.compress(...)` or simply `gzip wave.txt`. The SD copy is always stored
+uncompressed, which is what keeps boot loading a single bulk read and the
+streaming refill loop a plain seek-and-read.
+
+Notes: sequence edges quantize to the carrier period (50 µs at 20 kHz — raise
+the carrier for finer steps). Levels pass through the normal index scaling and
+per-cell mapping, so ±1/0 patterns drive complementary pairs with dead-time
+intact. Reference waveforms may carry DC deliberately; sequences work with
+schemes 0–5 (the three-phase schemes derive their legs from the DDS phase).
 
 ## Closed-loop regulation
 

@@ -48,6 +48,7 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Pwm.Tm2.CarrierDitherMode = Config_Pwm_Tm2["CarrierDitherMode"] | 0;
   config.Pwm.Tm2.CarrierDitherPercent = Config_Pwm_Tm2["CarrierDitherPercent"] | 0;
   config.Pwm.Tm2.NearestLevelModulation = Config_Pwm_Tm2["NearestLevelModulation"] | false;
+  config.Pwm.Tm2.WaveformSampleStep = Config_Pwm_Tm2["WaveformSampleStep"] | false;
 
   JsonObjectConst Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2["Sm20"];
   config.Pwm.Tm2.Sm20.DeadTime = Config_Pwm_Tm2_Sm20["DeadTime"] | 50;
@@ -192,6 +193,7 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm_Tm2["CarrierDitherMode"] = config.Pwm.Tm2.CarrierDitherMode;
   Config_Pwm_Tm2["CarrierDitherPercent"] = config.Pwm.Tm2.CarrierDitherPercent;
   Config_Pwm_Tm2["NearestLevelModulation"] = config.Pwm.Tm2.NearestLevelModulation;
+  Config_Pwm_Tm2["WaveformSampleStep"] = config.Pwm.Tm2.WaveformSampleStep;
 
   JsonObject Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2["Sm20"].to<JsonObject>();
   Config_Pwm_Tm2_Sm20["DeadTime"] = config.Pwm.Tm2.Sm20.DeadTime;

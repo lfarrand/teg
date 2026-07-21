@@ -45,6 +45,8 @@ enum : uint8_t {
   RefWaveSine = 0,
   RefWaveTrapezoid = 1, // 60deg linear ramps, flat top: classic trapezoidal drive
   RefWaveSquare = 2,    // six-step / square-wave operation
+  RefWaveCustom = 3,    // uploaded teg-wave reference (see waveform_parse.h)
+  RefWaveSequence = 4,  // uploaded teg-wave level/duration segment player
 };
 
 // Discontinuous PWM variants (ModSchemeDpwm)

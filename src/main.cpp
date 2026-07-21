@@ -15,6 +15,7 @@
 #include "memory_utils.h"
 #include "capture.h"
 #include "thermal.h"
+#include "waveform.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -97,7 +98,7 @@ static void enableWatchdog() {
   WDOG1_WCR = WDOG_WCR_WT(15) | WDOG_WCR_WDE | WDOG_WCR_SRS | WDOG_WCR_WDA; // 8s timeout
 }
 
-static void kickWatchdog() {
+void kickWatchdog() {
   WDOG1_WSR = 0x5555;
   WDOG1_WSR = 0xAAAA;
 }
@@ -157,6 +158,8 @@ void setup() {
 
   loadSettings();
 
+  waveformLoadFromSd();
+
   initMemory();
 
   configureEthernet();
@@ -198,6 +201,8 @@ void loop() {
   runFeedbackLoop();
 
   thermalTask();
+
+  waveformStreamTask();
 
   static bool faultReported = false;
   if (vFaultTripped && !faultReported) {

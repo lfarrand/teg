@@ -209,6 +209,59 @@ void test_dpwm3_clamps_intermediate_phase() {
   TEST_ASSERT_TRUE(w == 32767 || w == -32767);
 }
 
+// Four-leg 3D-SVPWM: phase legs carry v+zss, the neutral leg carries zss, so
+// the switched phase-to-neutral voltage equals the pure reference exactly
+void test_fourleg_phase_to_neutral_is_pure_reference() {
+  buildUnitReferenceLut(lut, SpwmLutSize, RefWaveSine, false);
+  const uint32_t q = indexMilliToQ15(1000);
+  const uint32_t inc = spwmPhaseIncrement(20000, 50);
+  uint32_t phase = 0;
+  for (int i = 0; i < 400; i++) {
+    int32_t v[3];
+    threePhaseScaledRefs(lut, phase, q, v);
+    const int32_t zss = continuousSvmZss(v);
+    const int32_t neutralDuty = dutyFromScaled(zss, 0, 0);
+    for (int k = 0; k < 3; k++) {
+      const int32_t legDuty = dutyFromScaled(v[k] + zss, 0, v[k]);
+      // At index 1.0 nothing saturates, so the duty difference IS the reference
+      TEST_ASSERT_EQUAL_INT32(v[k], legDuty - neutralDuty);
+    }
+    phase += inc;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Nearest Level Modulation (level-shifted staircase)
+// ---------------------------------------------------------------------------
+
+void test_nlm_snaps_cells_to_rails() {
+  // Every cell duty is exactly 0 or 65535; the number of fully-on cells is
+  // the reference rounded to the nearest level
+  for (uint32_t ref = 0; ref <= 65535; ref += 331) {
+    uint32_t on = 0;
+    for (uint8_t cell = 0; cell < 4; cell++) {
+      const uint16_t d = lsCellDuty((uint16_t)ref, cell, 4, true);
+      TEST_ASSERT_TRUE(d == 0 || d == 65535);
+      if (d == 65535) on++;
+    }
+    const uint32_t expectedOn = (ref * 4U + 32768U) >> 16; // round(ref * 4 / 65536)
+    TEST_ASSERT_EQUAL_UINT32(expectedOn, on);
+  }
+}
+
+void test_nlm_boundary_and_linear_mode_unchanged() {
+  // Band midpoint snaps up, just below snaps down
+  TEST_ASSERT_EQUAL_UINT16(65535, lsCellDuty(49152, 1, 2, true)); // 50% into band -> up
+  TEST_ASSERT_EQUAL_UINT16(0, lsCellDuty(49151, 1, 2, true));     // just below -> down
+  // Default (linear) behaviour is untouched
+  TEST_ASSERT_EQUAL_UINT16(32768, lsCellDuty(49152, 1, 2));
+  TEST_ASSERT_EQUAL_UINT16(32768, lsCellDuty(49152, 1, 2, false));
+  // Carrier-geometry complement stays exact at the NLM endpoints
+  const CellPlan comp{true, true};
+  TEST_ASSERT_EQUAL_UINT16(65535, modulationFinalDuty(lsCellDuty(0, 1, 2, true), comp));
+  TEST_ASSERT_EQUAL_UINT16(0, modulationFinalDuty(lsCellDuty(65535, 1, 2, true), comp));
+}
+
 // ---------------------------------------------------------------------------
 // Carrier dither (spread spectrum)
 // ---------------------------------------------------------------------------
@@ -313,6 +366,9 @@ int main() {
   RUN_TEST(test_dpwm_min_max_gdpwm_variants);
   RUN_TEST(test_dpwm_min_clamps_low_max_clamps_high);
   RUN_TEST(test_dpwm3_clamps_intermediate_phase);
+  RUN_TEST(test_fourleg_phase_to_neutral_is_pure_reference);
+  RUN_TEST(test_nlm_snaps_cells_to_rails);
+  RUN_TEST(test_nlm_boundary_and_linear_mode_unchanged);
   RUN_TEST(test_dither_tables_span_and_matched_increments);
   RUN_TEST(test_dither_percent_clamped);
   RUN_TEST(test_lfsr_cycles_and_never_zero);

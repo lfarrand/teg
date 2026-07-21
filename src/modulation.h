@@ -35,6 +35,9 @@ enum : uint8_t {
   ModSchemePhaseShifted = 5, // N cells, full reference each, alternating 180deg carriers
   ModSchemeSvpwm = 6,        // 3-phase space vector (min-max zero-sequence injection), 3 cells
   ModSchemeDpwm = 7,         // 3-phase discontinuous PWM (rail clamping), 3 cells
+  ModSchemeSvpwm3D = 8,      // 3-phase four-leg (3D-SVM): legs carry v+zss, leg 4 carries zss,
+                             // so phase-to-neutral is the pure reference and zero-sequence
+                             // load current returns through the fourth leg. 4 cells.
 };
 
 // Reference waveform stored in the LUT (THIPWM always uses sine + 1/6 third)
@@ -297,13 +300,19 @@ inline uint32_t rampIndexQ15(uint32_t current, uint32_t target, uint32_t step) {
 // Duty for one cell of a level-shifted (stacked-carrier) modulator: the
 // reference-duty domain [0,65535] is split into numCells equal bands; a cell
 // is fully off below its band, fully on above it, and linear inside it.
-inline uint16_t lsCellDuty(uint16_t ref, uint8_t cell, uint8_t numCells) {
+// With nearestLevel set, the in-band cell snaps to whichever rail is closer
+// (Nearest Level Modulation: staircase output, fundamental-frequency
+// switching only - coarse at <=5 levels but essentially zero switching loss).
+inline uint16_t lsCellDuty(uint16_t ref, uint8_t cell, uint8_t numCells, bool nearestLevel = false) {
   const uint32_t scaled = static_cast<uint32_t>(ref) * numCells;
   const uint32_t bandStart = static_cast<uint32_t>(cell) << 16;
   if (scaled <= bandStart) {
     return 0;
   }
   const uint32_t d = scaled - bandStart;
+  if (nearestLevel) {
+    return d >= 32768U ? 65535U : 0U;
+  }
   return d >= 65535U ? 65535U : static_cast<uint16_t>(d);
 }
 
@@ -342,8 +351,9 @@ inline CellPlan modulationCellPlan(uint8_t scheme, uint8_t disposition, uint8_t 
 }
 
 // The duty a cell's comparator produces, before carrier geometry
-inline uint16_t modulationCellDuty(uint8_t scheme, uint16_t ref, uint8_t cell, uint8_t numCells) {
-  return scheme == ModSchemeLevelShifted ? lsCellDuty(ref, cell, numCells) : ref;
+inline uint16_t modulationCellDuty(uint8_t scheme, uint16_t ref, uint8_t cell, uint8_t numCells,
+                                   bool nearestLevel = false) {
+  return scheme == ModSchemeLevelShifted ? lsCellDuty(ref, cell, numCells, nearestLevel) : ref;
 }
 
 // Final duty written to the submodule, including the ISR half of the carrier

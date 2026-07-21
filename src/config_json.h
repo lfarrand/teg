@@ -36,6 +36,7 @@ struct Module2Config {
   int8_t DpwmClampAngleDeg = 0;         // GDPWM clamp angle: 0 = DPWM1, -30 = DPWM0, +30 = DPWM2
   uint8_t CarrierDitherMode = 0;        // 0 off, 1 random (LFSR), 2 triangular sweep
   uint8_t CarrierDitherPercent = 0;     // carrier period spread, 0-30%
+  bool NearestLevelModulation = false;  // level-shifted only: snap cells to the nearest level
   SubmoduleConfig Sm20;
   SubmoduleConfig Sm21;
   SubmoduleConfig Sm22;

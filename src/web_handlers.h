@@ -517,7 +517,7 @@ body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Col
                 </label>
                 <input type="number" style="width: 75px;" id="spwm-modulation-frequency" name="spwm-modulation-frequency" value="%lu"> Hz
             </div>
-            <p>Modulation Scheme: 0 = fixed duty (no modulation), 1 = unipolar SPWM, 2 = bipolar SPWM, 3 = THIPWM (1/6 third-harmonic injection), 4 = level-shifted (see Carrier Disposition), 5 = phase-shifted (alternating 180&deg; carriers), 6 = SVPWM (three-phase, 3 cells), 7 = DPWM (three-phase discontinuous, see DPWM Variant).</p>
+            <p>Modulation Scheme: 0 = fixed duty (no modulation), 1 = unipolar SPWM, 2 = bipolar SPWM, 3 = THIPWM (1/6 third-harmonic injection), 4 = level-shifted (see Carrier Disposition), 5 = phase-shifted (alternating 180&deg; carriers), 6 = SVPWM (three-phase, 3 cells), 7 = DPWM (three-phase discontinuous, see DPWM Variant), 8 = 3D-SVPWM (three-phase four-leg: legs 2.0/2.2/2.1 are phases, 2.3 is the neutral leg for four-wire/unbalanced loads).</p>
             <div class="input">
                 <label>
                     Modulation Scheme
@@ -578,6 +578,13 @@ body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Col
                     Carrier Dither Percent
                 </label>
                 <input type="number" style="width: 75px;" id="carrier-dither-percent" name="carrier-dither-percent" value="%u"> %%
+            </div>
+            <p>Nearest Level Modulation (level-shifted scheme only): cells snap to the nearest level instead of PWM-ing within their band. Staircase output at fundamental-frequency switching &mdash; near-zero switching loss, but coarse at low level counts.</p>
+            <div class="input">
+                <label>
+                    Nearest Level
+                </label>
+                <input type="text" style="width: 75px;" id="nearest-level" name="nearest-level" value="%s"> Yes / No
             </div>
             <p>Dead-Time Compensation adds a polarity-signed duty correction of 2&middot;t<sub>d</sub>&middot;f<sub>sw</sub> to remove the crossover distortion dead-time causes at low modulation.</p>
             <div class="input">

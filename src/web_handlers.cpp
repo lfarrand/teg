@@ -93,6 +93,7 @@ FLASHMEM void settings_pwm(Request &req, Response &res) {
            config.Pwm.Tm2.DpwmClampAngleDeg,
            config.Pwm.Tm2.CarrierDitherMode,
            config.Pwm.Tm2.CarrierDitherPercent,
+           config.Pwm.Tm2.NearestLevelModulation ? "Yes" : "No",
            config.Pwm.Tm2.DeadTimeCompensation ? "Yes" : "No",
            config.Pwm.Tm2.SoftStartMs,
            config.Feedback.Enabled ? "Yes" : "No",

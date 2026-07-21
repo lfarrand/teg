@@ -39,6 +39,7 @@ void test_defaults_from_empty_document() {
   TEST_ASSERT_EQUAL_INT8(0, cfg.Pwm.Tm2.DpwmClampAngleDeg);
   TEST_ASSERT_EQUAL_UINT8(0, cfg.Pwm.Tm2.CarrierDitherMode);
   TEST_ASSERT_EQUAL_UINT8(0, cfg.Pwm.Tm2.CarrierDitherPercent);
+  TEST_ASSERT_FALSE(cfg.Pwm.Tm2.NearestLevelModulation);
   TEST_ASSERT_FALSE(cfg.Feedback.Enabled);
   TEST_ASSERT_EQUAL_UINT8(41, cfg.Feedback.AnalogPin);
   TEST_ASSERT_EQUAL_UINT32(0, cfg.Feedback.SetpointMillivolts);
@@ -81,6 +82,7 @@ void test_roundtrip_preserves_every_field() {
   cfg.Pwm.Tm2.DpwmClampAngleDeg = -30;
   cfg.Pwm.Tm2.CarrierDitherMode = 1;
   cfg.Pwm.Tm2.CarrierDitherPercent = 15;
+  cfg.Pwm.Tm2.NearestLevelModulation = true;
   cfg.Feedback.Enabled = true;
   cfg.Feedback.AnalogPin = 40;
   cfg.Feedback.SetpointMillivolts = 2400;

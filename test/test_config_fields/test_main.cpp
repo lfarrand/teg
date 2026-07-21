@@ -34,6 +34,7 @@ static const char *const numericFields[] = {
 static const char *const booleanFields[] = {
   "print-regs", "sync-pwm", "use-spwm", "enable-asymmetric-induction",
   "deadtime-compensation", "feedback-enabled", "fault-enabled", "fault-active-high",
+  "nearest-level",
 };
 
 void test_all_numeric_fields_recognised() {

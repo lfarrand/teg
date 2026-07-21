@@ -86,7 +86,6 @@ The API underneath is plain JSON:
 | `/api/config` | GET | Full configuration document (secrets redacted) |
 | `/api/config` | POST | Replace configuration; applies to hardware first, then persists to SD; returns `{"applyMicros": n}` |
 | `/api/status` | GET | Live telemetry (uptime, fault, ISR cycles, apply time, actual frequency, index, free RAM) |
-
 | `/api/capture` | GET | Min/max envelope of the waveform capture ring (`?count=&bins=`) |
 
 When a **write PIN** is configured (Security section), POSTs require a matching

@@ -235,6 +235,19 @@ void setModulationIndexTargetQ15(uint32_t targetQ15) {
   vIndexTargetQ15 = targetQ15 > maxQ15 ? maxQ15 : targetQ15;
 }
 
+// Live telemetry for the web UI status endpoint
+uint32_t modulationIndexNowMilli() {
+  return (vIndexQ15 * 1000UL) >> 15;
+}
+
+uint32_t modulationIndexTargetMilli() {
+  return (vIndexTargetQ15 * 1000UL) >> 15;
+}
+
+uint64_t modulationActualMilliHz() {
+  return spwmActualMilliHz(vPhaseIncrement, config.Pwm.Tm2.SpwmCarrierFrequency);
+}
+
 void configureModule1() {
   SubmoduleSettings settings = {
     .frequency = config.Pwm.Tm1.Sm13.PwmFrequency,

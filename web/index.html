@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PWM Control</title>
+<link rel="stylesheet" href="/pico.min.css">
+<style>
+  :root { --pico-font-size: 100%; }
+  body > main { padding-top: 0.5rem; }
+  .topbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .topbar h1 { font-size: 1.3rem; margin: 0; flex: 1; }
+  .statusgrid { display: flex; gap: 0.6rem 1.2rem; flex-wrap: wrap; font-size: 0.8rem; margin-bottom: 1rem; }
+  .statusgrid span { color: var(--pico-muted-color); }
+  .statusgrid b { font-variant-numeric: tabular-nums; }
+  .grid-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0 1rem; }
+  .grid-fields label { font-size: 0.8rem; }
+  article { padding: 1rem 1.2rem; margin-bottom: 1rem; }
+  article header { margin: -1rem -1.2rem 0.8rem; padding: 0.6rem 1.2rem; font-weight: 600; }
+  #fault-banner { background: var(--pico-del-color, #d33); color: #fff; padding: 0.6rem 1rem;
+                  border-radius: var(--pico-border-radius); margin-bottom: 1rem; display: none; font-weight: 600; }
+  #toast { position: fixed; bottom: 1.2rem; right: 1.2rem; padding: 0.6rem 1.1rem; border-radius: 8px;
+           background: var(--pico-primary); color: var(--pico-primary-inverse); opacity: 0;
+           transition: opacity 0.3s; pointer-events: none; z-index: 10; }
+  #toast.err { background: #c62828; color: #fff; }
+  .savebar { position: sticky; bottom: 0; padding: 0.7rem 0; background: var(--pico-background-color);
+             display: flex; gap: 1rem; align-items: center; border-top: 1px solid var(--pico-muted-border-color); }
+  .savebar button { margin: 0; width: auto; }
+  .hidden { display: none !important; }
+  .hint { font-size: 0.75rem; color: var(--pico-muted-color); margin: -0.4rem 0 0.8rem; }
+  select, input { margin-bottom: 0.8rem; }
+</style>
+</head>
+<body>
+<main class="container">
+  <div class="topbar">
+    <h1>PWM Control</h1>
+    <select id="theme" style="width:auto;margin:0" title="Theme">
+      <option value="auto">Auto</option><option value="light">Light</option><option value="dark">Dark</option>
+    </select>
+  </div>
+
+  <div class="statusgrid" id="status">
+    <div><span>Uptime</span> <b id="st-up">&mdash;</b></div>
+    <div><span>Modulation</span> <b id="st-freq">&mdash;</b></div>
+    <div><span>Index</span> <b id="st-idx">&mdash;</b></div>
+    <div><span>ISR</span> <b id="st-isr">&mdash;</b></div>
+    <div><span>Last apply</span> <b id="st-apply">&mdash;</b></div>
+    <div><span>RAM free</span> <b id="st-ram">&mdash;</b></div>
+  </div>
+  <div id="fault-banner">&#9888; FAULT TRIPPED &mdash; all PWM outputs disabled. Save settings to clear.</div>
+
+  <article>
+    <header>Inverter Modulation (Timer 2)</header>
+    <label><input type="checkbox" role="switch" data-path="Pwm.Tm2.UseSpwm"> Modulation enabled</label>
+    <div class="grid-fields">
+      <label>Scheme
+        <select data-path="Pwm.Tm2.ModulationScheme" id="scheme">
+          <option value="0">0 &middot; Fixed duty</option>
+          <option value="1">1 &middot; Unipolar SPWM</option>
+          <option value="2">2 &middot; Bipolar SPWM</option>
+          <option value="3">3 &middot; THIPWM</option>
+          <option value="4">4 &middot; Level-shifted</option>
+          <option value="5">5 &middot; Phase-shifted</option>
+          <option value="6">6 &middot; SVPWM (3-phase)</option>
+          <option value="7">7 &middot; DPWM (3-phase)</option>
+          <option value="8">8 &middot; 3D-SVPWM (4-leg)</option>
+        </select>
+      </label>
+      <label>Carrier <input type="number" data-path="Pwm.Tm2.SpwmCarrierFrequency" min="100"> </label>
+      <label>Modulation Hz <input type="number" data-path="Pwm.Tm2.SpwmModulationFrequency" min="1"></label>
+      <label>Index /1000 <input type="number" data-path="Pwm.Tm2.ModulationIndexMilli" min="0" max="1155"></label>
+      <label data-show="4,5">Cells <input type="number" data-path="Pwm.Tm2.ModulationCells" min="1" max="4"></label>
+      <label data-show="4">Disposition
+        <select data-path="Pwm.Tm2.CarrierDisposition">
+          <option value="0">PD</option><option value="1">POD</option><option value="2">APOD</option>
+        </select>
+      </label>
+      <label data-show="7">DPWM variant
+        <select data-path="Pwm.Tm2.DpwmVariant" id="dpwmvar">
+          <option value="0">DPWMMIN</option><option value="1">DPWMMAX</option>
+          <option value="2">GDPWM</option><option value="3">DPWM3</option>
+        </select>
+      </label>
+      <label data-show="7" id="clampangle-wrap">Clamp angle &deg;
+        <input type="number" data-path="Pwm.Tm2.DpwmClampAngleDeg" min="-60" max="60"></label>
+      <label data-show="0,1,2,4,5,6,7,8">Waveform
+        <select data-path="Pwm.Tm2.ReferenceWaveform">
+          <option value="0">Sine</option><option value="1">Trapezoid</option><option value="2">Square</option>
+        </select>
+      </label>
+      <label>Soft start ms <input type="number" data-path="Pwm.Tm2.SoftStartMs" min="0" max="65535"></label>
+      <label>Dither
+        <select data-path="Pwm.Tm2.CarrierDitherMode">
+          <option value="0">Off</option><option value="1">Random</option><option value="2">Sweep</option>
+        </select>
+      </label>
+      <label>Dither % <input type="number" data-path="Pwm.Tm2.CarrierDitherPercent" min="0" max="30"></label>
+    </div>
+    <label data-show="1,2,3,5,6,7,8"><input type="checkbox" role="switch" data-path="Pwm.Tm2.DeadTimeCompensation"> Dead-time compensation</label>
+    <label data-show="4"><input type="checkbox" role="switch" data-path="Pwm.Tm2.NearestLevelModulation"> Nearest-level (staircase)</label>
+    <p class="hint" id="scheme-hint"></p>
+  </article>
+
+  <article>
+    <header>Closed-Loop Regulation</header>
+    <label><input type="checkbox" role="switch" data-path="Feedback.Enabled"> Enabled &mdash; PI drives the modulation index toward the setpoint</label>
+    <div class="grid-fields">
+      <label>Setpoint mV <input type="number" data-path="Feedback.SetpointMillivolts" min="0"></label>
+      <label>Full scale mV <input type="number" data-path="Feedback.FullScaleMillivolts" min="1"></label>
+      <label>Kp /1000 <input type="number" data-path="Feedback.KpMilli" min="0"></label>
+      <label>Ki /1000 <input type="number" data-path="Feedback.KiMilli" min="0"></label>
+      <label>Analog pin <input type="number" data-path="Feedback.AnalogPin" min="0" max="41"></label>
+      <label>Loop Hz <input type="number" data-path="Feedback.LoopHz" min="1" max="10000"></label>
+    </div>
+  </article>
+
+  <article>
+    <header>Fault Protection</header>
+    <label><input type="checkbox" role="switch" data-path="FaultProtection.Enabled"> Fault trip enabled (~1&micro;s software trip, latched)</label>
+    <div class="grid-fields">
+      <label>Pin <input type="number" data-path="FaultProtection.Pin" min="0" max="41"></label>
+    </div>
+    <label><input type="checkbox" role="switch" data-path="FaultProtection.ActiveHigh"> Active high</label>
+  </article>
+
+  <article>
+    <header>Asymmetric Induction (Timer 4 / SM42)</header>
+    <label><input type="checkbox" role="switch" data-path="AsymmetricInduction.IsEnabled"> Enabled</label>
+    <div class="grid-fields">
+      <label>Pre-shift ns <input type="number" data-path="AsymmetricInduction.PreShiftNanos"></label>
+      <label>Post-shift ns <input type="number" data-path="AsymmetricInduction.PostShiftNanos"></label>
+    </div>
+  </article>
+
+  <div id="submodules"></div>
+
+  <article>
+    <header>System</header>
+    <label><input type="checkbox" role="switch" data-path="Pwm.SyncPwm"> Sync PWM timers via XBAR (applies at boot)</label>
+    <label><input type="checkbox" role="switch" data-path="Pwm.PrintRegs"> Print registers on configure</label>
+  </article>
+
+  <div class="savebar">
+    <button id="save">Apply &amp; Save</button>
+    <button id="reload" class="secondary outline">Reload</button>
+    <span id="dirty" class="hint"></span>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+"use strict";
+
+const SCHEME_HINTS = {
+  0: "Fixed duty on every submodule; the modulation ISR is disabled.",
+  1: "Two legs (2.0 + 2.2) with complementary references. Three-level output.",
+  2: "Two legs, one reference; leg 2.2 switches in exact opposition. Two-level output.",
+  3: "Unipolar + 1/6 third harmonic. Index up to 1155 for ~15.5% more bus utilisation.",
+  4: "Stacked carrier bands across the cells (NPC). Pick PD/POD/APOD; nearest-level for staircase.",
+  5: "All cells carry the full reference with alternating 180° carriers (exact for 2 cells).",
+  6: "Three-phase space vector via min-max injection on legs 2.0/2.2/2.1. Linear to 1155.",
+  7: "Three-phase discontinuous: one phase is always clamped to a rail (~33% lower switching loss).",
+  8: "Four-leg: phases on 2.0/2.2/2.1, neutral on 2.3. Phase-to-neutral equals the pure reference.",
+};
+
+// Submodule cards: [json path under Pwm, title, channels]
+const SUBMODULES = [
+  ["Tm1.Sm13", "Timer 1 / SM13 (pins 8, 7)", ["A", "B"]],
+  ["Tm2.Sm20", "Timer 2 / SM20 (pins 4, 33)", ["A", "B"]],
+  ["Tm2.Sm21", "Timer 2 / SM21 (pin 5)", ["A"]],
+  ["Tm2.Sm22", "Timer 2 / SM22 (pins 6, 9)", ["A", "B"]],
+  ["Tm2.Sm23", "Timer 2 / SM23 (pins 36, 37)", ["A", "B"]],
+  ["Tm3.Sm31", "Timer 3 / SM31 (pins 29, 28)", ["A", "B"]],
+  ["Tm4.Sm40", "Timer 4 / SM40 (pin 22)", ["A"]],
+  ["Tm4.Sm41", "Timer 4 / SM41 (pin 23)", ["A"]],
+  ["Tm4.Sm42", "Timer 4 / SM42 (pins 2, 3)", ["A", "B"]],
+];
+
+let cfg = null;
+let dirty = false;
+
+const $ = (s) => document.querySelector(s);
+const byPath = (obj, path) => path.split(".").reduce((o, k) => (o ? o[k] : undefined), obj);
+function setByPath(obj, path, value) {
+  const keys = path.split(".");
+  const last = keys.pop();
+  keys.reduce((o, k) => (o[k] = o[k] ?? {}), obj)[last] = value;
+}
+
+function buildSubmoduleCards() {
+  const host = $("#submodules");
+  for (const [path, title, channels] of SUBMODULES) {
+    const art = document.createElement("article");
+    let html = `<header>${title}</header><div class="grid-fields">
+      <label>Frequency Hz <input type="number" min="1" data-path="Pwm.${path}.PwmFrequency"></label>
+      <label>Dead time ns <input type="number" min="0" max="65535" data-path="Pwm.${path}.DeadTime"></label>`;
+    for (const ch of channels) {
+      html += `<label>Duty ${ch} /65535 <input type="number" min="0" max="65535" data-path="Pwm.${path}.Channel${ch}.DutyCycle"></label>`;
+    }
+    html += "</div>";
+    art.innerHTML = html;
+    host.appendChild(art);
+  }
+}
+
+function bindAll() {
+  document.querySelectorAll("[data-path]").forEach((el) => {
+    el.addEventListener("input", () => {
+      dirty = true;
+      $("#dirty").textContent = "Unsaved changes";
+      if (el.id === "scheme" || el.id === "dpwmvar") updateVisibility();
+    });
+  });
+}
+
+function loadIntoForm() {
+  document.querySelectorAll("[data-path]").forEach((el) => {
+    const v = byPath(cfg, el.dataset.path);
+    if (v === undefined) return;
+    if (el.type === "checkbox") el.checked = !!v;
+    else el.value = v;
+  });
+  dirty = false;
+  $("#dirty").textContent = "";
+  updateVisibility();
+}
+
+function collectFromForm() {
+  document.querySelectorAll("[data-path]").forEach((el) => {
+    if (el.classList.contains("hidden")) { /* keep stored value */ }
+    const v = el.type === "checkbox" ? el.checked : Number(el.value);
+    setByPath(cfg, el.dataset.path, v);
+  });
+}
+
+function updateVisibility() {
+  const scheme = String($("#scheme").value);
+  document.querySelectorAll("[data-show]").forEach((el) => {
+    el.classList.toggle("hidden", !el.dataset.show.split(",").includes(scheme));
+  });
+  // GDPWM clamp angle only when variant = 2
+  const gd = scheme === "7" && String($("#dpwmvar").value) === "2";
+  $("#clampangle-wrap").classList.toggle("hidden", !gd);
+  $("#scheme-hint").textContent = SCHEME_HINTS[scheme] || "";
+}
+
+function toast(msg, isErr) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = isErr ? "err" : "";
+  t.style.opacity = 1;
+  clearTimeout(t._h);
+  t._h = setTimeout(() => (t.style.opacity = 0), 3000);
+}
+
+async function load() {
+  const r = await fetch("/api/config");
+  cfg = (await r.json()).Config;
+  loadIntoForm();
+}
+
+async function save() {
+  collectFromForm();
+  try {
+    const r = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ Config: cfg }),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const out = await r.json();
+    dirty = false;
+    $("#dirty").textContent = "";
+    toast(`Applied in ${out.applyMicros} µs`);
+  } catch (e) {
+    toast("Save failed: " + e.message, true);
+  }
+}
+
+function fmtUptime(ms) {
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600),
+        m = Math.floor((s % 3600) / 60);
+  return (d ? d + "d " : "") + h + "h " + m + "m " + (s % 60) + "s";
+}
+
+async function pollStatus() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    $("#st-up").textContent = fmtUptime(s.uptimeMs);
+    $("#st-freq").textContent = s.active ? (s.modMilliHz / 1000).toFixed(3) + " Hz" : "off";
+    $("#st-idx").textContent = s.active
+      ? (s.indexMilli / 1000).toFixed(3) + (s.indexMilli !== s.targetMilli ? " → " + (s.targetMilli / 1000).toFixed(3) : "")
+      : "—";
+    $("#st-isr").textContent = s.active ? (s.isrCycles / 600).toFixed(1) + " µs" : "—";
+    $("#st-apply").textContent = s.applyMicros ? s.applyMicros + " µs" : "—";
+    $("#st-ram").textContent = Math.floor(s.dtcmFree / 1024) + "k / " + Math.floor(s.ocramFree / 1024) + "k";
+    $("#fault-banner").style.display = s.fault ? "block" : "none";
+  } catch (e) { /* device busy; retry next tick */ }
+}
+
+// Theme: Pico v2 honours data-theme; "auto" = follow the OS
+const themeSel = $("#theme");
+themeSel.value = localStorage.getItem("theme") || "auto";
+function applyTheme() {
+  const v = themeSel.value;
+  if (v === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", v);
+  localStorage.setItem("theme", v);
+}
+themeSel.addEventListener("change", applyTheme);
+applyTheme();
+
+buildSubmoduleCards();
+bindAll();
+$("#save").addEventListener("click", save);
+$("#reload").addEventListener("click", load);
+load().catch(() => toast("Failed to load config", true));
+pollStatus();
+setInterval(pollStatus, 1000);
+</script>
+</body>
+</html>

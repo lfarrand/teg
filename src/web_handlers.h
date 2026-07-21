@@ -9,6 +9,10 @@ void processWebServer();
 extern volatile bool configSaveNeeded;
 
 void index(Request &req, Response &res);
+void serve_pico_css(Request &req, Response &res);
+void api_config_get(Request &req, Response &res);
+void api_config_post(Request &req, Response &res);
+void api_status(Request &req, Response &res);
 void settings_pwm(Request &req, Response &res);
 void settings_pwm_update(Request &req, Response &res);
 void settings_pwm_timer(Request &req, Response &res);

@@ -87,6 +87,8 @@ The API underneath is plain JSON:
 | `/api/config` | POST | Replace configuration; applies to hardware first, then persists to SD; returns `{"applyMicros": n}` |
 | `/api/status` | GET | Live telemetry (uptime, fault, ISR cycles, apply time, actual frequency, index, free RAM) |
 | `/api/capture` | GET | Min/max envelope of the waveform capture ring (`?count=&bins=`) |
+| `/api/waveform` | GET | Current uploaded custom waveform (type, size, preview) |
+| `/api/waveform` | POST | Upload a `teg-wave v1` file (body = raw text); applies live if active |
 
 When a **write PIN** is configured (Security section), POSTs require a matching
 `X-Auth-Pin` header — the UI prompts automatically. Secrets (the InfluxDB token
@@ -142,6 +144,40 @@ two-leg schemes use the original H-bridge pair.
 | **Dead-time compensation** | Adds a polarity-signed duty correction of 2·t_d·f_sw to cancel the crossover distortion dead-time causes at low modulation. Applied to full-reference legs and SVPWM phases. |
 | **Soft start** (ms) | Ramps the modulation index from its current value to the target over this time; 0 = instant. Also slew-limits closed-loop corrections. |
 | **Carrier dither** | Spread-spectrum switching (EMI/acoustic noise reduction): the carrier period is re-selected every cycle from a table spanning ±*percent* (max 30 %), either **randomly** (LFSR) or as a **triangular sweep**. Each period entry carries a matched DDS increment, so the fundamental frequency stays exact regardless of the dither. |
+
+## Custom waveforms (arbitrary references and pulse sequences)
+
+Set *Reference Waveform* to **Custom** or **Sequence** and upload a
+`teg-wave v1` file from the web UI (persisted to `/waveform.txt` on SD and
+reloaded at boot). `#` starts a comment; the first content line declares the
+type:
+
+```
+# teg-wave v1 — arbitrary reference (AWG-style)
+type=reference
+0.0        # one normalized sample (-1..1) per line, 2..4096 points;
+0.38       # resampled to the internal 2048-point table and played by the
+0.92       # DDS at the modulation frequency, scaled by the index, through
+0.38       # whichever scheme is selected — exactly like the built-in sine
+0.0
+-0.38
+-0.92
+-0.38
+```
+
+```
+# teg-wave v1 — on/off pulse train (function-generator burst style)
+type=sequence
+1.0, 1500   # level (-1..1), duration in microseconds; up to 64 segments
+0.0, 500    # played in order and looped; the effective period is the sum
+-1.0, 300   # of the durations (modulation frequency is ignored)
+```
+
+Notes: sequence edges quantize to the carrier period (50 µs at 20 kHz — raise
+the carrier for finer steps). Levels pass through the normal index scaling and
+per-cell mapping, so ±1/0 patterns drive complementary pairs with dead-time
+intact. Reference waveforms may carry DC deliberately; sequences work with
+schemes 0–5 (the three-phase schemes derive their legs from the DDS phase).
 
 ## Closed-loop regulation
 

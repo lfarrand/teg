@@ -14,5 +14,7 @@ void api_config_get(Request &req, Response &res);
 void api_config_post(Request &req, Response &res);
 void api_status(Request &req, Response &res);
 void api_capture(Request &req, Response &res);
+void api_waveform_get(Request &req, Response &res);
+void api_waveform_post(Request &req, Response &res);
 
 #endif

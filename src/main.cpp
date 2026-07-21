@@ -15,6 +15,7 @@
 #include "memory_utils.h"
 #include "capture.h"
 #include "thermal.h"
+#include "waveform.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -156,6 +157,8 @@ void setup() {
   configureSdCard();
 
   loadSettings();
+
+  waveformLoadFromSd();
 
   initMemory();
 

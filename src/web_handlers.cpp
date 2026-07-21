@@ -4,6 +4,9 @@
 #include "pwm_utils.h"
 #include "capture.h"
 #include "thermal.h"
+#include "waveform.h"
+#include "waveform_parse.h"
+#include "modulation.h"
 #include "utils.h"
 #include "web_assets.h"
 #include <ArduinoJson.h>
@@ -32,6 +35,8 @@ FLASHMEM void configureWebServer() {
   app.post("/api/config", &api_config_post);
   app.get("/api/status", &api_status);
   app.get("/api/capture", &api_capture);
+  app.get("/api/waveform", &api_waveform_get);
+  app.post("/api/waveform", &api_waveform_post);
 }
 
 void processWebServer() {
@@ -124,6 +129,75 @@ FLASHMEM void api_config_post(Request &req, Response &res) {
 
   // Persist from loop() so the response doesn't wait on the SD card
   configSaveNeeded = true;
+}
+
+FLASHMEM void api_waveform_post(Request &req, Response &res) {
+  if (!writeAuthorized(req)) {
+    res.sendStatus(401);
+    return;
+  }
+
+  size_t capacity;
+  char *buf = waveformTextBuffer(&capacity);
+  size_t len = 0;
+  while (req.left() && len < capacity - 1) {
+    const int c = req.read();
+    if (c < 0) {
+      break;
+    }
+    buf[len++] = static_cast<char>(c);
+  }
+  buf[len] = '\0';
+
+  const char *err = "";
+  if (!waveformApplyText(buf, &err)) {
+    res.status(400);
+    res.set("Content-Type", "application/json");
+    JsonDocument out;
+    out["error"] = err;
+    serializeJson(out, res);
+    return;
+  }
+
+  // If the running modulation uses the uploaded waveform, rebuild it live
+  const uint8_t wave = config.Pwm.Tm2.ReferenceWaveform;
+  if (spwmActive() && (wave == RefWaveCustom || wave == RefWaveSequence)) {
+    disablePwmInterrupts();
+    buildSpwmLut();
+    enablePwmInterrupts();
+  }
+
+  res.set("Content-Type", "application/json");
+  JsonDocument out;
+  out["type"] = waveformType() == WaveTypeReference ? "reference" : "sequence";
+  out["count"] = waveformCount();
+  serializeJson(out, res);
+}
+
+FLASHMEM void api_waveform_get(Request &req, Response &res) {
+  JsonDocument doc;
+  const uint8_t t = waveformType();
+  doc["type"] = t == WaveTypeReference ? "reference" : t == WaveTypeSequence ? "sequence" : "none";
+  doc["count"] = waveformCount();
+  if (t == WaveTypeReference) {
+    JsonArray preview = doc["preview"].to<JsonArray>();
+    const int16_t *lut = waveformReferenceLut();
+    for (uint32_t i = 0; i < 128; i++) {
+      preview.add(lut[(i * SpwmLutSize) / 128]);
+    }
+  } else if (t == WaveTypeSequence) {
+    const int16_t *levels;
+    const uint32_t *micros;
+    const uint32_t n = waveformSegments(&levels, &micros);
+    JsonArray lv = doc["levels"].to<JsonArray>();
+    JsonArray us = doc["micros"].to<JsonArray>();
+    for (uint32_t i = 0; i < n; i++) {
+      lv.add(levels[i]);
+      us.add(micros[i]);
+    }
+  }
+  res.set("Content-Type", "application/json");
+  serializeJson(doc, res);
 }
 
 constexpr uint32_t MaxCaptureBins = 600;

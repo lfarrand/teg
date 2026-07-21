@@ -89,6 +89,7 @@
       <label data-show="0,1,2,4,5,6,7,8">Waveform
         <select data-path="Pwm.Tm2.ReferenceWaveform">
           <option value="0">Sine</option><option value="1">Trapezoid</option><option value="2">Square</option>
+          <option value="3">Custom (uploaded)</option><option value="4">Sequence (uploaded)</option>
         </select>
       </label>
       <label>Soft start ms <input type="number" data-path="Pwm.Tm2.SoftStartMs" min="0" max="65535"></label>
@@ -149,6 +150,17 @@
       <label>Pin <input type="number" data-path="FaultProtection.Pin" min="0" max="41"></label>
     </div>
     <label><input type="checkbox" role="switch" data-path="FaultProtection.ActiveHigh"> Active high</label>
+  </article>
+
+  <article>
+    <header>Custom Waveform</header>
+    <p class="hint">Upload a <code>teg-wave v1</code> file. <code>type=reference</code>: one sample (-1..1) per line, resampled to the 2048-point table and played by the DDS. <code>type=sequence</code>: <code>level, duration_us</code> per line, up to 64 segments, looped (quantized to the carrier period). Select Waveform &ldquo;Custom&rdquo; or &ldquo;Sequence&rdquo; above to use it.</p>
+    <div style="display:flex;gap:0.8rem;align-items:center;margin-bottom:0.6rem;flex-wrap:wrap">
+      <input type="file" id="wave-file" accept=".txt,.csv,.wave" style="margin:0;width:auto">
+      <button id="wave-upload" class="secondary outline" style="width:auto;margin:0">Upload</button>
+      <span class="hint" id="wave-info"></span>
+    </div>
+    <canvas id="wave-canvas" height="140" style="width:100%;border:1px solid var(--pico-muted-border-color);border-radius:6px"></canvas>
   </article>
 
   <article>
@@ -310,13 +322,17 @@ async function load() {
   loadIntoForm();
 }
 
-function postConfig() {
-  const headers = { "Content-Type": "application/json" };
+function authHeaders(extra) {
+  const h = extra || {};
   const pin = sessionStorage.getItem("pin");
-  if (pin) headers["X-Auth-Pin"] = pin;
+  if (pin) h["X-Auth-Pin"] = pin;
+  return h;
+}
+
+function postConfig() {
   return fetch("/api/config", {
     method: "POST",
-    headers,
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ Config: cfg }),
   });
 }
@@ -402,6 +418,87 @@ async function refreshCapture() {
   }
 }
 $("#cap-refresh").addEventListener("click", refreshCapture);
+
+function drawWavePreview(pts) {
+  // pts: array of {x: 0..1, y: -32767..32767}
+  const c = $("#wave-canvas");
+  c.width = c.clientWidth * (window.devicePixelRatio || 1);
+  const ctx = c.getContext("2d");
+  ctx.clearRect(0, 0, c.width, c.height);
+  if (!pts.length) return;
+  const color = getComputedStyle(document.documentElement).getPropertyValue("--pico-primary").trim() || "#0172ad";
+  ctx.strokeStyle = "#88888855";
+  ctx.beginPath(); // zero line
+  ctx.moveTo(0, c.height / 2);
+  ctx.lineTo(c.width, c.height / 2);
+  ctx.stroke();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (const p of pts) {
+    ctx.lineTo(p.x * c.width, c.height / 2 - (p.y / 32767) * (c.height / 2 - 4));
+  }
+  ctx.stroke();
+}
+
+async function refreshWaveform() {
+  try {
+    const d = await (await fetch("/api/waveform")).json();
+    if (d.type === "none") {
+      $("#wave-info").textContent = "none uploaded";
+      drawWavePreview([]);
+      return;
+    }
+    let pts = [];
+    if (d.type === "reference") {
+      pts = d.preview.map((y, i) => ({ x: i / (d.preview.length - 1), y }));
+      $("#wave-info").textContent = `reference · ${d.count} points`;
+    } else {
+      const total = d.micros.reduce((a, b) => a + b, 0);
+      let t = 0;
+      for (let i = 0; i < d.levels.length; i++) {
+        pts.push({ x: t / total, y: d.levels[i] });
+        t += d.micros[i];
+        pts.push({ x: t / total, y: d.levels[i] });
+      }
+      $("#wave-info").textContent = `sequence · ${d.count} segments · ${(total / 1000).toFixed(2)} ms period`;
+    }
+    drawWavePreview(pts);
+  } catch (e) {
+    $("#wave-info").textContent = "waveform fetch failed";
+  }
+}
+
+async function uploadWaveform() {
+  const f = $("#wave-file").files[0];
+  if (!f) {
+    toast("Choose a file first", true);
+    return;
+  }
+  const text = await f.text();
+  const post = () => fetch("/api/waveform", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "text/plain" }),
+    body: text,
+  });
+  try {
+    let r = await post();
+    if (r.status === 401) {
+      const pin = prompt("Write PIN required:");
+      if (pin === null) return;
+      sessionStorage.setItem("pin", pin);
+      r = await post();
+    }
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(out.error || "HTTP " + r.status);
+    toast(`Waveform loaded: ${out.type}, ${out.count} ${out.type === "reference" ? "points" : "segments"}`);
+    refreshWaveform();
+  } catch (e) {
+    toast("Upload failed: " + e.message, true);
+  }
+}
+$("#wave-upload").addEventListener("click", uploadWaveform);
+refreshWaveform();
 
 // Theme: Pico v2 honours data-theme; "auto" = follow the OS
 const themeSel = $("#theme");

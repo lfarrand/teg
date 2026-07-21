@@ -4,6 +4,8 @@
 #include "modulation.h"
 #include "capture.h"
 #include "thermal.h"
+#include "waveform.h"
+#include "waveform_parse.h"
 #include "utils.h"
 #include <QNEthernet.h>
 #include "config_json.h"
@@ -50,6 +52,16 @@ static volatile bool vNearestLevel = false;
 static volatile uint8_t vDitherMode = DitherOff;
 static uint16_t ditherPeriods[DitherTableSize];
 static uint32_t ditherIncrements[DitherTableSize];
+
+// Sequence player (RefWaveSequence): per-segment reference levels and
+// durations in carrier cycles. State is ISR-owned; (re)written only while the
+// modulation IRQ is disabled.
+static int16_t seqLevels[MaxWaveSegments];
+static uint32_t seqCycles[MaxWaveSegments];
+static volatile uint8_t vSeqCount = 0;
+static volatile bool vRefSequence = false;
+static uint8_t seqIndex = 0;
+static uint32_t seqRemaining = 0;
 
 bool spwmActive() {
   return config.Pwm.Tm2.UseSpwm && config.Pwm.Tm2.ModulationScheme != ModSchemeFixed;
@@ -179,8 +191,38 @@ void buildSpwmLut() {
   uint16_t indexMilli = tm2.ModulationIndexMilli;
   if (indexMilli > MaxModulationIndexMilli) indexMilli = MaxModulationIndexMilli;
 
-  buildUnitReferenceLut(spwmLut, SpwmLutSize, tm2.ReferenceWaveform,
-                        tm2.ModulationScheme == ModSchemeThipwm);
+  // Reference source: built-in shapes, an uploaded reference table, or the
+  // uploaded segment sequence (which bypasses the DDS entirely)
+  vRefSequence = false;
+  if (tm2.ModulationScheme == ModSchemeThipwm) {
+    buildUnitReferenceLut(spwmLut, SpwmLutSize, RefWaveSine, true);
+  } else if (tm2.ReferenceWaveform == RefWaveCustom) {
+    if (waveformType() == WaveTypeReference) {
+      memcpy(spwmLut, waveformReferenceLut(), sizeof(spwmLut));
+    } else {
+      buildUnitReferenceLut(spwmLut, SpwmLutSize, RefWaveSine, false);
+      writeLog("No reference waveform uploaded - using sine");
+    }
+  } else if (tm2.ReferenceWaveform == RefWaveSequence) {
+    buildUnitReferenceLut(spwmLut, SpwmLutSize, RefWaveSine, false); // unused fallback
+    const int16_t *levels;
+    const uint32_t *micros;
+    const uint32_t n = waveformSegments(&levels, &micros);
+    if (n > 0) {
+      for (uint32_t k = 0; k < n; k++) {
+        seqLevels[k] = levels[k];
+        seqCycles[k] = microsToCycles(micros[k], tm2.SpwmCarrierFrequency);
+      }
+      vSeqCount = static_cast<uint8_t>(n);
+      seqIndex = 0;
+      seqRemaining = seqCycles[0];
+      vRefSequence = true;
+    } else {
+      writeLog("No sequence uploaded - using sine");
+    }
+  } else {
+    buildUnitReferenceLut(spwmLut, SpwmLutSize, tm2.ReferenceWaveform, false);
+  }
   vDpwmVariant = tm2.DpwmVariant;
   vDpwmClampPhase = degreesToPhase(tm2.DpwmClampAngleDeg);
   vNearestLevel = tm2.NearestLevelModulation;
@@ -529,7 +571,9 @@ FASTRUN void IsrOverflowSm20() {
 
   vPhase = phase + increment; // wraps on overflow = seamless cycle boundary
 
-  if (scheme == ModSchemeSvpwm || scheme == ModSchemeDpwm || scheme == ModSchemeSvpwm3D) {
+  const bool sequence = vRefSequence;
+
+  if (!sequence && (scheme == ModSchemeSvpwm || scheme == ModSchemeDpwm || scheme == ModSchemeSvpwm3D)) {
     int32_t v[3];
     threePhaseScaledRefs(spwmLut, phase, idx, v);
     const int32_t zss = scheme == ModSchemeDpwm
@@ -545,7 +589,18 @@ FASTRUN void IsrOverflowSm20() {
       CellSm[3]->updateDutyCycle(dutyFromScaled(zss, 0, 0));
     }
   } else {
-    const int32_t s = refFromPhase(spwmLut, phase);
+    int32_t s;
+    if (sequence) {
+      // Segment player: hold each level for its duration in carrier cycles
+      if (seqRemaining == 0) {
+        seqIndex = static_cast<uint8_t>(seqIndex + 1 >= vSeqCount ? 0 : seqIndex + 1);
+        seqRemaining = seqCycles[seqIndex];
+      }
+      seqRemaining--;
+      s = seqLevels[seqIndex];
+    } else {
+      s = refFromPhase(spwmLut, phase);
+    }
     // Dead-time compensation applies to full-reference legs; the band-sliced
     // level-shifted cells switch at most one pair per instant, handled per cell
     const uint16_t ref = refToDuty(s, idx, scheme == ModSchemeLevelShifted ? 0 : comp);

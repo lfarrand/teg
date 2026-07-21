@@ -39,6 +39,14 @@ static CellPlan cellPlan[MaxModulationCells]; // written only with the SPWM IRQ 
 static volatile uint8_t vModScheme = ModSchemeSpwmUnipolar;
 static volatile uint8_t vModCells = 2;
 static volatile uint8_t vCellLdokMask = 0b0101;
+static volatile uint8_t vDpwmVariant = DpwmMin;
+static volatile uint32_t vDpwmClampPhase = 0;
+
+// Spread-spectrum carrier: per-cycle period entries with matched DDS
+// increments (see modulation.h). All in DTCM; written with the IRQ disabled.
+static volatile uint8_t vDitherMode = DitherOff;
+static uint16_t ditherPeriods[DitherTableSize];
+static uint32_t ditherIncrements[DitherTableSize];
 
 bool spwmActive() {
   return config.Pwm.Tm2.UseSpwm && config.Pwm.Tm2.ModulationScheme != ModSchemeFixed;
@@ -173,12 +181,17 @@ void buildSpwmLut() {
   uint8_t cells = tm2.ModulationCells;
   if (cells < 1) cells = 1;
   if (cells > MaxModulationCells) cells = MaxModulationCells;
-  if (tm2.ModulationScheme == ModSchemeSvpwm) cells = 3; // three phase legs, always
+  if (tm2.ModulationScheme == ModSchemeSvpwm || tm2.ModulationScheme == ModSchemeDpwm) {
+    cells = 3; // three phase legs, always
+  }
 
   uint16_t indexMilli = tm2.ModulationIndexMilli;
   if (indexMilli > MaxModulationIndexMilli) indexMilli = MaxModulationIndexMilli;
 
-  buildUnitReferenceLut(spwmLut, SpwmLutSize, tm2.ModulationScheme == ModSchemeThipwm);
+  buildUnitReferenceLut(spwmLut, SpwmLutSize, tm2.ReferenceWaveform,
+                        tm2.ModulationScheme == ModSchemeThipwm);
+  vDpwmVariant = tm2.DpwmVariant;
+  vDpwmClampPhase = degreesToPhase(tm2.DpwmClampAngleDeg);
 
   for (uint8_t k = 0; k < MaxModulationCells; k++) {
     cellPlan[k] = modulationCellPlan(tm2.ModulationScheme, tm2.CarrierDisposition, k, cells);
@@ -283,7 +296,29 @@ void configureModule2() {
   };
   setupSubmodule(Sm23, sm23Settings, config.Pwm.PrintRegs);
 
+  // Dither tables need the final prescaler, so build them after submodule setup
+  buildDitherState();
+
   writeLog("Started TM2");
+}
+
+void buildDitherState() {
+  const Module2Config &tm2 = config.Pwm.Tm2;
+  if (!spwmActive() || tm2.CarrierDitherMode == DitherOff || tm2.CarrierDitherPercent == 0) {
+    vDitherMode = DitherOff;
+    return;
+  }
+  const uint32_t effectiveClockHz = F_BUS_ACTUAL >> Sm20.prescaler();
+  buildDitherTables(ditherPeriods, ditherIncrements, effectiveClockHz,
+                    tm2.SpwmCarrierFrequency, tm2.SpwmModulationFrequency,
+                    tm2.CarrierDitherPercent);
+  vDitherMode = tm2.CarrierDitherMode;
+
+  char strBuf[LOG_BUF_SIZE];
+  snprintf(strBuf, sizeof(strBuf), "Carrier dither: mode %u, +/-%u%%, %u-%u ticks",
+           vDitherMode, tm2.CarrierDitherPercent > MaxDitherPercent ? MaxDitherPercent : tm2.CarrierDitherPercent,
+           ditherPeriods[0], ditherPeriods[DitherTableSize - 1]);
+  writeLog(strBuf);
 }
 
 void configureModule3() {
@@ -448,7 +483,6 @@ FASTRUN void IsrOverflowSm20() {
   digitalToggleFast(TriggerPin);
 
   const uint32_t phase = vPhase;
-  vPhase = phase + vPhaseIncrement; // wraps on overflow = seamless cycle boundary
 
   // Slew-limited amplitude: soft-start ramp and closed-loop target tracking
   const uint32_t idx = rampIndexQ15(vIndexQ15, vIndexTargetQ15, vIndexStepQ15);
@@ -458,14 +492,42 @@ FASTRUN void IsrOverflowSm20() {
   const uint8_t cells = vModCells;
   const uint8_t mask = vCellLdokMask;
   const int32_t comp = vDtCompQ15;
+  uint32_t increment = vPhaseIncrement;
 
   Tm2.setPwmLdok(mask, false);
 
-  if (scheme == ModSchemeSvpwm) {
-    int32_t s[3];
-    svmUnitRefs(spwmLut, phase, s);
+  // Spread-spectrum carrier: pick this cycle's period and its matched DDS
+  // increment, and rewrite the (buffered) period registers before the duty
+  // update below reads VAL1 back
+  const uint8_t dither = vDitherMode;
+  if (dither != DitherOff) {
+    static uint16_t lfsr = 0xACE1;
+    static uint32_t sweep = 0;
+    uint32_t entry;
+    if (dither == DitherRandom) {
+      lfsr = nextLfsr16(lfsr);
+      entry = lfsr & (DitherTableSize - 1);
+    } else {
+      entry = triangleIndex(sweep++, DitherTableSize);
+    }
+    const uint16_t period = ditherPeriods[entry];
+    increment = ditherIncrements[entry];
+    for (uint8_t k = 0; k < cells; k++) {
+      CellSm[k]->setVal0Value(period >> 1);
+      CellSm[k]->setVal1Value(period - 1);
+    }
+  }
+
+  vPhase = phase + increment; // wraps on overflow = seamless cycle boundary
+
+  if (scheme == ModSchemeSvpwm || scheme == ModSchemeDpwm) {
+    int32_t v[3];
+    threePhaseScaledRefs(spwmLut, phase, idx, v);
+    const int32_t zss = scheme == ModSchemeSvpwm
+                          ? continuousSvmZss(v)
+                          : dpwmZss(spwmLut, phase, vDpwmClampPhase, vDpwmVariant, v);
     for (uint8_t k = 0; k < 3; k++) {
-      CellSm[k]->updateDutyCycle(refToDuty(s[k], idx, comp));
+      CellSm[k]->updateDutyCycle(dutyFromScaled(v[k] + zss, comp, v[k]));
     }
   } else {
     const int32_t s = refFromPhase(spwmLut, phase);

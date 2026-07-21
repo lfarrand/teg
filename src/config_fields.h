@@ -120,6 +120,16 @@ inline bool applyConfigFormField(MainConfig &config, const char *name, const cha
     config.Pwm.Tm2.DeadTimeCompensation = (strcmp(value, "Yes") == 0);
   } else if (strcmp(name, "soft-start-ms") == 0) {
     config.Pwm.Tm2.SoftStartMs = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "reference-waveform") == 0) {
+    config.Pwm.Tm2.ReferenceWaveform = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "dpwm-variant") == 0) {
+    config.Pwm.Tm2.DpwmVariant = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "dpwm-clamp-angle") == 0) {
+    config.Pwm.Tm2.DpwmClampAngleDeg = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "carrier-dither-mode") == 0) {
+    config.Pwm.Tm2.CarrierDitherMode = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "carrier-dither-percent") == 0) {
+    config.Pwm.Tm2.CarrierDitherPercent = strtol(value, nullptr, 10);
   } else if (strcmp(name, "feedback-enabled") == 0) {
     config.Feedback.Enabled = (strcmp(value, "Yes") == 0);
   } else if (strcmp(name, "feedback-setpoint-mv") == 0) {

@@ -147,6 +147,8 @@ FLASHMEM void settings_pwm_update(Request &req, Response &res) {
 
     // Apply to hardware first: the register writes are buffered and take
     // effect at the next PWM reload, i.e. within one PWM period.
+    const uint32_t applyStart = ARM_DWT_CYCCNT;
+
     applyPwmConfig(previous);
 
     if (spwmActive()) {
@@ -154,11 +156,17 @@ FLASHMEM void settings_pwm_update(Request &req, Response &res) {
       enablePwmInterrupts();
     }
 
+    const uint32_t applyMicros = (ARM_DWT_CYCCNT - applyStart) / (F_CPU_ACTUAL / 1000000);
+
     // Redirect
     res.set("Location", "/settings/pwm");
     res.sendStatus(302);
     res.flush();
     res.end();
+
+    char strBuf[48];
+    snprintf(strBuf, sizeof(strBuf), "Settings applied in %luus", applyMicros);
+    writeLog(strBuf);
 
     // Persist from loop() so the response doesn't wait on the SD card
     configSaveNeeded = true;

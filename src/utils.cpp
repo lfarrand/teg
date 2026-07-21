@@ -33,6 +33,10 @@ static bool displayDirty = false;
 static unsigned long lastDisplayFlush = 0;
 constexpr unsigned long DisplayFlushIntervalMs = 250;
 
+// Deliberately does NOT redraw the display: a full OLED push blocks for
+// ~25-30ms, which would land inside latency-sensitive paths (the settings
+// apply path in particular). loop() calls flushDisplay() every pass, so the
+// display still updates within a millisecond of the log line.
 void writeLog(const String &msg) {
   for (int i = 0; i < LogSize - 1; i++) {
     logs[i] = logs[i + 1];
@@ -43,7 +47,6 @@ void writeLog(const String &msg) {
   Serial.println(msg);
 
   displayDirty = true;
-  flushDisplay();
 }
 
 void setStatusLine(const String &line) {

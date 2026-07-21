@@ -125,6 +125,18 @@
   </article>
 
   <article>
+    <header>InfluxDB Metrics</header>
+    <p class="hint">Metrics are disabled until a token is set. The token is stored only in the device config, never in firmware source.</p>
+    <div class="grid-fields">
+      <label>Host <input type="text" data-str data-path="Influx.Host" maxlength="39"></label>
+      <label>Port <input type="number" data-path="Influx.Port" min="1" max="65535"></label>
+      <label>Org <input type="text" data-str data-path="Influx.Org" maxlength="23"></label>
+      <label>Bucket <input type="text" data-str data-path="Influx.Bucket" maxlength="31"></label>
+      <label>Token <input type="password" data-str data-path="Influx.Token" maxlength="95" autocomplete="off"></label>
+    </div>
+  </article>
+
+  <article>
     <header>Asymmetric Induction (Timer 4 / SM42)</header>
     <label><input type="checkbox" role="switch" data-path="AsymmetricInduction.IsEnabled"> Enabled</label>
     <div class="grid-fields">
@@ -229,7 +241,9 @@ function loadIntoForm() {
 function collectFromForm() {
   document.querySelectorAll("[data-path]").forEach((el) => {
     if (el.classList.contains("hidden")) { /* keep stored value */ }
-    const v = el.type === "checkbox" ? el.checked : Number(el.value);
+    const v = el.type === "checkbox" ? el.checked
+            : el.hasAttribute("data-str") ? el.value
+            : Number(el.value);
     setByPath(cfg, el.dataset.path, v);
   });
 }

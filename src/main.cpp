@@ -35,8 +35,6 @@ EthernetUDP ntpUDP;
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-char influxDbServerAddress[] = "ub-1.lan";
-int influxDbPort = 8086;
 EthernetClient influxDbClient;
 
 Print *stdPrint;

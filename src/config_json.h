@@ -82,6 +82,16 @@ struct FaultProtectionConfig {
   bool ActiveHigh = true;
 };
 
+// InfluxDB v2 metrics target. Metrics are disabled until a token is set —
+// the token lives ONLY in /settings.cfg (or the web UI), never in source.
+struct InfluxConfig {
+  char Host[40] = "ub-1.lan";
+  uint16_t Port = 8086;
+  char Org[24] = "501eaf58ac3171cd";
+  char Bucket[32] = "power_generator";
+  char Token[96] = "";
+};
+
 struct PwmConfig {
   Module1Config Tm1;
   Module2Config Tm2;
@@ -97,6 +107,7 @@ struct MainConfig {
   AsymmetricInductionConfig AsymmetricInduction;
   FeedbackConfig Feedback;
   FaultProtectionConfig FaultProtection;
+  InfluxConfig Influx;
 };
 
 extern MainConfig config;

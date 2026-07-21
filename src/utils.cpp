@@ -1,5 +1,6 @@
 #include "utils.h"
 #include "ntp_utils.h"
+#include "config_json.h"
 #include "Adafruit_SSD1306.h"
 #include "qnethernet/QNEthernetClient.h"
 #include "qnethernet/QNEthernetUDP.h"
@@ -20,8 +21,6 @@ byte packetBuffer[NTP_PACKET_SIZE];
 
 extern qindesign::network::EthernetUDP ntpUDP;
 
-extern char influxDbServerAddress[];
-extern int influxDbPort;
 extern qindesign::network::EthernetClient influxDbClient;
 
 // OLED redraws are deferred and rate-limited: a full display.display() pushes
@@ -126,11 +125,19 @@ void sendNTPpacket(const char *host) {
 }
 
 void writeInfluxDb(const String &data) {
-  if (influxDbClient.connect(influxDbServerAddress, influxDbPort)) {
-    influxDbClient.print("POST /api/v2/write?org=501eaf58ac3171cd&bucket=power_generator&precision=ms HTTP/1.1\r\n");
+  // Metrics are disabled until a token is configured (settings.cfg / web UI);
+  // the token is deliberately never present in source
+  if (config.Influx.Token[0] == '\0' || config.Influx.Host[0] == '\0') {
+    return;
+  }
+
+  if (influxDbClient.connect(config.Influx.Host, config.Influx.Port)) {
+    influxDbClient.printf("POST /api/v2/write?org=%s&bucket=%s&precision=ms HTTP/1.1\r\n",
+                          config.Influx.Org, config.Influx.Bucket);
     influxDbClient.print("Host: ");
-    influxDbClient.println(influxDbServerAddress);
-    influxDbClient.println("Authorization: Bearer oSe4_XGLyob-Ns0FT56CouDXw3jEpocQ0ntSuX7q0vr6JOn82GapRz0yUfrnpobYPxTTwS_EV2nyJ6vMCvGTcA==");
+    influxDbClient.println(config.Influx.Host);
+    influxDbClient.print("Authorization: Bearer ");
+    influxDbClient.println(config.Influx.Token);
     influxDbClient.println("Content-Type: text/plain");
     influxDbClient.print("Content-Length: ");
     influxDbClient.println(data.length());

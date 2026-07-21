@@ -4,10 +4,7 @@
 #include <stdint.h>
 
 struct ChannelConfig {
-  uint32_t OnPeriodMicroseconds{};
   uint16_t DutyCycle{};
-  uint8_t PhaseShift{};
-  bool Enabled = true;
 };
 
 struct SubmoduleConfig {
@@ -92,6 +89,28 @@ struct InfluxConfig {
   char Token[96] = "";
 };
 
+// Write protection for the API: when WritePin is set, POST /api/config
+// requires a matching X-Auth-Pin header. Redacted from GET responses.
+struct SecurityConfig {
+  char WritePin[16] = "";
+};
+
+// PWM-synchronous waveform capture of the feedback pin into PSRAM (one sample
+// per carrier cycle at the reload point). Freezes on fault trip.
+struct CaptureConfig {
+  bool Enabled = false;
+};
+
+// DS18B20 probes on OneWire (index 0 = TEG hot side, 1 = cold side) plus the
+// RT1062 die temperature. The worst of (hot, die) linearly derates the
+// modulation index between DerateStartC and DerateEndC.
+struct ThermalConfig {
+  bool Enabled = false;
+  uint8_t OneWirePin = 21;
+  uint8_t DerateStartC = 70;
+  uint8_t DerateEndC = 90;
+};
+
 struct PwmConfig {
   Module1Config Tm1;
   Module2Config Tm2;
@@ -108,6 +127,9 @@ struct MainConfig {
   FeedbackConfig Feedback;
   FaultProtectionConfig FaultProtection;
   InfluxConfig Influx;
+  SecurityConfig Security;
+  CaptureConfig Capture;
+  ThermalConfig Thermal;
 };
 
 extern MainConfig config;
@@ -117,9 +139,5 @@ void loadConfiguration(const char *filename);
 void saveConfiguration(const char *filename);
 
 void printFile(const char *filename);
-
-void loadConfigurationFromFlash(const char* filename);
-
-void saveConfigurationToFlash(const char* filename, const MainConfig& config);
 
 #endif

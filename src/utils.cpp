@@ -56,6 +56,11 @@ void setStatusLine(const String &line) {
 }
 
 void flushDisplay() {
+  extern bool displayAvailable;
+  if (!displayAvailable) {
+    displayDirty = false;
+    return;
+  }
   if (!displayDirty || millis() - lastDisplayFlush < DisplayFlushIntervalMs) {
     return;
   }

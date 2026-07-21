@@ -47,6 +47,8 @@
     <div><span>ISR</span> <b id="st-isr">&mdash;</b></div>
     <div><span>Last apply</span> <b id="st-apply">&mdash;</b></div>
     <div><span>RAM free</span> <b id="st-ram">&mdash;</b></div>
+    <div><span>Temp</span> <b id="st-temp">&mdash;</b></div>
+    <div><span>Derate</span> <b id="st-derate">&mdash;</b></div>
   </div>
   <div id="fault-banner">&#9888; FAULT TRIPPED &mdash; all PWM outputs disabled. Save settings to clear.</div>
 
@@ -116,6 +118,31 @@
   </article>
 
   <article>
+    <header>Thermal Monitoring</header>
+    <label><input type="checkbox" role="switch" data-path="Thermal.Enabled"> DS18B20 probes (index 0 = hot side, 1 = cold side) + die temperature; the worst of hot/die linearly derates the modulation index</label>
+    <div class="grid-fields">
+      <label>OneWire pin <input type="number" data-path="Thermal.OneWirePin" min="0" max="41"></label>
+      <label>Derate start &deg;C <input type="number" data-path="Thermal.DerateStartC" min="0" max="255"></label>
+      <label>Derate end &deg;C <input type="number" data-path="Thermal.DerateEndC" min="0" max="255"></label>
+    </div>
+  </article>
+
+  <article>
+    <header>Waveform Capture</header>
+    <label><input type="checkbox" role="switch" data-path="Capture.Enabled"> Sample the feedback pin every carrier cycle into PSRAM (~52&thinsp;s of history; freezes on fault trip)</label>
+    <div style="display:flex;gap:0.8rem;align-items:center;margin-bottom:0.6rem">
+      <select id="cap-window" style="width:auto;margin:0">
+        <option value="1">Last 1 s</option>
+        <option value="5" selected>Last 5 s</option>
+        <option value="30">Last 30 s</option>
+      </select>
+      <button id="cap-refresh" class="secondary outline" style="width:auto;margin:0">Refresh</button>
+      <span class="hint" id="cap-info"></span>
+    </div>
+    <canvas id="cap-canvas" height="220" style="width:100%;border:1px solid var(--pico-muted-border-color);border-radius:6px"></canvas>
+  </article>
+
+  <article>
     <header>Fault Protection</header>
     <label><input type="checkbox" role="switch" data-path="FaultProtection.Enabled"> Fault trip enabled (~1&micro;s software trip, latched)</label>
     <div class="grid-fields">
@@ -133,6 +160,15 @@
       <label>Org <input type="text" data-str data-path="Influx.Org" maxlength="23"></label>
       <label>Bucket <input type="text" data-str data-path="Influx.Bucket" maxlength="31"></label>
       <label>Token <input type="password" data-str data-path="Influx.Token" maxlength="95" autocomplete="off"></label>
+    </div>
+    <p class="hint">Secrets read back blank &mdash; leave blank on save to keep the stored value.</p>
+  </article>
+
+  <article>
+    <header>Security</header>
+    <p class="hint">When a write PIN is set, saving any settings requires it (the browser will prompt). Reads back blank; leave blank to keep the current PIN. Clearing requires editing settings.cfg.</p>
+    <div class="grid-fields">
+      <label>Write PIN <input type="password" data-str data-path="Security.WritePin" maxlength="15" autocomplete="off"></label>
     </div>
   </article>
 
@@ -274,14 +310,30 @@ async function load() {
   loadIntoForm();
 }
 
+function postConfig() {
+  const headers = { "Content-Type": "application/json" };
+  const pin = sessionStorage.getItem("pin");
+  if (pin) headers["X-Auth-Pin"] = pin;
+  return fetch("/api/config", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ Config: cfg }),
+  });
+}
+
 async function save() {
   collectFromForm();
   try {
-    const r = await fetch("/api/config", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ Config: cfg }),
-    });
+    let r = await postConfig();
+    if (r.status === 401) {
+      const pin = prompt("Write PIN required:");
+      if (pin === null) {
+        toast("Save cancelled", true);
+        return;
+      }
+      sessionStorage.setItem("pin", pin);
+      r = await postConfig();
+    }
     if (!r.ok) throw new Error("HTTP " + r.status);
     const out = await r.json();
     dirty = false;
@@ -310,9 +362,46 @@ async function pollStatus() {
     $("#st-isr").textContent = s.active ? (s.isrCycles / 600).toFixed(1) + " µs" : "—";
     $("#st-apply").textContent = s.applyMicros ? s.applyMicros + " µs" : "—";
     $("#st-ram").textContent = Math.floor(s.dtcmFree / 1024) + "k / " + Math.floor(s.ocramFree / 1024) + "k";
+    const t = (d) => (d > -32768 ? (d / 10).toFixed(1) + "°" : "—");
+    $("#st-temp").textContent = `hot ${t(s.hotDeciC)} cold ${t(s.coldDeciC)} die ${t(s.chipDeciC)}`;
+    $("#st-derate").textContent = s.derateMilli < 1000 ? (s.derateMilli / 10).toFixed(0) + "%" : "none";
+    $("#st-derate").style.color = s.derateMilli < 1000 ? "#c62828" : "";
     $("#fault-banner").style.display = s.fault ? "block" : "none";
   } catch (e) { /* device busy; retry next tick */ }
 }
+
+async function refreshCapture() {
+  const rate = cfg ? cfg.Pwm.Tm2.SpwmCarrierFrequency : 20000;
+  const sec = Number($("#cap-window").value);
+  try {
+    const d = await (await fetch(`/api/capture?count=${rate * sec}&bins=600`)).json();
+    const c = $("#cap-canvas");
+    c.width = c.clientWidth * (window.devicePixelRatio || 1);
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, c.width, c.height);
+    if (!d.count) {
+      $("#cap-info").textContent = "no samples (enable capture and save)";
+      return;
+    }
+    const n = d.min.length;
+    const x = (i) => (i / (n - 1)) * c.width;
+    const y = (v) => c.height - (v / 4095) * c.height;
+    const color = getComputedStyle(document.documentElement).getPropertyValue("--pico-primary").trim() || "#0172ad";
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) ctx.lineTo(x(i), y(d.max[i]));
+    for (let i = n - 1; i >= 0; i--) ctx.lineTo(x(i), y(d.min[i]));
+    ctx.closePath();
+    ctx.fillStyle = color + "55";
+    ctx.strokeStyle = color;
+    ctx.fill();
+    ctx.stroke();
+    $("#cap-info").textContent =
+      `${d.count} samples @ ${d.sampleHz} Hz` + (d.frozen ? " — FROZEN (fault record)" : "");
+  } catch (e) {
+    $("#cap-info").textContent = "capture fetch failed";
+  }
+}
+$("#cap-refresh").addEventListener("click", refreshCapture);
 
 // Theme: Pico v2 honours data-theme; "auto" = follow the OS
 const themeSel = $("#theme");

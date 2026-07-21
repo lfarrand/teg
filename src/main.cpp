@@ -13,6 +13,8 @@
 #include "web_handlers.h"
 #include "config_json.h"
 #include "memory_utils.h"
+#include "capture.h"
+#include "thermal.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -39,23 +41,65 @@ EthernetClient influxDbClient;
 
 Print *stdPrint;
 
+bool sdAvailable = false;
+bool displayAvailable = false;
+
 void configureSdCard() {
-  if (!sd.begin(FIFO_SDIO)) {
-    Serial.println(F("SD card initialization failed!"));
-    for (;;);
+  sdAvailable = sd.begin(FIFO_SDIO);
+  if (!sdAvailable) {
+    Serial.println(F("SD init failed - running on default config, saves disabled"));
   }
 }
 
 void loadSettings() {
-  loadConfiguration(filename);
+  if (sdAvailable) {
+    loadConfiguration(filename);
+  }
 }
 
 void configureEthernet() {
-  if (Ethernet.begin(mac, kDHCPTimeout) == 0) {
-    Serial.println(F("Failed to configure Ethernet using DHCP"));
-    for (;;);
+  // Start DHCP without blocking the boot: wait briefly for an address (so the
+  // IP can appear in the boot log), then continue regardless -
+  // networkHousekeeping() reports when the lease eventually arrives, and
+  // QNEthernet's DHCP client keeps retrying in the background.
+  Ethernet.begin(mac);
+  if (!Ethernet.waitForLocalIP(kDHCPTimeout)) {
+    Serial.println(F("No DHCP lease yet - continuing, will report when up"));
   }
   server.begin();
+
+  // mDNS: reachable as http://teg.local without knowing the DHCP address
+  if (MDNS.begin("teg")) {
+    MDNS.addService("_http", "_tcp", 80);
+  }
+}
+
+static void networkHousekeeping() {
+  static bool wasUp = false;
+  const bool up = static_cast<uint32_t>(Ethernet.localIP()) != 0;
+  if (up && !wasUp) {
+    char buf[48];
+    snprintf(buf, sizeof(buf), "Network up: %d.%d.%d.%d",
+             Ethernet.localIP()[0], Ethernet.localIP()[1],
+             Ethernet.localIP()[2], Ethernet.localIP()[3]);
+    writeLog(buf);
+  } else if (!up && wasUp) {
+    writeLog("Network down");
+  }
+  wasUp = up;
+}
+
+// WDOG1: if loop() stops being serviced for ~8 seconds (firmware hang), the
+// hardware resets the chip into the known-safe boot path instead of leaving
+// the PWM free-running with stale state.
+static void enableWatchdog() {
+  WDOG1_WMCR = 0; // no power-down counter
+  WDOG1_WCR = WDOG_WCR_WT(15) | WDOG_WCR_WDE | WDOG_WCR_SRS | WDOG_WCR_WDA; // 8s timeout
+}
+
+static void kickWatchdog() {
+  WDOG1_WSR = 0x5555;
+  WDOG1_WSR = 0xAAAA;
 }
 
 void configureNtp() {
@@ -92,11 +136,12 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(TriggerPin, OUTPUT);
 
-  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    for (;;);
+  displayAvailable = display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS);
+  if (displayAvailable) {
+    display.display();
+  } else {
+    Serial.println(F("SSD1306 init failed - continuing without display"));
   }
-  display.display();
 
   teensySN(serial);
   teensyUID64(uid64);
@@ -130,17 +175,29 @@ void setup() {
 
   configureFaultProtection();
 
+  captureConfigure();
+
+  thermalConfigure();
+
   printStats();
 
   reportMemoryUsage();
+
+  enableWatchdog();
 
   digitalWriteFast(LED_BUILTIN, HIGH);
 }
 
 void loop() {
+  kickWatchdog();
+
   processWebServer();
 
+  networkHousekeeping();
+
   runFeedbackLoop();
+
+  thermalTask();
 
   static bool faultReported = false;
   if (vFaultTripped && !faultReported) {

@@ -2,6 +2,8 @@
 #include "spwm_math.h"
 #include "pwm_timing.h"
 #include "modulation.h"
+#include "capture.h"
+#include "thermal.h"
 #include "utils.h"
 #include <QNEthernet.h>
 #include "config_json.h"
@@ -53,16 +55,9 @@ bool spwmActive() {
   return config.Pwm.Tm2.UseSpwm && config.Pwm.Tm2.ModulationScheme != ModSchemeFixed;
 }
 
-const uint8_t PrescalerValues[] = {1, 2, 4, 8, 16, 32, 64, 128};
-
 const char *prescaleStr[] = {
   "fclk/1", "fclk/2", "fclk/4", "fclk/8", "fclk/16", "fclk/32", "fclk/64", "fclk/128"
 };
-
-TeensyTimerTool::OneShotTimer startupTimer(TeensyTimerTool::TCK64);
-TeensyTimerTool::OneShotTimer chargeToggleTimer(TeensyTimerTool::GPT1);
-TeensyTimerTool::OneShotTimer dischargeToggleTimer(TeensyTimerTool::GPT2);
-TeensyTimerTool::PeriodicTimer pwmSyncTimer(TeensyTimerTool::PIT);
 
 SubModule Sm13(8, 7);
 SubModule Sm20(4, 33);
@@ -80,18 +75,6 @@ eFlex::Timer &Tm3 = Sm31.timer();
 eFlex::Timer &Tm4 = Sm40.timer();
 
 extern MainConfig config;
-
-void configureTimers() {
-}
-
-void startupTimerCallback() {
-}
-
-void chargeToggleTimerCallback() {
-}
-
-void dischargeToggleTimerCallback() {
-}
 
 struct SubmoduleSettings {
   uint32_t frequency;
@@ -160,6 +143,10 @@ void applyPwmConfig(const MainConfig &previous) {
   if (memcmp(&previous.FaultProtection, &config.FaultProtection, sizeof(config.FaultProtection)) != 0) {
     configureFaultProtection();
   }
+  // Re-arms capture (and clears a freeze) on every apply — also covers the
+  // fault-clear path above
+  captureConfigure();
+  thermalConfigure();
   if (memcmp(&previous.Pwm.Tm1, &config.Pwm.Tm1, sizeof(config.Pwm.Tm1)) != 0) {
     configureModule1();
   }
@@ -214,7 +201,7 @@ void buildSpwmLut() {
   // wherever the output already is, and from zero on a cold start.
   const uint32_t targetQ15 = indexMilliToQ15(indexMilli);
   vIndexStepQ15 = softStartStepQ15(targetQ15, tm2.SoftStartMs, carrier);
-  vIndexTargetQ15 = targetQ15;
+  setModulationIndexTargetQ15(targetQ15); // applies the thermal derate cap
 
   vDtCompQ15 = tm2.DeadTimeCompensation ? deadtimeCompQ15(tm2.Sm20.DeadTime, carrier) : 0;
 
@@ -228,11 +215,19 @@ void buildSpwmLut() {
   writeLog(strBuf);
 }
 
+// Thermal derating acts as a ceiling on the modulation index (see thermal.cpp)
+static volatile uint16_t vThermalDerateMilli = 1000;
+
+void setThermalDerateMilli(uint16_t derateMilli) {
+  vThermalDerateMilli = derateMilli > 1000 ? 1000 : derateMilli;
+}
+
 // Clamped setter for the closed-loop controller (and anything else that wants
-// live amplitude control without touching the LUT)
+// live amplitude control without touching the LUT). The effective ceiling is
+// the scheme maximum scaled by the current thermal derate factor.
 void setModulationIndexTargetQ15(uint32_t targetQ15) {
-  const uint32_t maxQ15 = indexMilliToQ15(MaxModulationIndexMilli);
-  vIndexTargetQ15 = targetQ15 > maxQ15 ? maxQ15 : targetQ15;
+  const uint32_t capQ15 = (indexMilliToQ15(MaxModulationIndexMilli) * vThermalDerateMilli) / 1000U;
+  vIndexTargetQ15 = targetQ15 > capQ15 ? capQ15 : targetQ15;
 }
 
 // Live telemetry for the web UI status endpoint
@@ -366,7 +361,7 @@ void configureModule4() {
   SubmoduleSettings sm41Settings = {
     .frequency = config.Pwm.Tm4.Sm41.PwmFrequency,
     .deadtimeNs = config.Pwm.Tm4.Sm41.DeadTime,
-    .dutyA = config.Pwm.Tm4.Sm41.ChannelA.PhaseShift != 0 ? FIFTY_PERCENT_DUTY : config.Pwm.Tm4.Sm41.ChannelA.DutyCycle,
+    .dutyA = config.Pwm.Tm4.Sm41.ChannelA.DutyCycle,
     .dutyB = UINT16_MAX, // No Channel B
     .hasChanB = false
   };
@@ -419,12 +414,8 @@ void configureModule4() {
     SubmoduleSettings sm42Settings = {
       .frequency = config.Pwm.Tm4.Sm42.PwmFrequency,
       .deadtimeNs = config.Pwm.Tm4.Sm42.DeadTime,
-      .dutyA = config.Pwm.Tm4.Sm42.ChannelA.PhaseShift != 0
-                 ? FIFTY_PERCENT_DUTY
-                 : config.Pwm.Tm4.Sm42.ChannelA.DutyCycle,
-      .dutyB = config.Pwm.Tm4.Sm42.ChannelB.PhaseShift != 0
-                 ? FIFTY_PERCENT_DUTY
-                 : config.Pwm.Tm4.Sm42.ChannelB.DutyCycle,
+      .dutyA = config.Pwm.Tm4.Sm42.ChannelA.DutyCycle,
+      .dutyB = config.Pwm.Tm4.Sm42.ChannelB.DutyCycle,
       .hasChanB = true
     };
     setupSubmodule(Sm42, sm42Settings, config.Pwm.PrintRegs);
@@ -570,6 +561,8 @@ FASTRUN void IsrOverflowSm20() {
 
   Tm2.setPwmLdok(mask, true);
 
+  captureTick(); // reload point = average-current instant for centre-aligned PWM
+
   vIsrCycles = ARM_DWT_CYCCNT - t0;
 
   asm volatile("dsb");
@@ -597,8 +590,16 @@ void runFeedbackLoop() {
   const float dt = static_cast<float>(static_cast<uint32_t>(sinceLastRun)) / 1000000.0f;
   sinceLastRun = 0;
 
-  const int raw = analogRead(config.Feedback.AnalogPin);
-  const float measuredMv = static_cast<float>(raw) * (static_cast<float>(config.Feedback.FullScaleMillivolts) / 1023.0f);
+  // Prefer the PWM-synchronous samples (12-bit, taken at the reload point)
+  // when capture is running; fall back to a plain 10-bit analogRead otherwise
+  float measuredMv;
+  if (captureActive() && !captureIsFrozen()) {
+    measuredMv = static_cast<float>(captureMeanRaw(64)) *
+                 (static_cast<float>(config.Feedback.FullScaleMillivolts) / 4095.0f);
+  } else {
+    const int raw = analogRead(config.Feedback.AnalogPin);
+    measuredMv = static_cast<float>(raw) * (static_cast<float>(config.Feedback.FullScaleMillivolts) / 1023.0f);
+  }
   const float errorVolts = (static_cast<float>(config.Feedback.SetpointMillivolts) - measuredMv) / 1000.0f;
 
   static PiController pi;

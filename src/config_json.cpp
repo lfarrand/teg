@@ -51,6 +51,12 @@ FLASHMEM void loadConfiguration(const char *filename) {
 }
 
 FLASHMEM void saveConfiguration(const char *filename) {
+  extern bool sdAvailable;
+  if (!sdAvailable) {
+    Serial.println(F("No SD card - configuration not persisted"));
+    return;
+  }
+
   Serial.println(F("Saving configuration to file"));
 
   if (sd.exists(filename)) {
@@ -95,48 +101,6 @@ FLASHMEM void printFile(const char *filename) {
     Serial.print(static_cast<char>(file.read()));
   }
   Serial.println();
-
-  file.close();
-}
-
-FLASHMEM void loadConfigurationFromFlash(const char* filename) {
-  File file = flashFS.open(filename, FILE_READ);
-  if (!file) {
-    Serial.println(F("Failed to open config file from flash for reading"));
-    return;
-  }
-
-  JsonDocument doc;
-
-  DeserializationError error = deserializeJson(doc, file);
-
-  if (error) {
-    Serial.println(F("Loading configuration from flash failed, using default config"));
-    Serial.println(error.f_str());
-    return;
-  }
-
-  // Copy values as in loadConfiguration
-
-  file.close();
-}
-
-FLASHMEM void saveConfigurationToFlash(const char* filename) {
-  if (flashFS.exists(filename)) {
-    flashFS.remove(filename);
-  }
-
-  File file = flashFS.open(filename, FILE_WRITE);
-  if (!file) {
-    Serial.println(F("Failed to create config file on flash"));
-    return;
-  }
-
-  JsonDocument doc;
-
-  // Set values as in saveConfiguration
-
-  serializeJson(doc, file);
 
   file.close();
 }

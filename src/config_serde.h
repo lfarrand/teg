@@ -132,6 +132,27 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   copyConfigString(config.Influx.Org, sizeof(config.Influx.Org), Config_Influx["Org"] | "501eaf58ac3171cd");
   copyConfigString(config.Influx.Bucket, sizeof(config.Influx.Bucket), Config_Influx["Bucket"] | "power_generator");
   copyConfigString(config.Influx.Token, sizeof(config.Influx.Token), Config_Influx["Token"] | "");
+
+  copyConfigString(config.Security.WritePin, sizeof(config.Security.WritePin),
+                   doc["Config"]["Security"]["WritePin"] | "");
+}
+
+// Blank out secrets before a config document leaves the device (GET /api/config)
+inline void redactSecrets(JsonDocument &doc) {
+  doc["Config"]["Influx"]["Token"] = "";
+  doc["Config"]["Security"]["WritePin"] = "";
+}
+
+// An empty secret in an incoming document means "keep the current value" —
+// the UI round-trips the redacted (empty) fields, and that must not wipe the
+// stored credentials. To actually clear a secret, edit /settings.cfg.
+inline void preserveSecrets(MainConfig &config, const MainConfig &previous) {
+  if (config.Influx.Token[0] == '\0') {
+    copyConfigString(config.Influx.Token, sizeof(config.Influx.Token), previous.Influx.Token);
+  }
+  if (config.Security.WritePin[0] == '\0') {
+    copyConfigString(config.Security.WritePin, sizeof(config.Security.WritePin), previous.Security.WritePin);
+  }
 }
 
 // Clamps out-of-range values; returns true if anything was corrected.
@@ -293,6 +314,8 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Influx["Org"] = config.Influx.Org;
   Config_Influx["Bucket"] = config.Influx.Bucket;
   Config_Influx["Token"] = config.Influx.Token;
+
+  doc["Config"]["Security"].to<JsonObject>()["WritePin"] = config.Security.WritePin;
 }
 
 #endif

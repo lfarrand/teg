@@ -134,6 +134,15 @@
       <label>Bucket <input type="text" data-str data-path="Influx.Bucket" maxlength="31"></label>
       <label>Token <input type="password" data-str data-path="Influx.Token" maxlength="95" autocomplete="off"></label>
     </div>
+    <p class="hint">Secrets read back blank &mdash; leave blank on save to keep the stored value.</p>
+  </article>
+
+  <article>
+    <header>Security</header>
+    <p class="hint">When a write PIN is set, saving any settings requires it (the browser will prompt). Reads back blank; leave blank to keep the current PIN. Clearing requires editing settings.cfg.</p>
+    <div class="grid-fields">
+      <label>Write PIN <input type="password" data-str data-path="Security.WritePin" maxlength="15" autocomplete="off"></label>
+    </div>
   </article>
 
   <article>
@@ -274,14 +283,30 @@ async function load() {
   loadIntoForm();
 }
 
+function postConfig() {
+  const headers = { "Content-Type": "application/json" };
+  const pin = sessionStorage.getItem("pin");
+  if (pin) headers["X-Auth-Pin"] = pin;
+  return fetch("/api/config", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ Config: cfg }),
+  });
+}
+
 async function save() {
   collectFromForm();
   try {
-    const r = await fetch("/api/config", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ Config: cfg }),
-    });
+    let r = await postConfig();
+    if (r.status === 401) {
+      const pin = prompt("Write PIN required:");
+      if (pin === null) {
+        toast("Save cancelled", true);
+        return;
+      }
+      sessionStorage.setItem("pin", pin);
+      r = await postConfig();
+    }
     if (!r.ok) throw new Error("HTTP " + r.status);
     const out = await r.json();
     dirty = false;

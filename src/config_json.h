@@ -92,6 +92,12 @@ struct InfluxConfig {
   char Token[96] = "";
 };
 
+// Write protection for the API: when WritePin is set, POST /api/config
+// requires a matching X-Auth-Pin header. Redacted from GET responses.
+struct SecurityConfig {
+  char WritePin[16] = "";
+};
+
 struct PwmConfig {
   Module1Config Tm1;
   Module2Config Tm2;
@@ -108,6 +114,7 @@ struct MainConfig {
   FeedbackConfig Feedback;
   FaultProtectionConfig FaultProtection;
   InfluxConfig Influx;
+  SecurityConfig Security;
 };
 
 extern MainConfig config;

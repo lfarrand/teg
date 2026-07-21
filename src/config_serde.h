@@ -135,6 +135,8 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
 
   copyConfigString(config.Security.WritePin, sizeof(config.Security.WritePin),
                    doc["Config"]["Security"]["WritePin"] | "");
+
+  config.Capture.Enabled = doc["Config"]["Capture"]["Enabled"] | false;
 }
 
 // Blank out secrets before a config document leaves the device (GET /api/config)
@@ -316,6 +318,8 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Influx["Token"] = config.Influx.Token;
 
   doc["Config"]["Security"].to<JsonObject>()["WritePin"] = config.Security.WritePin;
+
+  doc["Config"]["Capture"].to<JsonObject>()["Enabled"] = config.Capture.Enabled;
 }
 
 #endif

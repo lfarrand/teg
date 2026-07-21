@@ -13,6 +13,7 @@
 #include "web_handlers.h"
 #include "config_json.h"
 #include "memory_utils.h"
+#include "capture.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -167,6 +168,8 @@ void setup() {
   }
 
   configureFaultProtection();
+
+  captureConfigure();
 
   printStats();
 

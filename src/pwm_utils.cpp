@@ -2,6 +2,7 @@
 #include "spwm_math.h"
 #include "pwm_timing.h"
 #include "modulation.h"
+#include "capture.h"
 #include "utils.h"
 #include <QNEthernet.h>
 #include "config_json.h"
@@ -160,6 +161,9 @@ void applyPwmConfig(const MainConfig &previous) {
   if (memcmp(&previous.FaultProtection, &config.FaultProtection, sizeof(config.FaultProtection)) != 0) {
     configureFaultProtection();
   }
+  // Re-arms capture (and clears a freeze) on every apply — also covers the
+  // fault-clear path above
+  captureConfigure();
   if (memcmp(&previous.Pwm.Tm1, &config.Pwm.Tm1, sizeof(config.Pwm.Tm1)) != 0) {
     configureModule1();
   }
@@ -570,6 +574,8 @@ FASTRUN void IsrOverflowSm20() {
 
   Tm2.setPwmLdok(mask, true);
 
+  captureTick(); // reload point = average-current instant for centre-aligned PWM
+
   vIsrCycles = ARM_DWT_CYCCNT - t0;
 
   asm volatile("dsb");
@@ -597,8 +603,16 @@ void runFeedbackLoop() {
   const float dt = static_cast<float>(static_cast<uint32_t>(sinceLastRun)) / 1000000.0f;
   sinceLastRun = 0;
 
-  const int raw = analogRead(config.Feedback.AnalogPin);
-  const float measuredMv = static_cast<float>(raw) * (static_cast<float>(config.Feedback.FullScaleMillivolts) / 1023.0f);
+  // Prefer the PWM-synchronous samples (12-bit, taken at the reload point)
+  // when capture is running; fall back to a plain 10-bit analogRead otherwise
+  float measuredMv;
+  if (captureActive() && !captureIsFrozen()) {
+    measuredMv = static_cast<float>(captureMeanRaw(64)) *
+                 (static_cast<float>(config.Feedback.FullScaleMillivolts) / 4095.0f);
+  } else {
+    const int raw = analogRead(config.Feedback.AnalogPin);
+    measuredMv = static_cast<float>(raw) * (static_cast<float>(config.Feedback.FullScaleMillivolts) / 1023.0f);
+  }
   const float errorVolts = (static_cast<float>(config.Feedback.SetpointMillivolts) - measuredMv) / 1000.0f;
 
   static PiController pi;

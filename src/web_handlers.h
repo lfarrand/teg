@@ -13,5 +13,6 @@ void serve_pico_css(Request &req, Response &res);
 void api_config_get(Request &req, Response &res);
 void api_config_post(Request &req, Response &res);
 void api_status(Request &req, Response &res);
+void api_capture(Request &req, Response &res);
 
 #endif

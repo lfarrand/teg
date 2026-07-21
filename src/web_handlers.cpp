@@ -2,6 +2,7 @@
 #include "config_json.h"
 #include "config_serde.h"
 #include "pwm_utils.h"
+#include "capture.h"
 #include "utils.h"
 #include "web_assets.h"
 #include <ArduinoJson.h>
@@ -29,6 +30,7 @@ FLASHMEM void configureWebServer() {
   app.get("/api/config", &api_config_get);
   app.post("/api/config", &api_config_post);
   app.get("/api/status", &api_status);
+  app.get("/api/capture", &api_capture);
 }
 
 void processWebServer() {
@@ -123,6 +125,40 @@ FLASHMEM void api_config_post(Request &req, Response &res) {
   configSaveNeeded = true;
 }
 
+constexpr uint32_t MaxCaptureBins = 600;
+
+void api_capture(Request &req, Response &res) {
+  char qbuf[16];
+  uint32_t count = 20000, bins = MaxCaptureBins;
+  if (req.query("count", qbuf, sizeof(qbuf))) {
+    count = strtoul(qbuf, nullptr, 10);
+  }
+  if (req.query("bins", qbuf, sizeof(qbuf))) {
+    bins = strtoul(qbuf, nullptr, 10);
+  }
+  if (bins == 0) bins = 1;
+  if (bins > MaxCaptureBins) bins = MaxCaptureBins;
+
+  static uint16_t binMin[MaxCaptureBins];
+  static uint16_t binMax[MaxCaptureBins];
+  const uint32_t used = captureDecimate(count, bins, binMin, binMax);
+
+  JsonDocument doc;
+  doc["sampleHz"] = config.Pwm.Tm2.SpwmCarrierFrequency;
+  doc["count"] = used;
+  doc["frozen"] = captureIsFrozen();
+  JsonArray mn = doc["min"].to<JsonArray>();
+  JsonArray mx = doc["max"].to<JsonArray>();
+  if (used > 0) {
+    for (uint32_t i = 0; i < bins; i++) {
+      mn.add(binMin[i]);
+      mx.add(binMax[i]);
+    }
+  }
+  res.set("Content-Type", "application/json");
+  serializeJson(doc, res);
+}
+
 void api_status(Request &req, Response &res) {
   JsonDocument doc;
   doc["uptimeMs"] = millis();
@@ -135,6 +171,9 @@ void api_status(Request &req, Response &res) {
   doc["targetMilli"] = modulationIndexTargetMilli();
   doc["dtcmFree"] = getFreeMemory();
   doc["ocramFree"] = freeram();
+  doc["captureActive"] = captureActive();
+  doc["captureFrozen"] = captureIsFrozen();
+  doc["captureSamples"] = captureSampleCount();
   res.set("Content-Type", "application/json");
   serializeJson(doc, res);
 }

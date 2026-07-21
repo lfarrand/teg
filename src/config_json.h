@@ -98,6 +98,12 @@ struct SecurityConfig {
   char WritePin[16] = "";
 };
 
+// PWM-synchronous waveform capture of the feedback pin into PSRAM (one sample
+// per carrier cycle at the reload point). Freezes on fault trip.
+struct CaptureConfig {
+  bool Enabled = false;
+};
+
 struct PwmConfig {
   Module1Config Tm1;
   Module2Config Tm2;
@@ -115,6 +121,7 @@ struct MainConfig {
   FaultProtectionConfig FaultProtection;
   InfluxConfig Influx;
   SecurityConfig Security;
+  CaptureConfig Capture;
 };
 
 extern MainConfig config;

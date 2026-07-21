@@ -66,6 +66,11 @@ bool spwmActive();
 // Live amplitude control (clamped to the maximum modulation index)
 void setModulationIndexTargetQ15(uint32_t targetQ15);
 
+// Live telemetry for the web UI status endpoint
+uint32_t modulationIndexNowMilli();
+uint32_t modulationIndexTargetMilli();
+uint64_t modulationActualMilliHz();
+
 // Closed-loop amplitude regulation; call from loop()
 void runFeedbackLoop();
 

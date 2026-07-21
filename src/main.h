@@ -15,7 +15,7 @@
 #define OLED_RESET (-1)
 
 extern const char* filename;
-static constexpr uint32_t kDHCPTimeout = 15000;
+static constexpr uint32_t kDHCPTimeout = 5000; // boot-time wait only; DHCP keeps retrying in background
 extern MainConfig config;
 extern SdFs sd;
 extern byte mac[];
@@ -25,10 +25,13 @@ extern char timeServer[];
 extern EthernetUDP ntpUDP;
 extern Adafruit_SSD1306 display;
 extern LittleFS_QSPIFlash flashFS;
-extern char influxDbServerAddress[];
-extern int influxDbPort;
 extern EthernetClient influxDbClient;
 extern Print *stdPrint;
+
+// Degraded-mode flags: the firmware boots and runs PWM regardless of which
+// peripherals are present; consumers must check these before using them.
+extern bool sdAvailable;
+extern bool displayAvailable;
 
 void configureSdCard();
 

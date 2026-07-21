@@ -51,6 +51,12 @@ FLASHMEM void loadConfiguration(const char *filename) {
 }
 
 FLASHMEM void saveConfiguration(const char *filename) {
+  extern bool sdAvailable;
+  if (!sdAvailable) {
+    Serial.println(F("No SD card - configuration not persisted"));
+    return;
+  }
+
   Serial.println(F("Saving configuration to file"));
 
   if (sd.exists(filename)) {

@@ -41,6 +41,7 @@ static volatile uint8_t vModCells = 2;
 static volatile uint8_t vCellLdokMask = 0b0101;
 static volatile uint8_t vDpwmVariant = DpwmMin;
 static volatile uint32_t vDpwmClampPhase = 0;
+static volatile bool vNearestLevel = false;
 
 // Spread-spectrum carrier: per-cycle period entries with matched DDS
 // increments (see modulation.h). All in DTCM; written with the IRQ disabled.
@@ -184,6 +185,9 @@ void buildSpwmLut() {
   if (tm2.ModulationScheme == ModSchemeSvpwm || tm2.ModulationScheme == ModSchemeDpwm) {
     cells = 3; // three phase legs, always
   }
+  if (tm2.ModulationScheme == ModSchemeSvpwm3D) {
+    cells = 4; // three phase legs + the neutral leg (Sm23, pins 36/37)
+  }
 
   uint16_t indexMilli = tm2.ModulationIndexMilli;
   if (indexMilli > MaxModulationIndexMilli) indexMilli = MaxModulationIndexMilli;
@@ -192,6 +196,7 @@ void buildSpwmLut() {
                         tm2.ModulationScheme == ModSchemeThipwm);
   vDpwmVariant = tm2.DpwmVariant;
   vDpwmClampPhase = degreesToPhase(tm2.DpwmClampAngleDeg);
+  vNearestLevel = tm2.NearestLevelModulation;
 
   for (uint8_t k = 0; k < MaxModulationCells; k++) {
     cellPlan[k] = modulationCellPlan(tm2.ModulationScheme, tm2.CarrierDisposition, k, cells);
@@ -520,22 +525,30 @@ FASTRUN void IsrOverflowSm20() {
 
   vPhase = phase + increment; // wraps on overflow = seamless cycle boundary
 
-  if (scheme == ModSchemeSvpwm || scheme == ModSchemeDpwm) {
+  if (scheme == ModSchemeSvpwm || scheme == ModSchemeDpwm || scheme == ModSchemeSvpwm3D) {
     int32_t v[3];
     threePhaseScaledRefs(spwmLut, phase, idx, v);
-    const int32_t zss = scheme == ModSchemeSvpwm
-                          ? continuousSvmZss(v)
-                          : dpwmZss(spwmLut, phase, vDpwmClampPhase, vDpwmVariant, v);
+    const int32_t zss = scheme == ModSchemeDpwm
+                          ? dpwmZss(spwmLut, phase, vDpwmClampPhase, vDpwmVariant, v)
+                          : continuousSvmZss(v);
     for (uint8_t k = 0; k < 3; k++) {
       CellSm[k]->updateDutyCycle(dutyFromScaled(v[k] + zss, comp, v[k]));
+    }
+    if (scheme == ModSchemeSvpwm3D) {
+      // Neutral leg carries the zero sequence, so phase-to-neutral = pure
+      // reference. No dead-time comp: its current is the (unknown) sum of
+      // the phase currents.
+      CellSm[3]->updateDutyCycle(dutyFromScaled(zss, 0, 0));
     }
   } else {
     const int32_t s = refFromPhase(spwmLut, phase);
     // Dead-time compensation applies to full-reference legs; the band-sliced
     // level-shifted cells switch at most one pair per instant, handled per cell
     const uint16_t ref = refToDuty(s, idx, scheme == ModSchemeLevelShifted ? 0 : comp);
+    const bool nlm = vNearestLevel;
     for (uint8_t k = 0; k < cells; k++) {
-      const uint16_t duty = modulationFinalDuty(modulationCellDuty(scheme, ref, k, cells), cellPlan[k]);
+      const uint16_t duty =
+        modulationFinalDuty(modulationCellDuty(scheme, ref, k, cells, nlm), cellPlan[k]);
       CellSm[k]->updateDutyCycle(duty);
     }
   }

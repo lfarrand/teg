@@ -130,6 +130,8 @@ inline bool applyConfigFormField(MainConfig &config, const char *name, const cha
     config.Pwm.Tm2.CarrierDitherMode = strtol(value, nullptr, 10);
   } else if (strcmp(name, "carrier-dither-percent") == 0) {
     config.Pwm.Tm2.CarrierDitherPercent = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "nearest-level") == 0) {
+    config.Pwm.Tm2.NearestLevelModulation = (strcmp(value, "Yes") == 0);
   } else if (strcmp(name, "feedback-enabled") == 0) {
     config.Feedback.Enabled = (strcmp(value, "Yes") == 0);
   } else if (strcmp(name, "feedback-setpoint-mv") == 0) {

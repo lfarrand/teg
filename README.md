@@ -148,9 +148,19 @@ two-leg schemes use the original H-bridge pair.
 ## Custom waveforms (arbitrary references and pulse sequences)
 
 Set *Reference Waveform* to **Custom** or **Sequence** and upload a
-`teg-wave v1` file from the web UI (persisted to `/waveform.txt` on SD and
-reloaded at boot). `#` starts a comment; the first content line declares the
-type:
+`teg-wave v1` file from the web UI (persisted to `/waveform.bin` on SD and
+reloaded at boot). References hold up to **2,097,152 samples** (4 MB of the
+PSRAM) with two playback modes:
+
+- **Period mode** (default): the whole file is one fundamental period at the
+  modulation frequency, rendered through the 2048-point DDS table (very long
+  files are downsampled for this mode).
+- **Sample-step mode**: exactly one stored sample per carrier cycle at full
+  resolution, repeated ad infinitum — the repeat period is
+  `points ÷ carrier` (2M points at 20 kHz ≈ 105 s), limited only by the
+  PSRAM allocation.
+
+Text format: `#` starts a comment; the first content line declares the type:
 
 ```
 # teg-wave v1 — arbitrary reference (AWG-style)
@@ -172,6 +182,13 @@ type=sequence
 0.0, 500    # played in order and looped; the effective period is the sum
 -1.0, 300   # of the durations (modulation frequency is ignored)
 ```
+
+For bulk uploads there is also a **binary format** (auto-detected, ~4× smaller
+and faster than text): a 12-byte header — magic `TEGW`, `u8` version (1),
+`u8` type (1 = reference, 2 = sequence), `u16` reserved, `u32` count
+(little-endian) — followed by `count` little-endian `int16` Q15 samples.
+From Python: `b"TEGW" + bytes([1,1,0,0]) + struct.pack("<I", n) +
+samples.astype("<i2").tobytes()`.
 
 Notes: sequence edges quantize to the carrier period (50 µs at 20 kHz — raise
 the carrier for finer steps). Levels pass through the normal index scaling and

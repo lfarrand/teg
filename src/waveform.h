@@ -1,24 +1,26 @@
 #ifndef WAVEFORM_H
 #define WAVEFORM_H
 
-// Uploaded custom waveform storage: parses teg-wave v1 text (see
-// waveform_parse.h), keeps the parsed form in RAM for the modulation engine,
-// and persists the raw text to SD (/waveform.txt) across reboots.
+// Uploaded custom waveform storage. Reference samples live full-resolution in
+// a 4MB PSRAM store (up to 2,097,152 Q15 samples); sequences are up to 64
+// level/duration segments. Uploads stream straight into the store (text or
+// TEGW binary, auto-detected) and persist to SD as /waveform.bin.
 
 #include <stdint.h>
-#include <stddef.h>
+#include <Arduino.h>
 
-// Buffer the caller reads uploaded text into (null-terminate before applying)
-char *waveformTextBuffer(size_t *capacity);
-
-// Parse + adopt + persist. On failure returns false and sets *errorOut.
-bool waveformApplyText(const char *text, const char **errorOut);
+// Parse + adopt + persist from a byte stream (an HTTP request body). Calls
+// progress() periodically during long transfers (watchdog kicking). On
+// failure returns false, sets *errorOut, and leaves the previous waveform
+// in place unless the new one had already partially replaced it (in which
+// case the type resets to none).
+bool waveformApplyStream(Stream &in, const char **errorOut, void (*progress)());
 
 void waveformLoadFromSd(); // call once at boot, after the SD card is up
 
 uint8_t waveformType(); // WaveType* from waveform_parse.h
 uint32_t waveformCount();
-const int16_t *waveformReferenceLut(); // SpwmLutSize entries; valid when type==Reference
+const int16_t *waveformSamples(); // PSRAM store; valid when type==Reference
 uint32_t waveformSegments(const int16_t **levelsQ15, const uint32_t **micros);
 
 #endif

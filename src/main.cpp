@@ -98,7 +98,7 @@ static void enableWatchdog() {
   WDOG1_WCR = WDOG_WCR_WT(15) | WDOG_WCR_WDE | WDOG_WCR_SRS | WDOG_WCR_WDA; // 8s timeout
 }
 
-static void kickWatchdog() {
+void kickWatchdog() {
   WDOG1_WSR = 0x5555;
   WDOG1_WSR = 0xAAAA;
 }

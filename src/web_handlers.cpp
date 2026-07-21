@@ -7,6 +7,7 @@
 #include "waveform.h"
 #include "waveform_parse.h"
 #include "modulation.h"
+#include "main.h"
 #include "utils.h"
 #include "web_assets.h"
 #include <ArduinoJson.h>
@@ -137,20 +138,10 @@ FLASHMEM void api_waveform_post(Request &req, Response &res) {
     return;
   }
 
-  size_t capacity;
-  char *buf = waveformTextBuffer(&capacity);
-  size_t len = 0;
-  while (req.left() && len < capacity - 1) {
-    const int c = req.read();
-    if (c < 0) {
-      break;
-    }
-    buf[len++] = static_cast<char>(c);
-  }
-  buf[len] = '\0';
-
   const char *err = "";
-  if (!waveformApplyText(buf, &err)) {
+  // Streams text or TEGW binary straight into the PSRAM store; multi-MB
+  // uploads take seconds, so the watchdog is serviced during the transfer
+  if (!waveformApplyStream(req, &err, &kickWatchdog)) {
     res.status(400);
     res.set("Content-Type", "application/json");
     JsonDocument out;
@@ -181,9 +172,11 @@ FLASHMEM void api_waveform_get(Request &req, Response &res) {
   doc["count"] = waveformCount();
   if (t == WaveTypeReference) {
     JsonArray preview = doc["preview"].to<JsonArray>();
-    const int16_t *lut = waveformReferenceLut();
-    for (uint32_t i = 0; i < 128; i++) {
-      preview.add(lut[(i * SpwmLutSize) / 128]);
+    const int16_t *samples = waveformSamples();
+    const uint32_t n = waveformCount();
+    const uint32_t points = n < 128 ? n : 128;
+    for (uint32_t i = 0; i < points; i++) {
+      preview.add(samples[(static_cast<uint64_t>(i) * n) / points]);
     }
   } else if (t == WaveTypeSequence) {
     const int16_t *levels;

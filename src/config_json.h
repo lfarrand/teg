@@ -34,6 +34,9 @@ struct Module2Config {
   uint8_t CarrierDitherMode = 0;        // 0 off, 1 random (LFSR), 2 triangular sweep
   uint8_t CarrierDitherPercent = 0;     // carrier period spread, 0-30%
   bool NearestLevelModulation = false;  // level-shifted only: snap cells to the nearest level
+  bool WaveformSampleStep = false;      // custom waveform: one stored sample per carrier cycle
+                                        // (full resolution, repeat = count/carrier) instead of
+                                        // one period per modulation cycle via the DDS
   SubmoduleConfig Sm20;
   SubmoduleConfig Sm21;
   SubmoduleConfig Sm22;

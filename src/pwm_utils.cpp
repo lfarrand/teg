@@ -63,6 +63,15 @@ static volatile bool vRefSequence = false;
 static uint8_t seqIndex = 0;
 static uint32_t seqRemaining = 0;
 
+// Sample-step playback of a long custom waveform: one stored sample per
+// carrier cycle, read sequentially from the PSRAM store (cache-friendly),
+// exact integer wrap at the end. State is ISR-owned, (re)written with the
+// IRQ disabled.
+static volatile bool vSampleStep = false;
+static const int16_t *vWaveSamples = nullptr;
+static uint32_t vWaveCount = 0;
+static uint32_t waveIndex = 0;
+
 bool spwmActive() {
   return config.Pwm.Tm2.UseSpwm && config.Pwm.Tm2.ModulationScheme != ModSchemeFixed;
 }
@@ -194,11 +203,23 @@ void buildSpwmLut() {
   // Reference source: built-in shapes, an uploaded reference table, or the
   // uploaded segment sequence (which bypasses the DDS entirely)
   vRefSequence = false;
+  vSampleStep = false;
   if (tm2.ModulationScheme == ModSchemeThipwm) {
     buildUnitReferenceLut(spwmLut, SpwmLutSize, RefWaveSine, true);
   } else if (tm2.ReferenceWaveform == RefWaveCustom) {
     if (waveformType() == WaveTypeReference) {
-      memcpy(spwmLut, waveformReferenceLut(), sizeof(spwmLut));
+      if (tm2.WaveformSampleStep) {
+        // Full-resolution playback straight from the PSRAM store
+        vWaveSamples = waveformSamples();
+        vWaveCount = waveformCount();
+        waveIndex = 0;
+        vSampleStep = true;
+        buildUnitReferenceLut(spwmLut, SpwmLutSize, RefWaveSine, false); // unused
+      } else {
+        // Period mode: the whole file is one fundamental period, rendered
+        // through the 2048-point DDS table
+        resampleReference(waveformSamples(), waveformCount(), spwmLut, SpwmLutSize);
+      }
     } else {
       buildUnitReferenceLut(spwmLut, SpwmLutSize, RefWaveSine, false);
       writeLog("No reference waveform uploaded - using sine");
@@ -572,8 +593,9 @@ FASTRUN void IsrOverflowSm20() {
   vPhase = phase + increment; // wraps on overflow = seamless cycle boundary
 
   const bool sequence = vRefSequence;
+  const bool stepped = sequence || vSampleStep;
 
-  if (!sequence && (scheme == ModSchemeSvpwm || scheme == ModSchemeDpwm || scheme == ModSchemeSvpwm3D)) {
+  if (!stepped && (scheme == ModSchemeSvpwm || scheme == ModSchemeDpwm || scheme == ModSchemeSvpwm3D)) {
     int32_t v[3];
     threePhaseScaledRefs(spwmLut, phase, idx, v);
     const int32_t zss = scheme == ModSchemeDpwm
@@ -598,6 +620,12 @@ FASTRUN void IsrOverflowSm20() {
       }
       seqRemaining--;
       s = seqLevels[seqIndex];
+    } else if (vSampleStep) {
+      // One stored sample per carrier cycle, repeating ad infinitum
+      s = vWaveSamples[waveIndex];
+      if (++waveIndex >= vWaveCount) {
+        waveIndex = 0;
+      }
     } else {
       s = refFromPhase(spwmLut, phase);
     }

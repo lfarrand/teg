@@ -40,4 +40,8 @@ void configureEthernet();
 
 void configureNtp();
 
+// Service the hardware watchdog; long-running handlers (multi-MB waveform
+// uploads) must call this periodically
+void kickWatchdog();
+
 #endif //TEG_MAIN_H

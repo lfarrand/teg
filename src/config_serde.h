@@ -137,6 +137,12 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
                    doc["Config"]["Security"]["WritePin"] | "");
 
   config.Capture.Enabled = doc["Config"]["Capture"]["Enabled"] | false;
+
+  JsonObjectConst Config_Thermal = doc["Config"]["Thermal"];
+  config.Thermal.Enabled = Config_Thermal["Enabled"] | false;
+  config.Thermal.OneWirePin = Config_Thermal["OneWirePin"] | 21;
+  config.Thermal.DerateStartC = Config_Thermal["DerateStartC"] | 70;
+  config.Thermal.DerateEndC = Config_Thermal["DerateEndC"] | 90;
 }
 
 // Blank out secrets before a config document leaves the device (GET /api/config)
@@ -320,6 +326,12 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   doc["Config"]["Security"].to<JsonObject>()["WritePin"] = config.Security.WritePin;
 
   doc["Config"]["Capture"].to<JsonObject>()["Enabled"] = config.Capture.Enabled;
+
+  JsonObject Config_Thermal = doc["Config"]["Thermal"].to<JsonObject>();
+  Config_Thermal["Enabled"] = config.Thermal.Enabled;
+  Config_Thermal["OneWirePin"] = config.Thermal.OneWirePin;
+  Config_Thermal["DerateStartC"] = config.Thermal.DerateStartC;
+  Config_Thermal["DerateEndC"] = config.Thermal.DerateEndC;
 }
 
 #endif

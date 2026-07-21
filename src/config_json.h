@@ -104,6 +104,16 @@ struct CaptureConfig {
   bool Enabled = false;
 };
 
+// DS18B20 probes on OneWire (index 0 = TEG hot side, 1 = cold side) plus the
+// RT1062 die temperature. The worst of (hot, die) linearly derates the
+// modulation index between DerateStartC and DerateEndC.
+struct ThermalConfig {
+  bool Enabled = false;
+  uint8_t OneWirePin = 21;
+  uint8_t DerateStartC = 70;
+  uint8_t DerateEndC = 90;
+};
+
 struct PwmConfig {
   Module1Config Tm1;
   Module2Config Tm2;
@@ -122,6 +132,7 @@ struct MainConfig {
   InfluxConfig Influx;
   SecurityConfig Security;
   CaptureConfig Capture;
+  ThermalConfig Thermal;
 };
 
 extern MainConfig config;

@@ -14,6 +14,7 @@
 #include "config_json.h"
 #include "memory_utils.h"
 #include "capture.h"
+#include "thermal.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -171,6 +172,8 @@ void setup() {
 
   captureConfigure();
 
+  thermalConfigure();
+
   printStats();
 
   reportMemoryUsage();
@@ -188,6 +191,8 @@ void loop() {
   networkHousekeeping();
 
   runFeedbackLoop();
+
+  thermalTask();
 
   static bool faultReported = false;
   if (vFaultTripped && !faultReported) {

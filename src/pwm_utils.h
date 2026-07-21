@@ -63,8 +63,10 @@ void buildDitherState();
 // True when the Tm2 modulation ISR should run (SPWM enabled and scheme is not fixed-duty)
 bool spwmActive();
 
-// Live amplitude control (clamped to the maximum modulation index)
+// Live amplitude control (clamped to the maximum modulation index scaled by
+// the thermal derate factor)
 void setModulationIndexTargetQ15(uint32_t targetQ15);
+void setThermalDerateMilli(uint16_t derateMilli);
 
 // Live telemetry for the web UI status endpoint
 uint32_t modulationIndexNowMilli();

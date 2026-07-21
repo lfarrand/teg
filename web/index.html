@@ -47,6 +47,8 @@
     <div><span>ISR</span> <b id="st-isr">&mdash;</b></div>
     <div><span>Last apply</span> <b id="st-apply">&mdash;</b></div>
     <div><span>RAM free</span> <b id="st-ram">&mdash;</b></div>
+    <div><span>Temp</span> <b id="st-temp">&mdash;</b></div>
+    <div><span>Derate</span> <b id="st-derate">&mdash;</b></div>
   </div>
   <div id="fault-banner">&#9888; FAULT TRIPPED &mdash; all PWM outputs disabled. Save settings to clear.</div>
 
@@ -112,6 +114,16 @@
       <label>Ki /1000 <input type="number" data-path="Feedback.KiMilli" min="0"></label>
       <label>Analog pin <input type="number" data-path="Feedback.AnalogPin" min="0" max="41"></label>
       <label>Loop Hz <input type="number" data-path="Feedback.LoopHz" min="1" max="10000"></label>
+    </div>
+  </article>
+
+  <article>
+    <header>Thermal Monitoring</header>
+    <label><input type="checkbox" role="switch" data-path="Thermal.Enabled"> DS18B20 probes (index 0 = hot side, 1 = cold side) + die temperature; the worst of hot/die linearly derates the modulation index</label>
+    <div class="grid-fields">
+      <label>OneWire pin <input type="number" data-path="Thermal.OneWirePin" min="0" max="41"></label>
+      <label>Derate start &deg;C <input type="number" data-path="Thermal.DerateStartC" min="0" max="255"></label>
+      <label>Derate end &deg;C <input type="number" data-path="Thermal.DerateEndC" min="0" max="255"></label>
     </div>
   </article>
 
@@ -350,6 +362,10 @@ async function pollStatus() {
     $("#st-isr").textContent = s.active ? (s.isrCycles / 600).toFixed(1) + " µs" : "—";
     $("#st-apply").textContent = s.applyMicros ? s.applyMicros + " µs" : "—";
     $("#st-ram").textContent = Math.floor(s.dtcmFree / 1024) + "k / " + Math.floor(s.ocramFree / 1024) + "k";
+    const t = (d) => (d > -32768 ? (d / 10).toFixed(1) + "°" : "—");
+    $("#st-temp").textContent = `hot ${t(s.hotDeciC)} cold ${t(s.coldDeciC)} die ${t(s.chipDeciC)}`;
+    $("#st-derate").textContent = s.derateMilli < 1000 ? (s.derateMilli / 10).toFixed(0) + "%" : "none";
+    $("#st-derate").style.color = s.derateMilli < 1000 ? "#c62828" : "";
     $("#fault-banner").style.display = s.fault ? "block" : "none";
   } catch (e) { /* device busy; retry next tick */ }
 }

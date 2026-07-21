@@ -3,6 +3,7 @@
 #include "pwm_timing.h"
 #include "modulation.h"
 #include "capture.h"
+#include "thermal.h"
 #include "utils.h"
 #include <QNEthernet.h>
 #include "config_json.h"
@@ -164,6 +165,7 @@ void applyPwmConfig(const MainConfig &previous) {
   // Re-arms capture (and clears a freeze) on every apply — also covers the
   // fault-clear path above
   captureConfigure();
+  thermalConfigure();
   if (memcmp(&previous.Pwm.Tm1, &config.Pwm.Tm1, sizeof(config.Pwm.Tm1)) != 0) {
     configureModule1();
   }
@@ -218,7 +220,7 @@ void buildSpwmLut() {
   // wherever the output already is, and from zero on a cold start.
   const uint32_t targetQ15 = indexMilliToQ15(indexMilli);
   vIndexStepQ15 = softStartStepQ15(targetQ15, tm2.SoftStartMs, carrier);
-  vIndexTargetQ15 = targetQ15;
+  setModulationIndexTargetQ15(targetQ15); // applies the thermal derate cap
 
   vDtCompQ15 = tm2.DeadTimeCompensation ? deadtimeCompQ15(tm2.Sm20.DeadTime, carrier) : 0;
 
@@ -232,11 +234,19 @@ void buildSpwmLut() {
   writeLog(strBuf);
 }
 
+// Thermal derating acts as a ceiling on the modulation index (see thermal.cpp)
+static volatile uint16_t vThermalDerateMilli = 1000;
+
+void setThermalDerateMilli(uint16_t derateMilli) {
+  vThermalDerateMilli = derateMilli > 1000 ? 1000 : derateMilli;
+}
+
 // Clamped setter for the closed-loop controller (and anything else that wants
-// live amplitude control without touching the LUT)
+// live amplitude control without touching the LUT). The effective ceiling is
+// the scheme maximum scaled by the current thermal derate factor.
 void setModulationIndexTargetQ15(uint32_t targetQ15) {
-  const uint32_t maxQ15 = indexMilliToQ15(MaxModulationIndexMilli);
-  vIndexTargetQ15 = targetQ15 > maxQ15 ? maxQ15 : targetQ15;
+  const uint32_t capQ15 = (indexMilliToQ15(MaxModulationIndexMilli) * vThermalDerateMilli) / 1000U;
+  vIndexTargetQ15 = targetQ15 > capQ15 ? capQ15 : targetQ15;
 }
 
 // Live telemetry for the web UI status endpoint

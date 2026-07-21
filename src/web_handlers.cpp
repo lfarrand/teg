@@ -3,6 +3,7 @@
 #include "config_serde.h"
 #include "pwm_utils.h"
 #include "capture.h"
+#include "thermal.h"
 #include "utils.h"
 #include "web_assets.h"
 #include <ArduinoJson.h>
@@ -174,6 +175,10 @@ void api_status(Request &req, Response &res) {
   doc["captureActive"] = captureActive();
   doc["captureFrozen"] = captureIsFrozen();
   doc["captureSamples"] = captureSampleCount();
+  doc["derateMilli"] = thermalDerateMilliNow();
+  doc["hotDeciC"] = thermalHotDeciC();   // INT16_MIN = unavailable
+  doc["coldDeciC"] = thermalColdDeciC();
+  doc["chipDeciC"] = thermalChipDeciC();
   res.set("Content-Type", "application/json");
   serializeJson(doc, res);
 }

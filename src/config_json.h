@@ -31,6 +31,11 @@ struct Module2Config {
   uint8_t CarrierDisposition = 0;       // level-shifted only: 0 PD, 1 POD, 2 APOD
   bool DeadTimeCompensation = false;    // polarity-signed duty correction of 2*td*fsw
   uint16_t SoftStartMs = 0;             // modulation index ramp time; 0 = instant
+  uint8_t ReferenceWaveform = 0;        // 0 sine, 1 trapezoid, 2 square (six-step)
+  uint8_t DpwmVariant = 0;              // scheme 7: 0 MIN, 1 MAX, 2 GDPWM, 3 DPWM3
+  int8_t DpwmClampAngleDeg = 0;         // GDPWM clamp angle: 0 = DPWM1, -30 = DPWM0, +30 = DPWM2
+  uint8_t CarrierDitherMode = 0;        // 0 off, 1 random (LFSR), 2 triangular sweep
+  uint8_t CarrierDitherPercent = 0;     // carrier period spread, 0-30%
   SubmoduleConfig Sm20;
   SubmoduleConfig Sm21;
   SubmoduleConfig Sm22;

@@ -517,7 +517,7 @@ body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Col
                 </label>
                 <input type="number" style="width: 75px;" id="spwm-modulation-frequency" name="spwm-modulation-frequency" value="%lu"> Hz
             </div>
-            <p>Modulation Scheme: 0 = fixed duty (no modulation), 1 = unipolar SPWM, 2 = bipolar SPWM, 3 = THIPWM (1/6 third-harmonic injection), 4 = level-shifted (see Carrier Disposition), 5 = phase-shifted (alternating 180&deg; carriers).</p>
+            <p>Modulation Scheme: 0 = fixed duty (no modulation), 1 = unipolar SPWM, 2 = bipolar SPWM, 3 = THIPWM (1/6 third-harmonic injection), 4 = level-shifted (see Carrier Disposition), 5 = phase-shifted (alternating 180&deg; carriers), 6 = SVPWM (three-phase, 3 cells), 7 = DPWM (three-phase discontinuous, see DPWM Variant).</p>
             <div class="input">
                 <label>
                     Modulation Scheme
@@ -544,6 +544,40 @@ body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Col
                     Carrier Disposition
                 </label>
                 <input type="number" style="width: 75px;" id="carrier-disposition" name="carrier-disposition" value="%u"> 0-2
+            </div>
+            <p>Reference Waveform: 0 = sine, 1 = trapezoid (60&deg; ramps), 2 = square (six-step). THIPWM always uses sine + third harmonic.</p>
+            <div class="input">
+                <label>
+                    Reference Waveform
+                </label>
+                <input type="number" style="width: 75px;" id="reference-waveform" name="reference-waveform" value="%u"> 0-2
+            </div>
+            <p>DPWM Variant (scheme 7 only): 0 = DPWMMIN (clamp low, 120&deg;), 1 = DPWMMAX (clamp high, 120&deg;), 2 = GDPWM (clamp largest phase, angle-adjustable), 3 = DPWM3 (clamp intermediate phase). Cuts switching losses by ~33%%.</p>
+            <div class="input">
+                <label>
+                    DPWM Variant
+                </label>
+                <input type="number" style="width: 75px;" id="dpwm-variant" name="dpwm-variant" value="%u"> 0-3
+            </div>
+            <p>GDPWM Clamp Angle: 0&deg; = DPWM1, -30&deg; = DPWM0, +30&deg; = DPWM2. Match to load power factor angle for maximum loss reduction.</p>
+            <div class="input">
+                <label>
+                    GDPWM Clamp Angle
+                </label>
+                <input type="number" style="width: 75px;" id="dpwm-clamp-angle" name="dpwm-clamp-angle" value="%d"> &deg;
+            </div>
+            <p>Carrier Dither spreads the switching spectrum (EMI/acoustic noise): 0 = off, 1 = random (LFSR), 2 = triangular sweep. Percent sets the period spread (max 30%%). The fundamental frequency stays exact.</p>
+            <div class="input">
+                <label>
+                    Carrier Dither Mode
+                </label>
+                <input type="number" style="width: 75px;" id="carrier-dither-mode" name="carrier-dither-mode" value="%u"> 0-2
+            </div>
+            <div class="input">
+                <label>
+                    Carrier Dither Percent
+                </label>
+                <input type="number" style="width: 75px;" id="carrier-dither-percent" name="carrier-dither-percent" value="%u"> %%
             </div>
             <p>Dead-Time Compensation adds a polarity-signed duty correction of 2&middot;t<sub>d</sub>&middot;f<sub>sw</sub> to remove the crossover distortion dead-time causes at low modulation.</p>
             <div class="input">

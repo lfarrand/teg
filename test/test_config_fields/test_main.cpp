@@ -26,6 +26,8 @@ static const char *const numericFields[] = {
   "spwm-carrier-signal-frequency", "spwm-modulation-frequency",
   "modulation-scheme", "modulation-index", "modulation-cells", "carrier-disposition",
   "soft-start-ms", "feedback-setpoint-mv", "feedback-kp", "feedback-ki", "fault-pin",
+  "reference-waveform", "dpwm-variant", "dpwm-clamp-angle", "carrier-dither-mode",
+  "carrier-dither-percent",
   "asymmetric-induction-preshiftnanos", "asymmetric-induction-postshiftnanos",
 };
 
@@ -67,6 +69,11 @@ void test_numeric_fields_reach_the_right_slots() {
   applyConfigFormField(cfg, "fault-pin", "31");
   applyConfigFormField(cfg, "feedback-enabled", "Yes");
   applyConfigFormField(cfg, "fault-active-high", "No");
+  applyConfigFormField(cfg, "reference-waveform", "1");
+  applyConfigFormField(cfg, "dpwm-variant", "3");
+  applyConfigFormField(cfg, "dpwm-clamp-angle", "-30");
+  applyConfigFormField(cfg, "carrier-dither-mode", "2");
+  applyConfigFormField(cfg, "carrier-dither-percent", "20");
 
   TEST_ASSERT_EQUAL_UINT8(4, cfg.Pwm.Tm2.ModulationScheme);
   TEST_ASSERT_EQUAL_UINT16(1155, cfg.Pwm.Tm2.ModulationIndexMilli);
@@ -78,6 +85,11 @@ void test_numeric_fields_reach_the_right_slots() {
   TEST_ASSERT_EQUAL_UINT8(31, cfg.FaultProtection.Pin);
   TEST_ASSERT_TRUE(cfg.Feedback.Enabled);
   TEST_ASSERT_FALSE(cfg.FaultProtection.ActiveHigh);
+  TEST_ASSERT_EQUAL_UINT8(1, cfg.Pwm.Tm2.ReferenceWaveform);
+  TEST_ASSERT_EQUAL_UINT8(3, cfg.Pwm.Tm2.DpwmVariant);
+  TEST_ASSERT_EQUAL_INT8(-30, cfg.Pwm.Tm2.DpwmClampAngleDeg);
+  TEST_ASSERT_EQUAL_UINT8(2, cfg.Pwm.Tm2.CarrierDitherMode);
+  TEST_ASSERT_EQUAL_UINT8(20, cfg.Pwm.Tm2.CarrierDitherPercent);
   TEST_ASSERT_EQUAL_UINT32(20000, cfg.Pwm.Tm2.Sm20.PwmFrequency);
   TEST_ASSERT_EQUAL_UINT16(75, cfg.Pwm.Tm4.Sm42.DeadTime);
   TEST_ASSERT_EQUAL_UINT16(40000, cfg.Pwm.Tm1.Sm13.ChannelB.DutyCycle);

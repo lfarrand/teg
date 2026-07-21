@@ -34,6 +34,23 @@ enum : uint8_t {
   ModSchemeLevelShifted = 4, // N stacked carrier bands (NPC/diode-clamped)
   ModSchemePhaseShifted = 5, // N cells, full reference each, alternating 180deg carriers
   ModSchemeSvpwm = 6,        // 3-phase space vector (min-max zero-sequence injection), 3 cells
+  ModSchemeDpwm = 7,         // 3-phase discontinuous PWM (rail clamping), 3 cells
+};
+
+// Reference waveform stored in the LUT (THIPWM always uses sine + 1/6 third)
+enum : uint8_t {
+  RefWaveSine = 0,
+  RefWaveTrapezoid = 1, // 60deg linear ramps, flat top: classic trapezoidal drive
+  RefWaveSquare = 2,    // six-step / square-wave operation
+};
+
+// Discontinuous PWM variants (ModSchemeDpwm)
+enum : uint8_t {
+  DpwmMin = 0,         // clamp lowest phase to the negative rail (120deg clamping)
+  DpwmMax = 1,         // clamp highest phase to the positive rail (120deg clamping)
+  DpwmGeneralised = 2, // GDPWM: clamp largest-|ref| phase, selection advanced by a
+                       // clamp angle; 0deg = DPWM1, -30deg = DPWM0, +30deg = DPWM2
+  Dpwm3 = 3,           // clamp the intermediate-magnitude phase (30deg segments)
 };
 
 // Carrier disposition, used by ModSchemeLevelShifted only
@@ -61,12 +78,26 @@ constexpr uint32_t indexMilliToQ15(uint16_t indexMilli) {
 // half-cycle is mirrored from the first so the wave is antisymmetric - zero
 // DC bias - by construction. THIPWM values peak at ~0.866 (28377): the third
 // harmonic flattens the crest, which is what allows indices up to 1.155.
-inline void buildUnitReferenceLut(int16_t *lut, uint32_t size, bool thirdHarmonic) {
+inline void buildUnitReferenceLut(int16_t *lut, uint32_t size, uint8_t wave, bool thirdHarmonic) {
   const float step = 6.28318530717958648f / static_cast<float>(size);
   for (uint32_t i = 0; i < size / 2; i++) {
-    float ref = sinf(step * static_cast<float>(i));
+    float ref;
     if (thirdHarmonic) {
-      ref += sinf(3.0f * step * static_cast<float>(i)) / 6.0f;
+      ref = sinf(step * static_cast<float>(i)) + sinf(3.0f * step * static_cast<float>(i)) / 6.0f;
+    } else if (wave == RefWaveSquare) {
+      ref = 1.0f;
+    } else if (wave == RefWaveTrapezoid) {
+      // 60deg ramp up, 60deg flat, 60deg ramp down per half cycle
+      const float deg = 360.0f * static_cast<float>(i) / static_cast<float>(size);
+      if (deg < 60.0f) {
+        ref = deg / 60.0f;
+      } else if (deg <= 120.0f) {
+        ref = 1.0f;
+      } else {
+        ref = (180.0f - deg) / 60.0f;
+      }
+    } else {
+      ref = sinf(step * static_cast<float>(i));
     }
     const int16_t v = static_cast<int16_t>(roundf(32767.0f * ref));
     lut[i] = v;
@@ -108,24 +139,136 @@ inline uint16_t refToDuty(int32_t unitRef, uint32_t indexQ15, int32_t dtCompQ15)
   return static_cast<uint16_t>(32768 + v);
 }
 
-// SVPWM: three unit references 120deg apart with min-max zero-sequence
-// injection. Line-to-line voltages are unaffected by the common-mode term;
-// the crest flattening extends the linear range to index 1.1547, same as
-// THIPWM but exact for three-phase.
-inline void svmUnitRefs(const int16_t *lut, uint32_t phase, int32_t out[3]) {
-  out[0] = refFromPhase(lut, phase);
-  out[1] = refFromPhase(lut, phase - PhaseShift120Deg);
-  out[2] = refFromPhase(lut, phase - 2U * PhaseShift120Deg);
+constexpr uint32_t degreesToPhase(int32_t degrees) {
+  return static_cast<uint32_t>((static_cast<int64_t>(degrees) * 4294967296LL) / 360LL);
+}
 
-  int32_t mx = out[0], mn = out[0];
+// Three-phase references, index-scaled (Q15 domain, may exceed +/-32767 in
+// overmodulation - the zero-sequence and saturation stages handle that)
+inline void threePhaseScaledRefs(const int16_t *lut, uint32_t phase, uint32_t indexQ15, int32_t v[3]) {
+  v[0] = (refFromPhase(lut, phase) * static_cast<int32_t>(indexQ15)) >> 15;
+  v[1] = (refFromPhase(lut, phase - PhaseShift120Deg) * static_cast<int32_t>(indexQ15)) >> 15;
+  v[2] = (refFromPhase(lut, phase - 2U * PhaseShift120Deg) * static_cast<int32_t>(indexQ15)) >> 15;
+}
+
+// SVPWM: min-max zero-sequence injection centres the envelope. Line-to-line
+// voltages are unaffected by the common mode; the crest flattening extends
+// the linear range to index 1.1547.
+inline int32_t continuousSvmZss(const int32_t v[3]) {
+  int32_t mx = v[0], mn = v[0];
   for (int k = 1; k < 3; k++) {
-    if (out[k] > mx) mx = out[k];
-    if (out[k] < mn) mn = out[k];
+    if (v[k] > mx) mx = v[k];
+    if (v[k] < mn) mn = v[k];
   }
-  const int32_t zss = -(mx + mn) / 2;
-  out[0] += zss;
-  out[1] += zss;
-  out[2] += zss;
+  return -(mx + mn) / 2;
+}
+
+// Discontinuous PWM: choose the zero sequence that pins one phase to a rail,
+// so that phase stops switching (~33% switching-loss reduction). Which phase,
+// and when, is the variant. Rail clamping is affine (the rail is a constant),
+// so unlike SVPWM this must operate on index-SCALED references.
+inline int32_t dpwmZss(const int16_t *lut, uint32_t phase, uint32_t clampAnglePhase,
+                       uint8_t variant, const int32_t v[3]) {
+  int sel = 0;
+  switch (variant) {
+    case DpwmMin:
+      for (int k = 1; k < 3; k++) {
+        if (v[k] < v[sel]) sel = k;
+      }
+      return -32767 - v[sel];
+    case DpwmMax:
+      for (int k = 1; k < 3; k++) {
+        if (v[k] > v[sel]) sel = k;
+      }
+      return 32767 - v[sel];
+    case Dpwm3: {
+      // Intermediate |v|: not the largest, not the smallest
+      int lo = 0, hi = 0;
+      int32_t mags[3];
+      for (int k = 0; k < 3; k++) {
+        mags[k] = v[k] >= 0 ? v[k] : -v[k];
+      }
+      for (int k = 1; k < 3; k++) {
+        if (mags[k] > mags[hi]) hi = k;
+        if (mags[k] < mags[lo]) lo = k;
+      }
+      sel = 3 - hi - lo;
+      if (sel == hi || sel == lo) sel = hi; // degenerate ties
+      break;
+    }
+    default: { // DpwmGeneralised: largest |ref| after the clamp-angle advance
+      int32_t best = -1;
+      for (int k = 0; k < 3; k++) {
+        const int32_t a = refFromPhase(lut, phase + clampAnglePhase - static_cast<uint32_t>(k) * PhaseShift120Deg);
+        const int32_t mag = a >= 0 ? a : -a;
+        if (mag > best) {
+          best = mag;
+          sel = k;
+        }
+      }
+      break;
+    }
+  }
+  return v[sel] >= 0 ? 32767 - v[sel] : -32767 - v[sel];
+}
+
+// Duty from an index-scaled (Q15) reference: polarity-signed dead-time
+// compensation, saturation, shift into the duty domain. polaritySource
+// carries the pre-injection reference so the clamped phase's compensation
+// direction stays tied to (proxy) current polarity.
+inline uint16_t dutyFromScaled(int32_t v, int32_t dtCompQ15, int32_t polaritySource) {
+  if (dtCompQ15 != 0) {
+    if (polaritySource > 0) {
+      v += dtCompQ15;
+    } else if (polaritySource < 0) {
+      v -= dtCompQ15;
+    }
+  }
+  if (v > 32767) v = 32767;
+  if (v < -32767) v = -32767;
+  return static_cast<uint16_t>(32768 + v);
+}
+
+// ---------------------------------------------------------------------------
+// Spread-spectrum / random carrier (RPWM). The ISR rewrites each cell's
+// period registers every cycle from a small table; each period entry has a
+// matched DDS increment so the fundamental frequency stays exact regardless
+// of the dither sequence.
+// ---------------------------------------------------------------------------
+
+enum : uint8_t {
+  DitherOff = 0,
+  DitherRandom = 1, // LFSR-selected entry per cycle (spreads the spectrum)
+  DitherSweep = 2,  // triangular sweep through the table (deterministic FM)
+};
+
+constexpr uint32_t DitherTableSize = 16;
+constexpr uint8_t MaxDitherPercent = 30;
+
+inline void buildDitherTables(uint16_t *periods, uint32_t *increments, uint32_t effectiveClockHz,
+                              uint32_t carrierHz, uint32_t modulationHz, uint8_t ditherPercent) {
+  if (ditherPercent > MaxDitherPercent) ditherPercent = MaxDitherPercent;
+  const uint32_t nominal = carrierHz > 0 ? effectiveClockHz / carrierHz : 2;
+  const uint32_t span = (nominal * ditherPercent) / 100U;
+  for (uint32_t i = 0; i < DitherTableSize; i++) {
+    // Evenly spaced periods across [nominal - span, nominal + span]
+    const uint32_t period = nominal - span + (2U * span * i) / (DitherTableSize - 1);
+    periods[i] = static_cast<uint16_t>(period);
+    // Phase advance for one carrier cycle of this length: mod * T * 2^32
+    increments[i] = static_cast<uint32_t>(
+      (static_cast<uint64_t>(modulationHz) * period << 32) / effectiveClockHz);
+  }
+}
+
+// 16-bit Galois LFSR (maximal length, never returns 0 for a non-zero seed)
+inline uint16_t nextLfsr16(uint16_t s) {
+  return static_cast<uint16_t>((s >> 1) ^ (-(static_cast<int32_t>(s & 1U)) & 0xB400U));
+}
+
+// 0,1,...,n-1,n-2,...,1,0,1,... triangular sweep
+inline uint32_t triangleIndex(uint32_t counter, uint32_t n) {
+  const uint32_t m = counter % (2U * (n - 1));
+  return m < n ? m : 2U * (n - 1) - m;
 }
 
 // Soft-start: per-carrier-cycle Q15 step so the index reaches targetQ15 in

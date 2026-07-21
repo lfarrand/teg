@@ -40,6 +40,11 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Pwm.Tm2.CarrierDisposition = Config_Pwm_Tm2["CarrierDisposition"] | 0;
   config.Pwm.Tm2.DeadTimeCompensation = Config_Pwm_Tm2["DeadTimeCompensation"] | false;
   config.Pwm.Tm2.SoftStartMs = Config_Pwm_Tm2["SoftStartMs"] | 0;
+  config.Pwm.Tm2.ReferenceWaveform = Config_Pwm_Tm2["ReferenceWaveform"] | 0;
+  config.Pwm.Tm2.DpwmVariant = Config_Pwm_Tm2["DpwmVariant"] | 0;
+  config.Pwm.Tm2.DpwmClampAngleDeg = Config_Pwm_Tm2["DpwmClampAngleDeg"] | 0;
+  config.Pwm.Tm2.CarrierDitherMode = Config_Pwm_Tm2["CarrierDitherMode"] | 0;
+  config.Pwm.Tm2.CarrierDitherPercent = Config_Pwm_Tm2["CarrierDitherPercent"] | 0;
 
   JsonObjectConst Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2["Sm20"];
   config.Pwm.Tm2.Sm20.DeadTime = Config_Pwm_Tm2_Sm20["DeadTime"] | 50;
@@ -160,6 +165,11 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm_Tm2["CarrierDisposition"] = config.Pwm.Tm2.CarrierDisposition;
   Config_Pwm_Tm2["DeadTimeCompensation"] = config.Pwm.Tm2.DeadTimeCompensation;
   Config_Pwm_Tm2["SoftStartMs"] = config.Pwm.Tm2.SoftStartMs;
+  Config_Pwm_Tm2["ReferenceWaveform"] = config.Pwm.Tm2.ReferenceWaveform;
+  Config_Pwm_Tm2["DpwmVariant"] = config.Pwm.Tm2.DpwmVariant;
+  Config_Pwm_Tm2["DpwmClampAngleDeg"] = config.Pwm.Tm2.DpwmClampAngleDeg;
+  Config_Pwm_Tm2["CarrierDitherMode"] = config.Pwm.Tm2.CarrierDitherMode;
+  Config_Pwm_Tm2["CarrierDitherPercent"] = config.Pwm.Tm2.CarrierDitherPercent;
 
   JsonObject Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2["Sm20"].to<JsonObject>();
   Config_Pwm_Tm2_Sm20["DeadTime"] = config.Pwm.Tm2.Sm20.DeadTime;

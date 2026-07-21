@@ -24,7 +24,6 @@ extern Application app;
 extern char timeServer[];
 extern EthernetUDP ntpUDP;
 extern Adafruit_SSD1306 display;
-extern LittleFS_QSPIFlash flashFS;
 extern EthernetClient influxDbClient;
 extern Print *stdPrint;
 

@@ -83,11 +83,18 @@ The API underneath is plain JSON:
 
 | Endpoint | Method | Purpose |
 |---|---|---|
-| `/api/config` | GET | Full configuration document |
+| `/api/config` | GET | Full configuration document (secrets redacted) |
 | `/api/config` | POST | Replace configuration; applies to hardware first, then persists to SD; returns `{"applyMicros": n}` |
 | `/api/status` | GET | Live telemetry (uptime, fault, ISR cycles, apply time, actual frequency, index, free RAM) |
 
-Legacy server-rendered pages remain at `/settings/pwm` and `/settings/pwm-timer`.
+| `/api/capture` | GET | Min/max envelope of the waveform capture ring (`?count=&bins=`) |
+
+When a **write PIN** is configured (Security section), POSTs require a matching
+`X-Auth-Pin` header — the UI prompts automatically. Secrets (the InfluxDB token
+and the PIN itself) are redacted from GET responses; an empty secret in a POST
+keeps the stored value.
+
+The device also announces itself via mDNS as **`http://teg.local`**.
 
 ## Modes of operation (modulation schemes)
 
@@ -173,6 +180,34 @@ pulse timing: channel B's turn-on is advanced by **Pre-shift** (ns) relative to
 channel A's turn-off, and its turn-off pulled back from the period end by
 **Post-shift** (ns). Tick values use the prescaler-corrected clock, so low
 frequencies fit the 16-bit counters correctly.
+
+## Waveform capture (built-in scope / flight recorder)
+
+When enabled, the modulation ISR samples the feedback pin **once per carrier
+cycle at the reload point** (the average-current instant for centre-aligned
+PWM, 12-bit) into a 2 MB PSRAM ring — about **52 s of continuous history at a
+20 kHz carrier**. The web UI renders a min/max envelope chart (1 s / 5 s / 30 s
+windows). On a **fault trip the ring freezes**, preserving the pre-fault
+waveform as a flight record until settings are re-applied. While capture runs,
+the closed-loop controller uses the synchronous samples instead of `analogRead`.
+
+## Thermal monitoring and derating
+
+DS18B20 probes on a configurable OneWire pin (index 0 = TEG **hot side**,
+1 = **cold side**) plus the RT1062 die temperature. The worst of (hot side,
+die) linearly derates the modulation index between *Derate start* and *Derate
+end* — the derate factor acts as a ceiling on both open-loop settings and the
+closed-loop PI output, and the soft-start slew limit shapes recovery. Live
+temperatures and the active derate factor appear in the status bar.
+
+## Reliability
+
+- **Degraded-mode boot**: a missing SD card, OLED, or DHCP lease no longer
+  halts the firmware — it boots, runs PWM, logs the degradation, and keeps
+  retrying the network in the background.
+- **Hardware watchdog**: WDOG1 resets the device if the main loop stalls for
+  ~8 s, returning to the known-safe boot path instead of leaving PWM
+  free-running with stale state.
 
 ## Metrics (InfluxDB)
 

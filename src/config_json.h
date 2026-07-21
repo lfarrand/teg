@@ -4,10 +4,7 @@
 #include <stdint.h>
 
 struct ChannelConfig {
-  uint32_t OnPeriodMicroseconds{};
   uint16_t DutyCycle{};
-  uint8_t PhaseShift{};
-  bool Enabled = true;
 };
 
 struct SubmoduleConfig {
@@ -142,9 +139,5 @@ void loadConfiguration(const char *filename);
 void saveConfiguration(const char *filename);
 
 void printFile(const char *filename);
-
-void loadConfigurationFromFlash(const char* filename);
-
-void saveConfigurationToFlash(const char* filename, const MainConfig& config);
 
 #endif

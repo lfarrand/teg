@@ -67,6 +67,11 @@ void configureEthernet() {
     Serial.println(F("No DHCP lease yet - continuing, will report when up"));
   }
   server.begin();
+
+  // mDNS: reachable as http://teg.local without knowing the DHCP address
+  if (MDNS.begin("teg")) {
+    MDNS.addService("_http", "_tcp", 80);
+  }
 }
 
 static void networkHousekeeping() {

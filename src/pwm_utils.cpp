@@ -55,16 +55,9 @@ bool spwmActive() {
   return config.Pwm.Tm2.UseSpwm && config.Pwm.Tm2.ModulationScheme != ModSchemeFixed;
 }
 
-const uint8_t PrescalerValues[] = {1, 2, 4, 8, 16, 32, 64, 128};
-
 const char *prescaleStr[] = {
   "fclk/1", "fclk/2", "fclk/4", "fclk/8", "fclk/16", "fclk/32", "fclk/64", "fclk/128"
 };
-
-TeensyTimerTool::OneShotTimer startupTimer(TeensyTimerTool::TCK64);
-TeensyTimerTool::OneShotTimer chargeToggleTimer(TeensyTimerTool::GPT1);
-TeensyTimerTool::OneShotTimer dischargeToggleTimer(TeensyTimerTool::GPT2);
-TeensyTimerTool::PeriodicTimer pwmSyncTimer(TeensyTimerTool::PIT);
 
 SubModule Sm13(8, 7);
 SubModule Sm20(4, 33);
@@ -82,18 +75,6 @@ eFlex::Timer &Tm3 = Sm31.timer();
 eFlex::Timer &Tm4 = Sm40.timer();
 
 extern MainConfig config;
-
-void configureTimers() {
-}
-
-void startupTimerCallback() {
-}
-
-void chargeToggleTimerCallback() {
-}
-
-void dischargeToggleTimerCallback() {
-}
 
 struct SubmoduleSettings {
   uint32_t frequency;
@@ -380,7 +361,7 @@ void configureModule4() {
   SubmoduleSettings sm41Settings = {
     .frequency = config.Pwm.Tm4.Sm41.PwmFrequency,
     .deadtimeNs = config.Pwm.Tm4.Sm41.DeadTime,
-    .dutyA = config.Pwm.Tm4.Sm41.ChannelA.PhaseShift != 0 ? FIFTY_PERCENT_DUTY : config.Pwm.Tm4.Sm41.ChannelA.DutyCycle,
+    .dutyA = config.Pwm.Tm4.Sm41.ChannelA.DutyCycle,
     .dutyB = UINT16_MAX, // No Channel B
     .hasChanB = false
   };
@@ -433,12 +414,8 @@ void configureModule4() {
     SubmoduleSettings sm42Settings = {
       .frequency = config.Pwm.Tm4.Sm42.PwmFrequency,
       .deadtimeNs = config.Pwm.Tm4.Sm42.DeadTime,
-      .dutyA = config.Pwm.Tm4.Sm42.ChannelA.PhaseShift != 0
-                 ? FIFTY_PERCENT_DUTY
-                 : config.Pwm.Tm4.Sm42.ChannelA.DutyCycle,
-      .dutyB = config.Pwm.Tm4.Sm42.ChannelB.PhaseShift != 0
-                 ? FIFTY_PERCENT_DUTY
-                 : config.Pwm.Tm4.Sm42.ChannelB.DutyCycle,
+      .dutyA = config.Pwm.Tm4.Sm42.ChannelA.DutyCycle,
+      .dutyB = config.Pwm.Tm4.Sm42.ChannelB.DutyCycle,
       .hasChanB = true
     };
     setupSubmodule(Sm42, sm42Settings, config.Pwm.PrintRegs);

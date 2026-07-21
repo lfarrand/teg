@@ -5,8 +5,15 @@
 // (ArduinoJson is platform-independent), unit-tested natively. The file I/O
 // wrappers live in config_json.cpp.
 
+#include <stdio.h>
 #include <ArduinoJson.h>
 #include "config_json.h"
+
+// Bounded, always-terminated string copy (portable across firmware and the
+// native test host, unlike strlcpy)
+inline void copyConfigString(char *dst, unsigned int dstSize, const char *src) {
+  snprintf(dst, dstSize, "%s", src != nullptr ? src : "");
+}
 
 inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   JsonObjectConst Config_AsymmetricInduction = doc["Config"]["AsymmetricInduction"];
@@ -118,6 +125,13 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.FaultProtection.Enabled = Config_FaultProtection["Enabled"] | false;
   config.FaultProtection.Pin = Config_FaultProtection["Pin"] | 32;
   config.FaultProtection.ActiveHigh = Config_FaultProtection["ActiveHigh"] | true;
+
+  JsonObjectConst Config_Influx = doc["Config"]["Influx"];
+  copyConfigString(config.Influx.Host, sizeof(config.Influx.Host), Config_Influx["Host"] | "ub-1.lan");
+  config.Influx.Port = Config_Influx["Port"] | 8086;
+  copyConfigString(config.Influx.Org, sizeof(config.Influx.Org), Config_Influx["Org"] | "501eaf58ac3171cd");
+  copyConfigString(config.Influx.Bucket, sizeof(config.Influx.Bucket), Config_Influx["Bucket"] | "power_generator");
+  copyConfigString(config.Influx.Token, sizeof(config.Influx.Token), Config_Influx["Token"] | "");
 }
 
 // Clamps out-of-range values; returns true if anything was corrected.
@@ -272,6 +286,13 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_FaultProtection["Enabled"] = config.FaultProtection.Enabled;
   Config_FaultProtection["Pin"] = config.FaultProtection.Pin;
   Config_FaultProtection["ActiveHigh"] = config.FaultProtection.ActiveHigh;
+
+  JsonObject Config_Influx = doc["Config"]["Influx"].to<JsonObject>();
+  Config_Influx["Host"] = config.Influx.Host;
+  Config_Influx["Port"] = config.Influx.Port;
+  Config_Influx["Org"] = config.Influx.Org;
+  Config_Influx["Bucket"] = config.Influx.Bucket;
+  Config_Influx["Token"] = config.Influx.Token;
 }
 
 #endif

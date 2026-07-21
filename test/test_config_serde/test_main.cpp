@@ -50,6 +50,10 @@ void test_defaults_from_empty_document() {
   TEST_ASSERT_FALSE(cfg.FaultProtection.Enabled);
   TEST_ASSERT_EQUAL_UINT8(32, cfg.FaultProtection.Pin);
   TEST_ASSERT_TRUE(cfg.FaultProtection.ActiveHigh);
+  TEST_ASSERT_EQUAL_STRING("ub-1.lan", cfg.Influx.Host);
+  TEST_ASSERT_EQUAL_UINT16(8086, cfg.Influx.Port);
+  TEST_ASSERT_EQUAL_STRING("power_generator", cfg.Influx.Bucket);
+  TEST_ASSERT_EQUAL_STRING("", cfg.Influx.Token); // no token in source or defaults
   TEST_ASSERT_EQUAL_UINT16(50, cfg.Pwm.Tm1.Sm13.DeadTime);
   TEST_ASSERT_EQUAL_UINT32(1000, cfg.Pwm.Tm1.Sm13.PwmFrequency);
   TEST_ASSERT_EQUAL_UINT16(32768, cfg.Pwm.Tm1.Sm13.ChannelA.DutyCycle);
@@ -93,6 +97,11 @@ void test_roundtrip_preserves_every_field() {
   cfg.FaultProtection.Enabled = true;
   cfg.FaultProtection.Pin = 31;
   cfg.FaultProtection.ActiveHigh = false;
+  copyConfigString(cfg.Influx.Host, sizeof(cfg.Influx.Host), "influx.example.lan");
+  cfg.Influx.Port = 9999;
+  copyConfigString(cfg.Influx.Org, sizeof(cfg.Influx.Org), "myorg");
+  copyConfigString(cfg.Influx.Bucket, sizeof(cfg.Influx.Bucket), "test_bucket");
+  copyConfigString(cfg.Influx.Token, sizeof(cfg.Influx.Token), "secret-token-value==");
   cfg.Pwm.Tm1.Sm13.DeadTime = 11;
   cfg.Pwm.Tm1.Sm13.PwmFrequency = 1111;
   cfg.Pwm.Tm1.Sm13.ChannelA.OnPeriodMicroseconds = 101;
@@ -139,6 +148,9 @@ void test_roundtrip_preserves_every_field() {
   TEST_ASSERT_EQUAL_STRING(toJsonString(cfg).c_str(), toJsonString(restored).c_str());
 
   // And a few direct spot checks
+  TEST_ASSERT_EQUAL_STRING("secret-token-value==", restored.Influx.Token);
+  TEST_ASSERT_EQUAL_STRING("influx.example.lan", restored.Influx.Host);
+  TEST_ASSERT_EQUAL_UINT16(9999, restored.Influx.Port);
   TEST_ASSERT_EQUAL_INT32(-111, restored.AsymmetricInduction.PreShiftNanos);
   TEST_ASSERT_EQUAL_UINT32(4242, restored.Pwm.Tm4.Sm42.PwmFrequency);
   TEST_ASSERT_FALSE(restored.Pwm.Tm1.Sm13.ChannelB.Enabled);

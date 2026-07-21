@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "config_json.h"
+#include "config_serde.h"
 
 // Applies one form field from the PWM settings page. Returns false if the
 // field name is not recognised (the caller ignores unknown fields).
@@ -146,6 +147,16 @@ inline bool applyConfigFormField(MainConfig &config, const char *name, const cha
     config.FaultProtection.Pin = strtol(value, nullptr, 10);
   } else if (strcmp(name, "fault-active-high") == 0) {
     config.FaultProtection.ActiveHigh = (strcmp(value, "Yes") == 0);
+  } else if (strcmp(name, "influx-host") == 0) {
+    copyConfigString(config.Influx.Host, sizeof(config.Influx.Host), value);
+  } else if (strcmp(name, "influx-port") == 0) {
+    config.Influx.Port = strtol(value, nullptr, 10);
+  } else if (strcmp(name, "influx-org") == 0) {
+    copyConfigString(config.Influx.Org, sizeof(config.Influx.Org), value);
+  } else if (strcmp(name, "influx-bucket") == 0) {
+    copyConfigString(config.Influx.Bucket, sizeof(config.Influx.Bucket), value);
+  } else if (strcmp(name, "influx-token") == 0) {
+    copyConfigString(config.Influx.Token, sizeof(config.Influx.Token), value);
   } else if (strcmp(name, "enable-asymmetric-induction") == 0) {
     config.AsymmetricInduction.IsEnabled = (strcmp(value, "Yes") == 0);
   } else if (strcmp(name, "asymmetric-induction-preshiftnanos") == 0) {

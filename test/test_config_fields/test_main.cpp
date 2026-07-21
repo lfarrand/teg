@@ -124,6 +124,26 @@ void test_unknown_field_rejected_and_config_untouched() {
   TEST_ASSERT_EQUAL_UINT32(before.Pwm.Tm2.Sm20.PwmFrequency, cfg.Pwm.Tm2.Sm20.PwmFrequency);
 }
 
+void test_influx_string_fields() {
+  TEST_ASSERT_TRUE(applyConfigFormField(cfg, "influx-host", "db.local"));
+  TEST_ASSERT_TRUE(applyConfigFormField(cfg, "influx-port", "9090"));
+  TEST_ASSERT_TRUE(applyConfigFormField(cfg, "influx-org", "org1"));
+  TEST_ASSERT_TRUE(applyConfigFormField(cfg, "influx-bucket", "bkt"));
+  TEST_ASSERT_TRUE(applyConfigFormField(cfg, "influx-token", "tok-abc=="));
+  TEST_ASSERT_EQUAL_STRING("db.local", cfg.Influx.Host);
+  TEST_ASSERT_EQUAL_UINT16(9090, cfg.Influx.Port);
+  TEST_ASSERT_EQUAL_STRING("org1", cfg.Influx.Org);
+  TEST_ASSERT_EQUAL_STRING("bkt", cfg.Influx.Bucket);
+  TEST_ASSERT_EQUAL_STRING("tok-abc==", cfg.Influx.Token);
+
+  // Oversized values truncate safely (Host field is 40 bytes incl. terminator)
+  char longHost[64];
+  memset(longHost, 'x', sizeof(longHost) - 1);
+  longHost[sizeof(longHost) - 1] = '\0';
+  applyConfigFormField(cfg, "influx-host", longHost);
+  TEST_ASSERT_EQUAL_UINT32(39, strlen(cfg.Influx.Host));
+}
+
 void test_timer_form_fields() {
   // Checkbox semantics: handler resets Enabled before parsing
   cfg.Pwm.Tm1.Sm13.ChannelA.Enabled = false;
@@ -149,6 +169,7 @@ int main() {
   RUN_TEST(test_numeric_fields_reach_the_right_slots);
   RUN_TEST(test_boolean_fields_set_and_clear);
   RUN_TEST(test_unknown_field_rejected_and_config_untouched);
+  RUN_TEST(test_influx_string_fields);
   RUN_TEST(test_timer_form_fields);
   return UNITY_END();
 }

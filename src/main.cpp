@@ -17,6 +17,7 @@
 #include "thermal.h"
 #include "waveform.h"
 #include "metrics.h"
+#include "meter.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -277,6 +278,8 @@ void loop() {
   thermalTask();
 
   waveformStreamTask();
+
+  meterTask();
 
   metricsTask();
 

@@ -3,6 +3,7 @@
 #include "config_serde.h"
 #include "pwm_utils.h"
 #include "capture.h"
+#include "meter.h"
 #include "spectrum_math.h"
 #include <arm_math.h>
 #include "thermal.h"
@@ -322,11 +323,18 @@ void api_capture(Request &req, Response &res) {
   if (bins == 0) bins = 1;
   if (bins > MaxCaptureBins) bins = MaxCaptureBins;
 
+  bool currentChannel = false;
+  if (req.query("channel", qbuf, sizeof(qbuf))) {
+    currentChannel = qbuf[0] == 'i';
+  }
+
   static uint16_t binMin[MaxCaptureBins];
   static uint16_t binMax[MaxCaptureBins];
-  const uint32_t used = captureDecimate(count, bins, binMin, binMax);
+  const uint32_t used = currentChannel ? captureDecimateCurrent(count, bins, binMin, binMax)
+                                       : captureDecimate(count, bins, binMin, binMax);
 
   JsonDocument doc;
+  doc["channel"] = currentChannel ? "i" : "v";
   doc["sampleHz"] = config.Pwm.Tm2.SpwmCarrierFrequency;
   doc["count"] = used;
   doc["frozen"] = captureIsFrozen();
@@ -378,6 +386,15 @@ void api_status(Request &req, Response &res) {
   doc["captureActive"] = captureActive();
   doc["captureFrozen"] = captureIsFrozen();
   doc["captureSamples"] = captureSampleCount();
+  const MeterReadings meter = meterReadings();
+  doc["meterActive"] = meter.valid;
+  if (meter.valid) {
+    doc["powerMw"] = meter.powerMw;
+    doc["vrmsMv"] = meter.vrmsMv;
+    doc["irmsMa"] = meter.irmsMa;
+    doc["pfMilli"] = meter.pfMilli;
+    doc["energyMwh"] = meterEnergyMwh();
+  }
   // Measured feedback voltage: synchronous capture mean when available,
   // otherwise a direct (10-bit) read of the configured pin
   if (captureActive() && !captureIsFrozen()) {

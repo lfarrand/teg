@@ -3,6 +3,7 @@
 #include "pwm_utils.h"
 #include "thermal.h"
 #include "capture.h"
+#include "meter.h"
 #include "waveform.h"
 #include "utils.h"
 #include <Arduino.h>
@@ -38,6 +39,14 @@ void metricsTask() {
   if (captureActive()) {
     n += snprintf(line + n, sizeof(line) - n, ",feedback_raw=%lu",
                   static_cast<unsigned long>(captureMeanRaw(64)));
+  }
+  const MeterReadings meter = meterReadings();
+  if (meter.valid) {
+    n += snprintf(line + n, sizeof(line) - n,
+                  ",power_mw=%ld,vrms_mv=%lu,irms_ma=%lu,pf_milli=%ld,energy_mwh=%llu",
+                  static_cast<long>(meter.powerMw), static_cast<unsigned long>(meter.vrmsMv),
+                  static_cast<unsigned long>(meter.irmsMa), static_cast<long>(meter.pfMilli),
+                  static_cast<unsigned long long>(meterEnergyMwh()));
   }
   if (thermalHotDeciC() != INT16_MIN) {
     n += snprintf(line + n, sizeof(line) - n, ",hot_decic=%d", thermalHotDeciC());

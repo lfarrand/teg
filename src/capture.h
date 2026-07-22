@@ -25,4 +25,24 @@ uint32_t captureDecimate(uint32_t count, uint32_t bins, uint16_t *outMin, uint16
 // ring). Returns n on success, 0 if fewer samples are available.
 uint32_t captureCopyRecent(int16_t *out, uint32_t n);
 
+// ---------------------------------------------------------------------------
+// Dual-channel power metering (Meter config): the ISR also samples a current
+// sensor on the second ADC module and accumulates zero-corrected V*I, V^2,
+// I^2 into double-buffered banks the meter task drains.
+// ---------------------------------------------------------------------------
+
+struct MeterBank {
+  int64_t sumP = 0;
+  uint64_t sumVsq = 0;
+  uint64_t sumIsq = 0;
+  uint32_t n = 0;
+};
+
+bool captureMeterActive();
+void captureMeterFlip();                  // switch the ISR to the other bank
+uint8_t captureMeterIdleBank();           // the bank the ISR is NOT writing
+MeterBank captureMeterTake(uint8_t bank); // copy + clear (call only on the idle bank)
+// Envelope-decimate the current channel (smaller ring than voltage)
+uint32_t captureDecimateCurrent(uint32_t count, uint32_t bins, uint16_t *outMin, uint16_t *outMax);
+
 #endif

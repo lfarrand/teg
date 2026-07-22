@@ -5,6 +5,7 @@
 #include "capture.h"
 #include "acmp.h"
 #include "pll.h"
+#include "mppt.h"
 #include "thermal.h"
 #include "waveform.h"
 #include "waveform_parse.h"
@@ -220,6 +221,13 @@ void applyPwmConfig(const MainConfig &previous) {
   // After the module reconfigures (buildSpwmLut resets the increment): the
   // PLL re-steers from its held estimate for a bumpless re-entry
   pllConfigure();
+  if (memcmp(&previous.Mppt, &config.Mppt, sizeof(config.Mppt)) != 0 ||
+      memcmp(&previous.Feedback, &config.Feedback, sizeof(config.Feedback)) != 0 ||
+      memcmp(&previous.Pwm.Tm2, &config.Pwm.Tm2, sizeof(config.Pwm.Tm2)) != 0) {
+    // Reseed from the (freshly applied) index target - a Tm2 change rewrote
+    // it via buildSpwmLut, and stale P&O state would yank the output back
+    mpptConfigure();
+  }
   // A refused clear leaves the trip latched, but the reconfigures above may
   // have re-enabled timers: re-assert the trip's masking so the applied
   // settings take effect only after an explicit successful clear

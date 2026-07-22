@@ -20,6 +20,7 @@
 #include "meter.h"
 #include "acmp.h"
 #include "pll.h"
+#include "mppt.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -261,6 +262,8 @@ void setup() {
 
   pllConfigure();
 
+  mpptConfigure();
+
   thermalConfigure();
 
   printStats();
@@ -288,6 +291,8 @@ void loop() {
   waveformStreamTask();
 
   meterTask();
+
+  mpptTask();
 
   acmpTask();
 

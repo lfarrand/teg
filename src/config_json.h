@@ -152,6 +152,23 @@ struct PllConfig {
   uint16_t MinLevelMillivolts = 100; // amplitude floor: below = no reference
 };
 
+// Maximum power point tracking: adaptive-step perturb & observe on the
+// modulation index, fed by the Meter's real-power measurement (requires
+// Capture + Meter enabled; silently idle otherwise, like the meter itself).
+// Mutually exclusive with the Feedback loop (same actuator). Compatible
+// with the PLL (frequency/phase vs amplitude - the grid-tie MPPT topology).
+struct MpptConfig {
+  bool Enabled = false;
+  uint16_t IntervalMs = 3000;    // evaluation cadence; must cover the index
+                                 // ramp plus a full 1s meter window
+  uint16_t StepMilli = 20;       // initial/maximum index step, thousandths
+  uint16_t MinStepMilli = 5;     // limit-cycle step at the peak
+  uint16_t MinIndexMilli = 50;
+  uint16_t MaxIndexMilli = 1000;
+  uint16_t DeadbandMw = 10;      // |dP| below this = measurement noise
+  uint32_t RestartDeltaMw = 1000; // |dP| above this = source shifted: re-track
+};
+
 // DS18B20 probes on OneWire (index 0 = TEG hot side, 1 = cold side) plus the
 // RT1062 die temperature. The worst of (hot, die) linearly derates the
 // modulation index between DerateStartC and DerateEndC.
@@ -183,6 +200,7 @@ struct MainConfig {
   CaptureConfig Capture;
   MeterConfig Meter;
   PllConfig Pll;
+  MpptConfig Mppt;
   ThermalConfig Thermal;
 };
 

@@ -56,6 +56,14 @@ void test_defaults_from_empty_document() {
   TEST_ASSERT_FALSE(cfg.CurrentLimit.CycleByCycle);
   TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterCount);
   TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterPeriod);
+  TEST_ASSERT_FALSE(cfg.Mppt.Enabled);
+  TEST_ASSERT_EQUAL_UINT16(3000, cfg.Mppt.IntervalMs);
+  TEST_ASSERT_EQUAL_UINT16(20, cfg.Mppt.StepMilli);
+  TEST_ASSERT_EQUAL_UINT16(5, cfg.Mppt.MinStepMilli);
+  TEST_ASSERT_EQUAL_UINT16(50, cfg.Mppt.MinIndexMilli);
+  TEST_ASSERT_EQUAL_UINT16(1000, cfg.Mppt.MaxIndexMilli);
+  TEST_ASSERT_EQUAL_UINT16(10, cfg.Mppt.DeadbandMw);
+  TEST_ASSERT_EQUAL_UINT32(1000, cfg.Mppt.RestartDeltaMw);
   TEST_ASSERT_FALSE(cfg.Pll.Enabled);
   TEST_ASSERT_EQUAL_INT16(0, cfg.Pll.PhaseOffsetCentiDeg);
   TEST_ASSERT_EQUAL_UINT16(45, cfg.Pll.MinHz);
@@ -121,6 +129,14 @@ void test_roundtrip_preserves_every_field() {
   cfg.CurrentLimit.CycleByCycle = true;
   cfg.CurrentLimit.FilterCount = 7;
   cfg.CurrentLimit.FilterPeriod = 99;
+  cfg.Mppt.Enabled = true;
+  cfg.Mppt.IntervalMs = 5000;
+  cfg.Mppt.StepMilli = 30;
+  cfg.Mppt.MinStepMilli = 3;
+  cfg.Mppt.MinIndexMilli = 100;
+  cfg.Mppt.MaxIndexMilli = 900;
+  cfg.Mppt.DeadbandMw = 25;
+  cfg.Mppt.RestartDeltaMw = 2000;
   cfg.Pll.Enabled = true;
   cfg.Pll.PhaseOffsetCentiDeg = -4500;
   cfg.Pll.MinHz = 55;
@@ -332,6 +348,53 @@ void test_validate_pll() {
   TEST_ASSERT_EQUAL_UINT16(100, cfg.Pll.MinLevelMillivolts);
 }
 
+void test_validate_mppt() {
+  MainConfig cfg;
+  cfg.Mppt.IntervalMs = 500; // too fast for a settled meter window
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(2100, cfg.Mppt.IntervalMs);
+
+  // The floor tracks the soft-start ramp: each perturbation must finish
+  // ramping before the measurement window opens
+  cfg.Mppt.IntervalMs = 3000;
+  cfg.Pwm.Tm2.SoftStartMs = 5000;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(7100, cfg.Mppt.IntervalMs);
+  cfg.Pwm.Tm2.SoftStartMs = 0;
+
+  // Degenerate noise thresholds: tiny restart delta fires on every step,
+  // deadband above restart is unreachable dead code
+  cfg.Mppt.RestartDeltaMw = 5;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(10, cfg.Mppt.DeadbandMw);
+  TEST_ASSERT_EQUAL_UINT32(1000, cfg.Mppt.RestartDeltaMw);
+  cfg.Mppt.DeadbandMw = 2000;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(10, cfg.Mppt.DeadbandMw);
+
+  cfg.Mppt.MinIndexMilli = 900;
+  cfg.Mppt.MaxIndexMilli = 800; // inverted window
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(50, cfg.Mppt.MinIndexMilli);
+  TEST_ASSERT_EQUAL_UINT16(1000, cfg.Mppt.MaxIndexMilli);
+
+  cfg.Mppt.MinStepMilli = 50; // above the max step
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(20, cfg.Mppt.StepMilli);
+  TEST_ASSERT_EQUAL_UINT16(5, cfg.Mppt.MinStepMilli);
+
+  // Same actuator as the feedback loop: the older feature wins
+  cfg.Mppt.Enabled = true;
+  cfg.Feedback.Enabled = true;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_FALSE(cfg.Mppt.Enabled);
+  cfg.Feedback.Enabled = false;
+
+  cfg.Mppt.Enabled = true;
+  TEST_ASSERT_FALSE(validateConfig(cfg));
+  TEST_ASSERT_TRUE(cfg.Mppt.Enabled); // MPPT alone is fine (PLL too)
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_defaults_from_empty_document);
@@ -342,5 +405,6 @@ int main() {
   RUN_TEST(test_validate_clamps_out_of_range_frequency);
   RUN_TEST(test_validate_current_limit);
   RUN_TEST(test_validate_pll);
+  RUN_TEST(test_validate_mppt);
   return UNITY_END();
 }

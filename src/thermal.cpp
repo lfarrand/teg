@@ -86,8 +86,10 @@ void thermalTask() {
   setThermalDerateMilli(derateMilli);
 
   // Open-loop: re-push the configured index so a recovering derate cap
-  // restores the output (closed-loop pushes its own target every cycle)
-  if (!config.Feedback.Enabled && spwmActive()) {
+  // restores the output. Skipped when another controller owns the index
+  // target (closed-loop feedback and MPPT both re-push their own targets
+  // every cycle - overwriting here would fight the tracker).
+  if (!config.Feedback.Enabled && !config.Mppt.Enabled && spwmActive()) {
     uint16_t indexMilli = config.Pwm.Tm2.ModulationIndexMilli;
     if (indexMilli > MaxModulationIndexMilli) {
       indexMilli = MaxModulationIndexMilli;

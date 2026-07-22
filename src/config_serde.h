@@ -149,6 +149,16 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Pll.ZeroMillivolts = Config_Pll["ZeroMillivolts"] | 1650;
   config.Pll.MinLevelMillivolts = Config_Pll["MinLevelMillivolts"] | 100;
 
+  JsonObjectConst Config_Mppt = doc["Config"]["Mppt"];
+  config.Mppt.Enabled = Config_Mppt["Enabled"] | false;
+  config.Mppt.IntervalMs = Config_Mppt["IntervalMs"] | 3000;
+  config.Mppt.StepMilli = Config_Mppt["StepMilli"] | 20;
+  config.Mppt.MinStepMilli = Config_Mppt["MinStepMilli"] | 5;
+  config.Mppt.MinIndexMilli = Config_Mppt["MinIndexMilli"] | 50;
+  config.Mppt.MaxIndexMilli = Config_Mppt["MaxIndexMilli"] | 1000;
+  config.Mppt.DeadbandMw = Config_Mppt["DeadbandMw"] | 10;
+  config.Mppt.RestartDeltaMw = Config_Mppt["RestartDeltaMw"] | 1000;
+
   JsonObjectConst Config_Thermal = doc["Config"]["Thermal"];
   config.Thermal.Enabled = Config_Thermal["Enabled"] | false;
   config.Thermal.OneWirePin = Config_Thermal["OneWirePin"] | 21;
@@ -247,6 +257,42 @@ inline bool validateConfig(MainConfig &config) {
   // CONFIGURED frequency - PLL steering would be silently disconnected
   if (config.Pll.Enabled && config.Pwm.Tm2.CarrierDitherMode != DitherOff) {
     config.Pwm.Tm2.CarrierDitherMode = DitherOff;
+    corrected = true;
+  }
+  // MPPT clamps and exclusions. The meter reading at an evaluation can be
+  // ~1s old and covers the previous second, so a settled measurement needs
+  // two meter periods past the perturbation, plus the soft-start ramp.
+  {
+    const uint32_t floorMs = 2100U + config.Pwm.Tm2.SoftStartMs;
+    if (config.Mppt.IntervalMs < floorMs) {
+      config.Mppt.IntervalMs = floorMs > 60000U ? 60000U : static_cast<uint16_t>(floorMs);
+      corrected = true;
+    }
+  }
+  if (config.Mppt.RestartDeltaMw < 100 ||
+      config.Mppt.DeadbandMw >= config.Mppt.RestartDeltaMw) {
+    // A tiny restart threshold fires on every delta (step never adapts); a
+    // deadband above it makes the noise rejection unreachable dead code
+    config.Mppt.DeadbandMw = 10;
+    config.Mppt.RestartDeltaMw = 1000;
+    corrected = true;
+  }
+  if (config.Mppt.MinIndexMilli >= config.Mppt.MaxIndexMilli ||
+      config.Mppt.MaxIndexMilli > MaxModulationIndexMilli) {
+    config.Mppt.MinIndexMilli = 50;
+    config.Mppt.MaxIndexMilli = 1000;
+    corrected = true;
+  }
+  if (config.Mppt.MinStepMilli < 1 || config.Mppt.MinStepMilli > config.Mppt.StepMilli ||
+      config.Mppt.StepMilli > 200) {
+    config.Mppt.StepMilli = 20;
+    config.Mppt.MinStepMilli = 5;
+    corrected = true;
+  }
+  // Feedback and MPPT drive the same actuator (the index target): the older
+  // feature wins, matching the PLL-vs-Feedback precedent
+  if (config.Mppt.Enabled && config.Feedback.Enabled) {
+    config.Mppt.Enabled = false;
     corrected = true;
   }
   return corrected;
@@ -414,6 +460,16 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pll["BandwidthDeciHz"] = config.Pll.BandwidthDeciHz;
   Config_Pll["ZeroMillivolts"] = config.Pll.ZeroMillivolts;
   Config_Pll["MinLevelMillivolts"] = config.Pll.MinLevelMillivolts;
+
+  JsonObject Config_Mppt = doc["Config"]["Mppt"].to<JsonObject>();
+  Config_Mppt["Enabled"] = config.Mppt.Enabled;
+  Config_Mppt["IntervalMs"] = config.Mppt.IntervalMs;
+  Config_Mppt["StepMilli"] = config.Mppt.StepMilli;
+  Config_Mppt["MinStepMilli"] = config.Mppt.MinStepMilli;
+  Config_Mppt["MinIndexMilli"] = config.Mppt.MinIndexMilli;
+  Config_Mppt["MaxIndexMilli"] = config.Mppt.MaxIndexMilli;
+  Config_Mppt["DeadbandMw"] = config.Mppt.DeadbandMw;
+  Config_Mppt["RestartDeltaMw"] = config.Mppt.RestartDeltaMw;
 
   JsonObject Config_Thermal = doc["Config"]["Thermal"].to<JsonObject>();
   Config_Thermal["Enabled"] = config.Thermal.Enabled;

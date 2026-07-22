@@ -6,6 +6,7 @@
 #include "meter.h"
 #include "acmp.h"
 #include "pll.h"
+#include "mppt.h"
 #include "scope_math.h"
 #include "spectrum_math.h"
 #include <arm_math.h>
@@ -523,6 +524,14 @@ void api_status(Request &req, Response &res) {
   doc["captureActive"] = captureActive();
   doc["captureFrozen"] = captureIsFrozen();
   doc["captureSamples"] = captureSampleCount();
+  doc["mpptEnabled"] = config.Mppt.Enabled;
+  if (config.Mppt.Enabled) {
+    doc["mpptActive"] = mpptActive();
+    doc["mpptIndexMilli"] = mpptIndexMilli();
+    doc["mpptStepMilli"] = mpptStepMilli();
+    doc["mpptDir"] = mpptDirection();
+    doc["mpptDeltaMw"] = mpptLastDeltaMw();
+  }
   doc["pllEnabled"] = config.Pll.Enabled;
   if (config.Pll.Enabled) {
     doc["pllState"] = pllStateStr();

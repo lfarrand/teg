@@ -195,6 +195,22 @@
   </article>
 
   <article>
+    <header>MPPT</header>
+    <p class="hint">Adaptive perturb &amp; observe on the modulation index, fed by the power meter (needs Capture + Meter enabled). Mutually exclusive with the closed-loop feedback (same actuator); works alongside the PLL. The interval is floored at soft-start ramp + 2.1&thinsp;s so each measurement is settled.</p>
+    <label><input type="checkbox" role="switch" data-path="Mppt.Enabled"> Enabled</label>
+    <div class="grid-fields">
+      <label>Interval ms <input type="number" data-path="Mppt.IntervalMs" min="2100" max="60000"></label>
+      <label>Step /1000 <input type="number" data-path="Mppt.StepMilli" min="1" max="200"></label>
+      <label>Min step /1000 <input type="number" data-path="Mppt.MinStepMilli" min="1" max="200"></label>
+      <label>Min index /1000 <input type="number" data-path="Mppt.MinIndexMilli" min="0" max="1155"></label>
+      <label>Max index /1000 <input type="number" data-path="Mppt.MaxIndexMilli" min="0" max="1155"></label>
+      <label>Deadband mW <input type="number" data-path="Mppt.DeadbandMw" min="0" max="65535"></label>
+      <label>Restart &Delta; mW <input type="number" data-path="Mppt.RestartDeltaMw" min="0" max="1000000"></label>
+    </div>
+    <span class="hint" id="mppt-status"></span>
+  </article>
+
+  <article>
     <header>Grid / Reference PLL</header>
     <p class="hint">Locks the output fundamental in frequency and phase to an AC reference on the feedback pin (needs Capture enabled). Steers frequency only &mdash; the waveform never jumps. Mutually exclusive with carrier dither, stepped waveform playback and the closed-loop feedback: enabling the PLL turns those off on save.</p>
     <label><input type="checkbox" role="switch" data-path="Pll.Enabled"> Enabled</label>
@@ -456,6 +472,11 @@ async function pollStatus() {
     $("#st-derate").textContent = s.derateMilli < 1000 ? (s.derateMilli / 10).toFixed(0) + "%" : "none";
     $("#st-derate").style.color = s.derateMilli < 1000 ? "#c62828" : "";
     $("#fault-banner").style.display = s.fault ? "block" : "none";
+    $("#mppt-status").textContent = s.mpptEnabled
+      ? (s.mpptActive
+          ? `tracking · index ${(s.mpptIndexMilli / 1000).toFixed(3)} ${s.mpptDir > 0 ? "▲" : "▼"} step ${s.mpptStepMilli} · ΔP ${s.mpptDeltaMw} mW`
+          : (s.meterActive ? "starting — first evaluation pending" : "waiting for power metering"))
+      : "";
     $("#pll-status").textContent = s.pllEnabled
       ? `${s.pllState}` +
         (s.pllState === "locked" || s.pllState === "acquiring"

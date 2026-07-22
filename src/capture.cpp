@@ -108,6 +108,19 @@ uint32_t captureRingSamples() {
   return CaptureRingSamples;
 }
 
+uint32_t captureCopyRecent(int16_t *out, uint32_t n) {
+  const uint32_t available = vTotal < CaptureRingSamples ? vTotal : CaptureRingSamples;
+  if (n > available) {
+    return 0;
+  }
+  uint32_t idx = (vHead + CaptureRingSamples - (n % CaptureRingSamples)) & (CaptureRingSamples - 1);
+  for (uint32_t i = 0; i < n; i++) {
+    out[i] = static_cast<int16_t>(captureRing[idx]);
+    idx = (idx + 1) & (CaptureRingSamples - 1);
+  }
+  return n;
+}
+
 uint32_t captureDecimate(uint32_t count, uint32_t bins, uint16_t *outMin, uint16_t *outMax) {
   const uint32_t available = vTotal < CaptureRingSamples ? vTotal : CaptureRingSamples;
   if (count > available) {

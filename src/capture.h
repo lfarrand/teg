@@ -21,4 +21,8 @@ uint32_t captureRingSamples();
 // Returns the sample count actually used (clamped to what is available).
 uint32_t captureDecimate(uint32_t count, uint32_t bins, uint16_t *outMin, uint16_t *outMax);
 
+// Copy the most recent n samples in chronological order (unwrapping the
+// ring). Returns n on success, 0 if fewer samples are available.
+uint32_t captureCopyRecent(int16_t *out, uint32_t n);
+
 #endif

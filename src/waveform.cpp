@@ -212,7 +212,7 @@ static bool sinkSamples(const int16_t *data, uint32_t n) {
     if (sunkSamples + n > MaxStreamSamples) {
       return fail("too many points/segments");
     }
-    if (out.write(reinterpret_cast<const uint8_t *>(data), n * 2) != static_cast<int>(n * 2)) {
+    if (out.write(reinterpret_cast<const uint8_t *>(data), n * 2) != static_cast<size_t>(n) * 2) {
       return fail("SD write failed");
     }
   } else {

@@ -175,7 +175,8 @@ async function poll() {
       `uptime ${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m ${up % 60}s · ` +
       `apply ${s.applyMicros} µs · f ${(s.modMilliHz / 1000).toFixed(3)} Hz · ` +
       `capture ${s.captureActive ? (s.captureFrozen ? "FROZEN" : "running") : "off"} · ` +
-      `underruns ${s.streamUnderruns ?? 0}`;
+      `underruns ${s.streamUnderruns ?? 0} · fw ${s.version ?? "?"} · ` +
+      `last reset: ${s.resetCause ?? "?"}${s.crash ? " (crash report at /api/crash)" : ""}`;
   } catch (e) { /* device busy; next tick */ }
 }
 

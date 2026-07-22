@@ -51,7 +51,9 @@
     <div><span>Temp</span> <b id="st-temp">&mdash;</b></div>
     <div><span>Derate</span> <b id="st-derate">&mdash;</b></div>
   </div>
-  <div id="fault-banner">&#9888; FAULT TRIPPED &mdash; all PWM outputs disabled. Save settings to clear.</div>
+  <div id="fault-banner">&#9888; FAULT TRIPPED &mdash; all PWM outputs disabled.
+    <button id="fault-clear" style="width:auto;margin:0 0 0 0.8rem;padding:0.2rem 0.8rem;background:#fff;color:#c62828;border:none">Clear fault</button>
+  </div>
 
   <article>
     <header>Inverter Modulation (Timer 2)</header>
@@ -171,6 +173,7 @@
     <div class="grid-fields">
       <label>Host <input type="text" data-str data-path="Influx.Host" maxlength="39"></label>
       <label>Port <input type="number" data-path="Influx.Port" min="1" max="65535"></label>
+      <label>Interval s <input type="number" data-path="Influx.IntervalSeconds" min="0" max="3600"></label>
       <label>Org <input type="text" data-str data-path="Influx.Org" maxlength="23"></label>
       <label>Bucket <input type="text" data-str data-path="Influx.Bucket" maxlength="31"></label>
       <label>Token <input type="password" data-str data-path="Influx.Token" maxlength="95" autocomplete="off"></label>
@@ -502,6 +505,18 @@ async function uploadWaveform() {
 }
 $("#wave-upload").addEventListener("click", uploadWaveform);
 refreshWaveform();
+
+$("#fault-clear").addEventListener("click", async () => {
+  const post = () => fetch("/api/fault/clear", { method: "POST", headers: authHeaders() });
+  let r = await post();
+  if (r.status === 401) {
+    const pin = prompt("Write PIN required:");
+    if (pin === null) return;
+    sessionStorage.setItem("pin", pin);
+    r = await post();
+  }
+  toast(r.ok ? "Fault cleared — outputs re-enabled" : "Clear failed: HTTP " + r.status, !r.ok);
+});
 
 // Theme: Pico v2 honours data-theme; "auto" = follow the OS
 const themeSel = $("#theme");

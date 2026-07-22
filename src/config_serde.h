@@ -115,6 +115,7 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   copyConfigString(config.Influx.Org, sizeof(config.Influx.Org), Config_Influx["Org"] | "501eaf58ac3171cd");
   copyConfigString(config.Influx.Bucket, sizeof(config.Influx.Bucket), Config_Influx["Bucket"] | "power_generator");
   copyConfigString(config.Influx.Token, sizeof(config.Influx.Token), Config_Influx["Token"] | "");
+  config.Influx.IntervalSeconds = Config_Influx["IntervalSeconds"] | 10;
 
   copyConfigString(config.Security.WritePin, sizeof(config.Security.WritePin),
                    doc["Config"]["Security"]["WritePin"] | "");
@@ -288,6 +289,7 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Influx["Org"] = config.Influx.Org;
   Config_Influx["Bucket"] = config.Influx.Bucket;
   Config_Influx["Token"] = config.Influx.Token;
+  Config_Influx["IntervalSeconds"] = config.Influx.IntervalSeconds;
 
   doc["Config"]["Security"].to<JsonObject>()["WritePin"] = config.Security.WritePin;
 

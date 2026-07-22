@@ -136,6 +136,9 @@ void writeInfluxDb(const String &data) {
     return;
   }
 
+  // Called from loop(): bound every wait so an unreachable server can only
+  // stall the loop briefly, not indefinitely
+  influxDbClient.setConnectionTimeout(500);
   if (influxDbClient.connect(config.Influx.Host, config.Influx.Port)) {
     influxDbClient.printf("POST /api/v2/write?org=%s&bucket=%s&precision=ms HTTP/1.1\r\n",
                           config.Influx.Org, config.Influx.Bucket);
@@ -149,9 +152,10 @@ void writeInfluxDb(const String &data) {
     influxDbClient.println();
     influxDbClient.print(data);
 
-    while (influxDbClient.connected()) {
+    elapsedMillis drainTimer;
+    while (influxDbClient.connected() && drainTimer < 250) {
       if (influxDbClient.available()) {
-        String line = influxDbClient.readStringUntil('\n');
+        influxDbClient.read();
       }
     }
     influxDbClient.stop();

@@ -45,4 +45,27 @@ MeterBank captureMeterTake(uint8_t bank); // copy + clear (call only on the idle
 // Envelope-decimate the current channel (smaller ring than voltage)
 uint32_t captureDecimateCurrent(uint32_t count, uint32_t bins, uint16_t *outMin, uint16_t *outMax);
 
+// ---------------------------------------------------------------------------
+// Triggered scope: arm a level/edge trigger on either channel; the ring
+// freezes postSamples after the crossing, preserving pre-trigger history.
+// ---------------------------------------------------------------------------
+
+// Returns false if the requested source channel is not being sampled
+bool captureScopeArm(bool currentSource, uint16_t levelCounts, bool fallingEdge,
+                     uint32_t postSamples);
+void captureScopeRelease(); // disarm + unfreeze (fault trips re-freeze)
+uint8_t captureScopeState(); // ScopeState from scope_math.h
+bool captureScopeSourceIsCurrent();
+uint16_t captureScopeLevelCounts();
+bool captureScopeFalling();
+uint32_t captureScopePostSamples();
+uint32_t captureScopeTrigSample(); // captureSampleCount() value at the trigger
+
+// Raw sample access for download: available = samples currently in the ring.
+// Copy `n` samples starting `offset` into the window of the most recent
+// `windowN` samples (chronological order).
+uint32_t captureRawAvailable(bool currentChannel);
+void captureRawCopy(bool currentChannel, uint32_t windowN, uint32_t offset,
+                    uint16_t *dst, uint32_t n);
+
 #endif

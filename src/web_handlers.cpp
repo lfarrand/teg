@@ -5,6 +5,7 @@
 #include "capture.h"
 #include "meter.h"
 #include "acmp.h"
+#include "pll.h"
 #include "scope_math.h"
 #include "spectrum_math.h"
 #include <arm_math.h>
@@ -522,6 +523,15 @@ void api_status(Request &req, Response &res) {
   doc["captureActive"] = captureActive();
   doc["captureFrozen"] = captureIsFrozen();
   doc["captureSamples"] = captureSampleCount();
+  doc["pllEnabled"] = config.Pll.Enabled;
+  if (config.Pll.Enabled) {
+    doc["pllState"] = pllStateStr();
+    doc["pllLocked"] = pllLocked();
+    doc["pllRefMilliHz"] = pllRefMilliHz();
+    doc["pllPhaseErrCentiDeg"] = pllPhaseErrCentiDeg();
+    doc["pllRefMv"] = pllRefMillivolts();
+    doc["pllResyncs"] = pllResyncCount();
+  }
   const MeterReadings meter = meterReadings();
   doc["meterActive"] = meter.valid;
   if (meter.valid) {

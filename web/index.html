@@ -195,6 +195,21 @@
   </article>
 
   <article>
+    <header>Grid / Reference PLL</header>
+    <p class="hint">Locks the output fundamental in frequency and phase to an AC reference on the feedback pin (needs Capture enabled). Steers frequency only &mdash; the waveform never jumps. Mutually exclusive with carrier dither, stepped waveform playback and the closed-loop feedback: enabling the PLL turns those off on save.</p>
+    <label><input type="checkbox" role="switch" data-path="Pll.Enabled"> Enabled</label>
+    <div class="grid-fields">
+      <label>Phase offset c&deg; <input type="number" data-path="Pll.PhaseOffsetCentiDeg" min="-18000" max="18000"></label>
+      <label>Min Hz <input type="number" data-path="Pll.MinHz" min="1" max="400"></label>
+      <label>Max Hz <input type="number" data-path="Pll.MaxHz" min="1" max="400"></label>
+      <label>Bandwidth dHz <input type="number" data-path="Pll.BandwidthDeciHz" min="10" max="500"></label>
+      <label>Zero mV <input type="number" data-path="Pll.ZeroMillivolts" min="0" max="3300"></label>
+      <label>Min level mV <input type="number" data-path="Pll.MinLevelMillivolts" min="20" max="3300"></label>
+    </div>
+    <span class="hint" id="pll-status"></span>
+  </article>
+
+  <article>
     <header>Hardware Current Limit</header>
     <p class="hint">On-chip comparator vs internal DAC threshold, wired straight to the PWM fault input &mdash; no software in the trip path. Threshold quantizes to ~52&thinsp;mV steps. Comparator-capable pins: 0, 1, 14&ndash;21, 25, 26, 38&ndash;41 (22/23 are PWM outputs on this board).</p>
     <label><input type="checkbox" role="switch" data-path="CurrentLimit.Enabled"> Enabled</label>
@@ -441,6 +456,12 @@ async function pollStatus() {
     $("#st-derate").textContent = s.derateMilli < 1000 ? (s.derateMilli / 10).toFixed(0) + "%" : "none";
     $("#st-derate").style.color = s.derateMilli < 1000 ? "#c62828" : "";
     $("#fault-banner").style.display = s.fault ? "block" : "none";
+    $("#pll-status").textContent = s.pllEnabled
+      ? `${s.pllState}` +
+        (s.pllState === "locked" || s.pllState === "acquiring"
+          ? ` · ref ${(s.pllRefMilliHz / 1000).toFixed(3)} Hz · err ${(s.pllPhaseErrCentiDeg / 100).toFixed(2)}° · ${s.pllRefMv} mV`
+          : "")
+      : "";
     $("#oc-status").textContent = s.ocLimit
       ? `armed ${s.ocMode} @ ${s.ocThresholdMv} mV` +
         (s.ocActive ? " — ABOVE THRESHOLD" : "") +

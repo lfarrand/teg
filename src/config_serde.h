@@ -9,6 +9,7 @@
 #include <ArduinoJson.h>
 #include "config_json.h"
 #include "acmp_math.h" // pin routing check in validateConfig
+#include "modulation.h" // scheme/dither enums for the PLL exclusion rules
 
 // Bounded, always-terminated string copy (portable across firmware and the
 // native test host, unlike strlcpy)
@@ -139,6 +140,15 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Meter.CurrentMilliampPerVolt = Config_Meter["CurrentMilliampPerVolt"] | 10000;
   config.Meter.VoltageRatioMilli = Config_Meter["VoltageRatioMilli"] | 1000;
 
+  JsonObjectConst Config_Pll = doc["Config"]["Pll"];
+  config.Pll.Enabled = Config_Pll["Enabled"] | false;
+  config.Pll.PhaseOffsetCentiDeg = Config_Pll["PhaseOffsetCentiDeg"] | 0;
+  config.Pll.MinHz = Config_Pll["MinHz"] | 45;
+  config.Pll.MaxHz = Config_Pll["MaxHz"] | 55;
+  config.Pll.BandwidthDeciHz = Config_Pll["BandwidthDeciHz"] | 200;
+  config.Pll.ZeroMillivolts = Config_Pll["ZeroMillivolts"] | 1650;
+  config.Pll.MinLevelMillivolts = Config_Pll["MinLevelMillivolts"] | 100;
+
   JsonObjectConst Config_Thermal = doc["Config"]["Thermal"];
   config.Thermal.Enabled = Config_Thermal["Enabled"] | false;
   config.Thermal.OneWirePin = Config_Thermal["OneWirePin"] | 21;
@@ -181,6 +191,62 @@ inline bool validateConfig(MainConfig &config) {
   }
   if (config.CurrentLimit.FilterCount > 7) {
     config.CurrentLimit.FilterCount = 0;
+    corrected = true;
+  }
+  if (config.Pll.MinHz < 1 || config.Pll.MaxHz > 400 || config.Pll.MinHz >= config.Pll.MaxHz) {
+    config.Pll.MinHz = 45;
+    config.Pll.MaxHz = 55;
+    corrected = true;
+  }
+  if (config.Pll.PhaseOffsetCentiDeg < -18000 || config.Pll.PhaseOffsetCentiDeg > 18000) {
+    config.Pll.PhaseOffsetCentiDeg = 0;
+    corrected = true;
+  }
+  if (config.Pll.BandwidthDeciHz < 10 || config.Pll.BandwidthDeciHz > 500) {
+    config.Pll.BandwidthDeciHz = 200;
+    corrected = true;
+  }
+  if (config.Pll.ZeroMillivolts > 3300) {
+    config.Pll.ZeroMillivolts = 1650;
+    corrected = true;
+  }
+  if (config.Pll.MinLevelMillivolts < 20 || config.Pll.MinLevelMillivolts > 3300) {
+    // A zero floor disables both the signal-presence gate and the
+    // normalization denominator: ADC noise would sweep the output across
+    // the whole clamp window instead of coasting
+    config.Pll.MinLevelMillivolts = 100;
+    corrected = true;
+  }
+  // PLL exclusions, PLL-disabling rules first so a disabled PLL never
+  // corrects unrelated features. Feedback: regulates the same pin as a DC
+  // level, physically contradictory with an AC reference on it. Stepped
+  // playback: the DDS phase does not drive the output. Nominal outside the
+  // clamp window: unlock/coast would snap the output to a rail. Carrier
+  // below 18x nominal: the discrete SOGI step g leaves its tested envelope.
+  if (config.Pll.Enabled && config.Feedback.Enabled) {
+    config.Pll.Enabled = false;
+    corrected = true;
+  }
+  if (config.Pll.Enabled &&
+      (config.Pwm.Tm2.ReferenceWaveform == RefWaveSequence ||
+       (config.Pwm.Tm2.ReferenceWaveform == RefWaveCustom && config.Pwm.Tm2.WaveformSampleStep))) {
+    config.Pll.Enabled = false;
+    corrected = true;
+  }
+  if (config.Pll.Enabled && (config.Pwm.Tm2.SpwmModulationFrequency < config.Pll.MinHz ||
+                             config.Pwm.Tm2.SpwmModulationFrequency > config.Pll.MaxHz)) {
+    config.Pll.Enabled = false;
+    corrected = true;
+  }
+  if (config.Pll.Enabled &&
+      config.Pwm.Tm2.SpwmCarrierFrequency < 18U * config.Pwm.Tm2.SpwmModulationFrequency) {
+    config.Pll.Enabled = false;
+    corrected = true;
+  }
+  // Dither: the ISR takes per-cycle increments from tables built at the
+  // CONFIGURED frequency - PLL steering would be silently disconnected
+  if (config.Pll.Enabled && config.Pwm.Tm2.CarrierDitherMode != DitherOff) {
+    config.Pwm.Tm2.CarrierDitherMode = DitherOff;
     corrected = true;
   }
   return corrected;
@@ -339,6 +405,15 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Meter["CurrentZeroMillivolts"] = config.Meter.CurrentZeroMillivolts;
   Config_Meter["CurrentMilliampPerVolt"] = config.Meter.CurrentMilliampPerVolt;
   Config_Meter["VoltageRatioMilli"] = config.Meter.VoltageRatioMilli;
+
+  JsonObject Config_Pll = doc["Config"]["Pll"].to<JsonObject>();
+  Config_Pll["Enabled"] = config.Pll.Enabled;
+  Config_Pll["PhaseOffsetCentiDeg"] = config.Pll.PhaseOffsetCentiDeg;
+  Config_Pll["MinHz"] = config.Pll.MinHz;
+  Config_Pll["MaxHz"] = config.Pll.MaxHz;
+  Config_Pll["BandwidthDeciHz"] = config.Pll.BandwidthDeciHz;
+  Config_Pll["ZeroMillivolts"] = config.Pll.ZeroMillivolts;
+  Config_Pll["MinLevelMillivolts"] = config.Pll.MinLevelMillivolts;
 
   JsonObject Config_Thermal = doc["Config"]["Thermal"].to<JsonObject>();
   Config_Thermal["Enabled"] = config.Thermal.Enabled;

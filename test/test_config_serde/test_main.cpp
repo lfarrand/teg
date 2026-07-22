@@ -56,6 +56,13 @@ void test_defaults_from_empty_document() {
   TEST_ASSERT_FALSE(cfg.CurrentLimit.CycleByCycle);
   TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterCount);
   TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterPeriod);
+  TEST_ASSERT_FALSE(cfg.Pll.Enabled);
+  TEST_ASSERT_EQUAL_INT16(0, cfg.Pll.PhaseOffsetCentiDeg);
+  TEST_ASSERT_EQUAL_UINT16(45, cfg.Pll.MinHz);
+  TEST_ASSERT_EQUAL_UINT16(55, cfg.Pll.MaxHz);
+  TEST_ASSERT_EQUAL_UINT16(200, cfg.Pll.BandwidthDeciHz);
+  TEST_ASSERT_EQUAL_UINT16(1650, cfg.Pll.ZeroMillivolts);
+  TEST_ASSERT_EQUAL_UINT16(100, cfg.Pll.MinLevelMillivolts);
   TEST_ASSERT_EQUAL_STRING("ub-1.lan", cfg.Influx.Host);
   TEST_ASSERT_EQUAL_UINT16(8086, cfg.Influx.Port);
   TEST_ASSERT_EQUAL_STRING("power_generator", cfg.Influx.Bucket);
@@ -114,6 +121,13 @@ void test_roundtrip_preserves_every_field() {
   cfg.CurrentLimit.CycleByCycle = true;
   cfg.CurrentLimit.FilterCount = 7;
   cfg.CurrentLimit.FilterPeriod = 99;
+  cfg.Pll.Enabled = true;
+  cfg.Pll.PhaseOffsetCentiDeg = -4500;
+  cfg.Pll.MinHz = 55;
+  cfg.Pll.MaxHz = 65;
+  cfg.Pll.BandwidthDeciHz = 150;
+  cfg.Pll.ZeroMillivolts = 1600;
+  cfg.Pll.MinLevelMillivolts = 250;
   copyConfigString(cfg.Influx.Host, sizeof(cfg.Influx.Host), "influx.example.lan");
   cfg.Influx.Port = 9999;
   copyConfigString(cfg.Influx.Org, sizeof(cfg.Influx.Org), "myorg");
@@ -252,6 +266,72 @@ void test_validate_current_limit() {
   TEST_ASSERT_EQUAL_UINT8(18, cfg.CurrentLimit.Pin);
 }
 
+void test_validate_pll() {
+  MainConfig cfg;
+  cfg.Pll.MinHz = 60; // >= MaxHz
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(45, cfg.Pll.MinHz);
+  TEST_ASSERT_EQUAL_UINT16(55, cfg.Pll.MaxHz);
+
+  cfg.Pll.PhaseOffsetCentiDeg = 20000;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_INT16(0, cfg.Pll.PhaseOffsetCentiDeg);
+
+  cfg.Pll.BandwidthDeciHz = 5;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(200, cfg.Pll.BandwidthDeciHz);
+
+  // Exclusions: PLL wins over dither (dither turned off)...
+  cfg.Pll.Enabled = true;
+  cfg.Pwm.Tm2.CarrierDitherMode = 1;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT8(0, cfg.Pwm.Tm2.CarrierDitherMode);
+  TEST_ASSERT_TRUE(cfg.Pll.Enabled);
+
+  // ...but loses to the feedback amplitude loop (older feature keeps working)
+  cfg.Feedback.Enabled = true;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_FALSE(cfg.Pll.Enabled);
+  cfg.Feedback.Enabled = false;
+
+  // ...and to stepped playback modes, where the DDS phase drives nothing
+  cfg.Pll.Enabled = true;
+  cfg.Pwm.Tm2.ReferenceWaveform = 4; // RefWaveSequence
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_FALSE(cfg.Pll.Enabled);
+
+  cfg.Pwm.Tm2.ReferenceWaveform = 3; // RefWaveCustom
+  cfg.Pwm.Tm2.WaveformSampleStep = true;
+  cfg.Pll.Enabled = true;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_FALSE(cfg.Pll.Enabled);
+
+  // Custom waveform via the DDS (no sample-step) is allowed
+  cfg.Pwm.Tm2.WaveformSampleStep = false;
+  cfg.Pll.Enabled = true;
+  TEST_ASSERT_FALSE(validateConfig(cfg));
+  TEST_ASSERT_TRUE(cfg.Pll.Enabled);
+
+  // Nominal outside the lock window: unlock/coast would rail-snap the output
+  cfg.Pwm.Tm2.SpwmModulationFrequency = 60;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_FALSE(cfg.Pll.Enabled);
+  cfg.Pwm.Tm2.SpwmModulationFrequency = 50;
+
+  // Carrier below 18x nominal: SOGI discretization outside its envelope
+  cfg.Pll.Enabled = true;
+  cfg.Pwm.Tm2.SpwmCarrierFrequency = 800;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_FALSE(cfg.Pll.Enabled);
+  cfg.Pwm.Tm2.SpwmCarrierFrequency = 20000;
+
+  // The amplitude floor cannot be zeroed (noise would sweep the clamps)
+  cfg.Pll.Enabled = true;
+  cfg.Pll.MinLevelMillivolts = 0;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(100, cfg.Pll.MinLevelMillivolts);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_defaults_from_empty_document);
@@ -261,5 +341,6 @@ int main() {
   RUN_TEST(test_preserve_secrets_keeps_stored_values_on_empty_post);
   RUN_TEST(test_validate_clamps_out_of_range_frequency);
   RUN_TEST(test_validate_current_limit);
+  RUN_TEST(test_validate_pll);
   return UNITY_END();
 }

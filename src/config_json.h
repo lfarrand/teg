@@ -134,6 +134,24 @@ struct MeterConfig {
                                            // (e.g. a 240:1 divider = 240000)
 };
 
+// Grid/reference PLL: locks the DDS fundamental in frequency and phase to an
+// external AC reference sensed on the capture channel (Feedback.AnalogPin,
+// sampled once per carrier cycle - requires Capture.Enabled). SOGI-QSG +
+// SRF-PLL; steers the DDS phase increment only, never the accumulator, so
+// the output waveform has no discontinuities. Mutually exclusive with
+// carrier dither, stepped waveform playback, and the Feedback amplitude
+// loop (which reads the same pin as a DC level).
+struct PllConfig {
+  bool Enabled = false;
+  int16_t PhaseOffsetCentiDeg = 0;  // inverter fundamental leads reference; -18000..18000
+  uint16_t MinHz = 45;              // steering clamp = anti-windup rail + lock window
+  uint16_t MaxHz = 55;
+  uint16_t BandwidthDeciHz = 200;   // loop natural frequency, 0.1Hz units (20.0Hz);
+                                    // capped internally at carrier/(20*pi)
+  uint16_t ZeroMillivolts = 1650;   // reference mid-rail bias at the pin
+  uint16_t MinLevelMillivolts = 100; // amplitude floor: below = no reference
+};
+
 // DS18B20 probes on OneWire (index 0 = TEG hot side, 1 = cold side) plus the
 // RT1062 die temperature. The worst of (hot, die) linearly derates the
 // modulation index between DerateStartC and DerateEndC.
@@ -164,6 +182,7 @@ struct MainConfig {
   SecurityConfig Security;
   CaptureConfig Capture;
   MeterConfig Meter;
+  PllConfig Pll;
   ThermalConfig Thermal;
 };
 

@@ -3,6 +3,7 @@
 #include "config_serde.h"
 #include "pwm_utils.h"
 #include "capture.h"
+#include "spectrum_math.h"
 #include "thermal.h"
 #include "waveform.h"
 #include "waveform_parse.h"
@@ -46,6 +47,7 @@ FLASHMEM void configureWebServer() {
   app.post("/api/waveform", &api_waveform_post);
   app.post("/api/fault/clear", &api_fault_clear);
   app.get("/api/crash", &api_crash);
+  app.get("/api/spectrum", &api_spectrum);
 }
 
 void processWebServer() {
@@ -222,6 +224,56 @@ FLASHMEM void api_waveform_get(Request &req, Response &res) {
     }
   }
   res.set("Content-Type", "application/json");
+  serializeJson(doc, res);
+}
+
+// FFT working buffers in OCRAM: 4096-point re/im floats + sample copy
+DMAMEM static float fftRe[SpectrumMaxPoints];
+DMAMEM static float fftIm[SpectrumMaxPoints];
+DMAMEM static int16_t fftSamples[SpectrumMaxPoints];
+
+FLASHMEM void api_spectrum(Request &req, Response &res) {
+  char qbuf[12];
+  uint32_t points = SpectrumMaxPoints;
+  if (req.query("points", qbuf, sizeof(qbuf))) {
+    points = strtoul(qbuf, nullptr, 10);
+  }
+  if (points < 256 || points > SpectrumMaxPoints || (points & (points - 1)) != 0) {
+    points = SpectrumMaxPoints;
+  }
+
+  res.set("Content-Type", "application/json");
+  JsonDocument doc;
+  const uint32_t sampleHz = config.Pwm.Tm2.SpwmCarrierFrequency;
+  doc["sampleHz"] = sampleHz;
+  doc["points"] = points;
+
+  if (!captureActive() || captureCopyRecent(fftSamples, points) == 0) {
+    doc["available"] = false;
+    serializeJson(doc, res);
+    return;
+  }
+
+  prepareSpectrumInput(fftSamples, points, fftRe, fftIm);
+  fftRadix2(fftRe, fftIm, points);
+  const uint32_t halfN = points / 2;
+  // In-place: mag[i] depends only on re[i]/im[i], so re[] can hold the result
+  float *mag = fftRe;
+  spectrumMagnitudes(fftRe, fftIm, mag, halfN);
+
+  const uint32_t fundBin = findFundamentalBin(mag, halfN);
+  const float fund = harmonicPeak(mag, halfN, fundBin);
+  doc["available"] = true;
+  doc["binHz"] = static_cast<float>(sampleHz) / points;
+  doc["fundamentalHz"] = (static_cast<float>(sampleHz) / points) * fundBin;
+  doc["thdPercent"] = thdPercent(mag, halfN, fundBin);
+
+  // First 512 bins, normalized to the fundamental, rounded to 4 decimals
+  const uint32_t outBins = halfN < 512 ? halfN : 512;
+  JsonArray arr = doc["mag"].to<JsonArray>();
+  for (uint32_t i = 0; i < outBins; i++) {
+    arr.add(fund > 0.0f ? roundf((mag[i] / fund) * 10000.0f) / 10000.0f : 0.0f);
+  }
   serializeJson(doc, res);
 }
 

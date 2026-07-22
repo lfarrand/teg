@@ -43,6 +43,16 @@
   </div>
   <div id="fault-banner">&#9888; FAULT TRIPPED &mdash; all PWM outputs disabled</div>
   <div class="charts" id="charts"></div>
+
+  <div class="chart-card" style="margin-top:1rem">
+    <h2><span>Output spectrum (feedback channel)</span><span class="now" id="spec-info">&mdash;</span></h2>
+    <canvas id="spec-canvas" style="width:100%;height:190px;display:block"></canvas>
+    <div class="legend" style="display:flex;justify-content:space-between">
+      <span>0 Hz &rarr; <span id="spec-maxhz">?</span> &middot; magnitude in dB relative to the fundamental (0 dBc top, &minus;80 dB floor)</span>
+      <label style="margin:0"><input type="checkbox" id="spec-auto" checked> auto-refresh</label>
+    </div>
+  </div>
+
   <p class="legend" id="footer"></p>
 </main>
 
@@ -157,6 +167,59 @@ const chRam = new Chart(host, "Free RAM", "kB", ["DTCM", "OCRAM"], { decimals: 0
 
 const t = (deci) => (deci > -32768 ? deci / 10 : null);
 
+function drawSpectrum(d) {
+  const c = $("#spec-canvas");
+  const dpr = window.devicePixelRatio || 1;
+  c.width = c.clientWidth * dpr;
+  c.height = c.clientHeight * dpr;
+  const ctx = c.getContext("2d");
+  ctx.clearRect(0, 0, c.width, c.height);
+
+  const styles = getComputedStyle(document.documentElement);
+  const grid = styles.getPropertyValue("--pico-muted-border-color").trim() || "#8884";
+  const text = styles.getPropertyValue("--pico-muted-color").trim() || "#888";
+  const color = styles.getPropertyValue("--pico-primary").trim() || "#0172ad";
+
+  const FLOOR = -80; // dBc
+  const yOf = (db) => (Math.min(0, Math.max(FLOOR, db)) / FLOOR) * (c.height - 12 * dpr) + 2 * dpr;
+
+  ctx.strokeStyle = grid;
+  ctx.fillStyle = text;
+  ctx.font = `${10 * dpr}px sans-serif`;
+  for (const db of [0, -20, -40, -60, -80]) {
+    const y = yOf(db);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(c.width, y); ctx.stroke();
+    ctx.fillText(db + " dB", 3 * dpr, y - 2 * dpr);
+  }
+
+  const n = d.mag.length;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.4 * dpr;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const db = d.mag[i] > 0 ? 20 * Math.log10(d.mag[i]) : FLOOR;
+    const x = (i / (n - 1)) * c.width;
+    i === 0 ? ctx.moveTo(x, yOf(db)) : ctx.lineTo(x, yOf(db));
+  }
+  ctx.stroke();
+
+  $("#spec-maxhz").textContent = Math.round(d.binHz * n) + " Hz";
+}
+
+async function pollSpectrum() {
+  if (!$("#spec-auto").checked) return;
+  try {
+    const d = await (await fetch("/api/spectrum")).json();
+    if (!d.available) {
+      $("#spec-info").textContent = "capture not running";
+      return;
+    }
+    $("#spec-info").textContent =
+      `f₁ ${d.fundamentalHz.toFixed(1)} Hz · THD ${d.thdPercent.toFixed(2)} %`;
+    drawSpectrum(d);
+  } catch (e) { /* next tick */ }
+}
+
 let timer = null;
 let paused = false;
 
@@ -170,6 +233,7 @@ async function poll() {
     chDerate.push([s.derateMilli / 10]);
     chRam.push([s.dtcmFree / 1024, s.ocramFree / 1024]);
     $("#fault-banner").style.display = s.fault ? "block" : "none";
+    pollSpectrum();
     const up = Math.floor(s.uptimeMs / 1000);
     $("#footer").textContent =
       `uptime ${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m ${up % 60}s · ` +

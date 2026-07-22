@@ -4,6 +4,7 @@
 #include "pwm_utils.h"
 #include "capture.h"
 #include "meter.h"
+#include "acmp.h"
 #include "scope_math.h"
 #include "spectrum_math.h"
 #include <arm_math.h>
@@ -155,7 +156,9 @@ FLASHMEM void api_config_post(Request &req, Response &res) {
   // the next PWM reload, i.e. within one PWM period
   const uint32_t applyStart = ARM_DWT_CYCCNT;
   applyPwmConfig(previous);
-  if (spwmActive()) {
+  // Not while a trip is latched (a refused clear): the modulation ISR would
+  // drive duty updates into fault-masked submodules
+  if (spwmActive() && !vFaultTripped) {
     attachModule2PwmInterruptVectors();
     enablePwmInterrupts();
   }
@@ -482,6 +485,8 @@ FLASHMEM void api_fault_clear(Request &req, Response &res) {
   res.set("Content-Type", "application/json");
   JsonDocument out;
   out["fault"] = vFaultTripped;
+  // Why a clear may not stick: the overcurrent comparator is still asserting
+  out["ocStillActive"] = acmpFaultPinActive();
   serializeJson(out, res);
 }
 
@@ -499,6 +504,14 @@ void api_status(Request &req, Response &res) {
   doc["crash"] = crashReportText()[0] != '\0';
   doc["active"] = spwmActive();
   doc["fault"] = vFaultTripped;
+  doc["ocLimit"] = config.CurrentLimit.Enabled;
+  if (config.CurrentLimit.Enabled) {
+    doc["ocMode"] = config.CurrentLimit.CycleByCycle ? "cbc" : "latched";
+    doc["ocThresholdMv"] = acmpActualThresholdMv(); // DAC-quantized, as programmed
+    doc["ocActive"] = acmpFaultPinActive();
+    doc["ocTrips"] = acmpCbcTripCount();
+    doc["ocTripsPerSec"] = acmpCbcTripsPerSec();
+  }
   doc["isrCycles"] = vIsrCycles;
   doc["applyMicros"] = lastApplyMicros;
   doc["modMilliHz"] = modulationActualMilliHz();

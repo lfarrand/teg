@@ -195,6 +195,20 @@
   </article>
 
   <article>
+    <header>Hardware Current Limit</header>
+    <p class="hint">On-chip comparator vs internal DAC threshold, wired straight to the PWM fault input &mdash; no software in the trip path. Threshold quantizes to ~52&thinsp;mV steps. Comparator-capable pins: 0, 1, 14&ndash;21, 25, 26, 38&ndash;41 (22/23 are PWM outputs on this board).</p>
+    <label><input type="checkbox" role="switch" data-path="CurrentLimit.Enabled"> Enabled</label>
+    <div class="grid-fields">
+      <label>Pin <input type="number" data-path="CurrentLimit.Pin" min="0" max="41"></label>
+      <label>Threshold mV <input type="number" data-path="CurrentLimit.ThresholdMillivolts" min="100" max="3300"></label>
+      <label>Filter samples <input type="number" data-path="CurrentLimit.FilterCount" min="0" max="7"></label>
+      <label>Filter period <input type="number" data-path="CurrentLimit.FilterPeriod" min="0" max="255"></label>
+    </div>
+    <label><input type="checkbox" role="switch" data-path="CurrentLimit.CycleByCycle"> Cycle-by-cycle limiting (auto-recover each PWM cycle; off = latched fault)</label>
+    <span class="hint" id="oc-status"></span>
+  </article>
+
+  <article>
     <header>Custom Waveform</header>
     <p class="hint">Upload a <code>teg-wave v1</code> file. <code>type=reference</code>: one sample (-1..1) per line, resampled to the 2048-point table and played by the DDS. <code>type=sequence</code>: <code>level, duration_us</code> per line, up to 64 segments, looped (quantized to the carrier period). Select Waveform &ldquo;Custom&rdquo; or &ldquo;Sequence&rdquo; above to use it.</p>
     <label><input type="checkbox" role="switch" data-path="Pwm.Tm2.WaveformSampleStep"> Sample-step playback: one stored sample per carrier cycle at full resolution (repeat period = points &divide; carrier; e.g. 2M points at 20&thinsp;kHz &asymp; 105&thinsp;s). Off = the file is one period at the modulation frequency.</label>
@@ -427,6 +441,11 @@ async function pollStatus() {
     $("#st-derate").textContent = s.derateMilli < 1000 ? (s.derateMilli / 10).toFixed(0) + "%" : "none";
     $("#st-derate").style.color = s.derateMilli < 1000 ? "#c62828" : "";
     $("#fault-banner").style.display = s.fault ? "block" : "none";
+    $("#oc-status").textContent = s.ocLimit
+      ? `armed ${s.ocMode} @ ${s.ocThresholdMv} mV` +
+        (s.ocActive ? " — ABOVE THRESHOLD" : "") +
+        (s.ocMode === "cbc" ? ` · ${s.ocTrips} cycles limited (${s.ocTripsPerSec}/s)` : "")
+      : "";
   } catch (e) { /* device busy; retry next tick */ }
 }
 
@@ -629,7 +648,18 @@ $("#fault-clear").addEventListener("click", async () => {
     sessionStorage.setItem("pin", pin);
     r = await post();
   }
-  toast(r.ok ? "Fault cleared — outputs re-enabled" : "Clear failed: HTTP " + r.status, !r.ok);
+  if (!r.ok) {
+    toast("Clear failed: HTTP " + r.status, true);
+    return;
+  }
+  const out = await r.json();
+  if (out.fault) {
+    toast(out.ocStillActive
+      ? "Clear refused — current-limit comparator still above threshold"
+      : "Fault still latched", true);
+  } else {
+    toast("Fault cleared — outputs re-enabled");
+  }
 });
 
 // Theme: Pico v2 honours data-theme; "auto" = follow the OS

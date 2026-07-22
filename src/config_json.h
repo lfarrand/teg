@@ -82,6 +82,22 @@ struct FaultProtectionConfig {
   bool ActiveHigh = true;
 };
 
+// Hardware overcurrent protection: an on-chip analog comparator (ACMP)
+// compares the current-sense pin against its internal 6-bit DAC threshold;
+// the comparator output routes through XBARA1 to FlexPWM2's private FAULT0
+// input, disabling the modulated outputs (Sm20-23 A/B) with no software in
+// the loop. Latched mode holds them off until the fault is cleared;
+// cycle-by-cycle mode lets the hardware re-enable at each cycle boundary
+// while the comparator is quiet (current limiting, not a fault).
+struct CurrentLimitConfig {
+  bool Enabled = false;
+  uint8_t Pin = 40;                    // A16, the Meter current-pin default; must be ACMP-reachable
+  uint16_t ThresholdMillivolts = 2475; // at the pin; quantized to 3300/64 ~ 51.6mV DAC steps
+  bool CycleByCycle = false;           // false = latched fault (manual clear)
+  uint8_t FilterCount = 0;             // CMP filter samples 0-7; 0 = continuous mode (RM-recommended)
+  uint8_t FilterPeriod = 0;            // CMP sample period in bus clocks; 0 = bypass
+};
+
 // InfluxDB v2 metrics target. Metrics are disabled until a token is set —
 // the token lives ONLY in /settings.cfg (or the web UI), never in source.
 struct InfluxConfig {
@@ -143,6 +159,7 @@ struct MainConfig {
   AsymmetricInductionConfig AsymmetricInduction;
   FeedbackConfig Feedback;
   FaultProtectionConfig FaultProtection;
+  CurrentLimitConfig CurrentLimit;
   InfluxConfig Influx;
   SecurityConfig Security;
   CaptureConfig Capture;

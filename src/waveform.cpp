@@ -182,7 +182,7 @@ DMAMEM static int16_t staging[StagingSamples];
 DMAMEM static GzipInflater gunzip; // 32KB dictionary lives in OCRAM
 
 namespace ingest {
-enum Stage : uint8_t { Detect, Text, BinHeader, BinPayload, BinSeqPayload, Failed };
+enum Stage : uint8_t { Detect, Text, BinPayload, BinSeqPayload, Failed };
 
 static Stage stage;
 static const char *err;

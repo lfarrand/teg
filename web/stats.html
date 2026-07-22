@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PWM Stats</title>
+<link rel="stylesheet" href="/pico.min.css">
+<style>
+  body > main { padding-top: 0.5rem; }
+  .topbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .topbar h1 { font-size: 1.3rem; margin: 0; flex: 1; }
+  .topbar select, .topbar button { width: auto; margin: 0; }
+  .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1rem; }
+  .chart-card { border: 1px solid var(--pico-muted-border-color); border-radius: 8px; padding: 0.7rem 0.9rem; }
+  .chart-card h2 { font-size: 0.85rem; margin: 0 0 0.4rem; display: flex; justify-content: space-between; }
+  .chart-card h2 .now { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .chart-card canvas { width: 100%; height: 150px; display: block; }
+  .legend { font-size: 0.7rem; color: var(--pico-muted-color); margin-top: 0.3rem; }
+  .legend b { font-weight: 600; }
+  #fault-banner { background: #c62828; color: #fff; padding: 0.5rem 1rem; border-radius: 8px;
+                  margin-bottom: 1rem; display: none; font-weight: 600; }
+</style>
+</head>
+<body>
+<main class="container">
+  <div class="topbar">
+    <h1>PWM Stats</h1>
+    <a href="/" role="button" class="secondary outline" style="width:auto;margin:0;padding:0.4rem 0.9rem">Settings</a>
+    <label style="margin:0;display:flex;align-items:center;gap:0.4rem;font-size:0.8rem">Refresh
+      <select id="rate">
+        <option value="250">250 ms</option>
+        <option value="500">500 ms</option>
+        <option value="1000" selected>1 s</option>
+        <option value="2000">2 s</option>
+        <option value="5000">5 s</option>
+        <option value="10000">10 s</option>
+      </select>
+    </label>
+    <button id="pause" class="secondary outline">Pause</button>
+    <select id="theme" title="Theme">
+      <option value="auto">Auto</option><option value="light">Light</option><option value="dark">Dark</option>
+    </select>
+  </div>
+  <div id="fault-banner">&#9888; FAULT TRIPPED &mdash; all PWM outputs disabled</div>
+  <div class="charts" id="charts"></div>
+  <p class="legend" id="footer"></p>
+</main>
+
+<script>
+"use strict";
+
+const $ = (s) => document.querySelector(s);
+const HISTORY = 300; // points kept per chart (5 min at 1s refresh)
+const PALETTE = ["#0172ad", "#d32f2f", "#2e7d32", "#f9a825"];
+
+// ---------------------------------------------------------------------------
+// Minimal rolling time-series chart on a canvas (theme-aware, auto-scaled)
+// ---------------------------------------------------------------------------
+class Chart {
+  constructor(host, title, unit, series, opts = {}) {
+    this.unit = unit;
+    this.series = series;
+    this.min = opts.min;
+    this.max = opts.max;
+    this.fmt = opts.fmt || ((v) => v.toFixed(opts.decimals ?? 1));
+    this.data = series.map(() => []);
+
+    const card = document.createElement("div");
+    card.className = "chart-card";
+    card.innerHTML = `<h2><span>${title}</span><span class="now">&mdash;</span></h2>
+      <canvas></canvas><div class="legend">${series
+        .map((s, i) => `<b style="color:${PALETTE[i]}">&#9644;</b> ${s}`)
+        .join(" &nbsp; ")}</div>`;
+    host.appendChild(card);
+    this.canvas = card.querySelector("canvas");
+    this.nowEl = card.querySelector(".now");
+  }
+
+  push(values) {
+    values.forEach((v, i) => {
+      this.data[i].push(v);
+      if (this.data[i].length > HISTORY) this.data[i].shift();
+    });
+    const latest = values.filter((v) => v !== null && isFinite(v));
+    this.nowEl.textContent = latest.length
+      ? latest.map((v) => this.fmt(v)).join(" / ") + " " + this.unit
+      : "—";
+    this.draw();
+  }
+
+  draw() {
+    const c = this.canvas;
+    const dpr = window.devicePixelRatio || 1;
+    c.width = c.clientWidth * dpr;
+    c.height = c.clientHeight * dpr;
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, c.width, c.height);
+
+    // Auto-scale over visible data unless pinned
+    let lo = this.min, hi = this.max;
+    if (lo === undefined || hi === undefined) {
+      let dLo = Infinity, dHi = -Infinity;
+      for (const s of this.data)
+        for (const v of s)
+          if (v !== null && isFinite(v)) { dLo = Math.min(dLo, v); dHi = Math.max(dHi, v); }
+      if (!isFinite(dLo)) { dLo = 0; dHi = 1; }
+      if (dLo === dHi) { dLo -= 1; dHi += 1; }
+      const pad = (dHi - dLo) * 0.1;
+      lo = this.min ?? dLo - pad;
+      hi = this.max ?? dHi + pad;
+    }
+
+    const styles = getComputedStyle(document.documentElement);
+    const grid = styles.getPropertyValue("--pico-muted-border-color").trim() || "#8884";
+    const text = styles.getPropertyValue("--pico-muted-color").trim() || "#888";
+
+    // Gridlines + labels
+    ctx.strokeStyle = grid;
+    ctx.fillStyle = text;
+    ctx.font = `${10 * dpr}px sans-serif`;
+    ctx.lineWidth = 1;
+    for (let g = 0; g <= 2; g++) {
+      const y = (c.height - 12 * dpr) * (g / 2) + 2 * dpr;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(c.width, y); ctx.stroke();
+      const val = hi - ((hi - lo) * g) / 2;
+      ctx.fillText(this.fmt(val), 3 * dpr, y + (g === 0 ? 10 : -3) * dpr);
+    }
+
+    // Series
+    const yOf = (v) => 2 * dpr + (c.height - 14 * dpr) * (1 - (v - lo) / (hi - lo));
+    this.data.forEach((serie, si) => {
+      ctx.strokeStyle = PALETTE[si];
+      ctx.lineWidth = 1.6 * dpr;
+      ctx.beginPath();
+      let pen = false;
+      serie.forEach((v, i) => {
+        if (v === null || !isFinite(v)) { pen = false; return; }
+        const x = (i / (HISTORY - 1)) * c.width;
+        pen ? ctx.lineTo(x, yOf(v)) : ctx.moveTo(x, yOf(v));
+        pen = true;
+      });
+      ctx.stroke();
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Chart set
+// ---------------------------------------------------------------------------
+const host = $("#charts");
+const chIndex = new Chart(host, "Modulation index", "", ["live", "target"], { decimals: 3, min: 0 });
+const chFeedback = new Chart(host, "Feedback voltage", "mV", ["measured"], { decimals: 0, min: 0 });
+const chIsr = new Chart(host, "Modulation ISR time", "µs", ["duration"], { decimals: 2, min: 0 });
+const chTemp = new Chart(host, "Temperatures", "°C", ["hot", "cold", "die"], { decimals: 1 });
+const chDerate = new Chart(host, "Thermal derate", "%", ["derate"], { decimals: 0, min: 0, max: 105 });
+const chRam = new Chart(host, "Free RAM", "kB", ["DTCM", "OCRAM"], { decimals: 0, min: 0 });
+
+const t = (deci) => (deci > -32768 ? deci / 10 : null);
+
+let timer = null;
+let paused = false;
+
+async function poll() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    chIndex.push([s.indexMilli / 1000, s.targetMilli / 1000]);
+    chFeedback.push([s.feedbackMv ?? null]);
+    chIsr.push([s.active ? s.isrCycles / 600 : null]);
+    chTemp.push([t(s.hotDeciC), t(s.coldDeciC), t(s.chipDeciC)]);
+    chDerate.push([s.derateMilli / 10]);
+    chRam.push([s.dtcmFree / 1024, s.ocramFree / 1024]);
+    $("#fault-banner").style.display = s.fault ? "block" : "none";
+    const up = Math.floor(s.uptimeMs / 1000);
+    $("#footer").textContent =
+      `uptime ${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m ${up % 60}s · ` +
+      `apply ${s.applyMicros} µs · f ${(s.modMilliHz / 1000).toFixed(3)} Hz · ` +
+      `capture ${s.captureActive ? (s.captureFrozen ? "FROZEN" : "running") : "off"} · ` +
+      `underruns ${s.streamUnderruns ?? 0}`;
+  } catch (e) { /* device busy; next tick */ }
+}
+
+function schedule() {
+  clearInterval(timer);
+  if (!paused) {
+    poll();
+    timer = setInterval(poll, Number($("#rate").value));
+  }
+}
+
+$("#rate").value = localStorage.getItem("statsRate") || "1000";
+$("#rate").addEventListener("change", () => {
+  localStorage.setItem("statsRate", $("#rate").value);
+  schedule();
+});
+$("#pause").addEventListener("click", () => {
+  paused = !paused;
+  $("#pause").textContent = paused ? "Resume" : "Pause";
+  schedule();
+});
+
+// Shared theme preference with the settings page
+const themeSel = $("#theme");
+themeSel.value = localStorage.getItem("theme") || "auto";
+function applyTheme() {
+  const v = themeSel.value;
+  if (v === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", v);
+  localStorage.setItem("theme", v);
+}
+themeSel.addEventListener("change", applyTheme);
+applyTheme();
+
+schedule();
+</script>
+</body>
+</html>

@@ -25,6 +25,13 @@ uint32_t captureDecimate(uint32_t count, uint32_t bins, uint16_t *outMin, uint16
 // ring). Returns n on success, 0 if fewer samples are available.
 uint32_t captureCopyRecent(int16_t *out, uint32_t n);
 
+// Lossless incremental drain: copy up to maxN samples the ISR has written
+// since *cursorTotal (a captureSampleCount() watermark the caller owns) and
+// advance the cursor. On ring overrun (caller stalled) or a reconfigure the
+// cursor snaps forward to the oldest safely-readable sample. Returns the
+// number of samples copied (uniformly spaced at the carrier period).
+uint32_t captureReadSince(uint32_t *cursorTotal, uint16_t *dst, uint32_t maxN);
+
 // ---------------------------------------------------------------------------
 // Dual-channel power metering (Meter config): the ISR also samples a current
 // sensor on the second ADC module and accumulates zero-corrected V*I, V^2,

@@ -214,6 +214,35 @@ uint32_t captureCopyRecent(int16_t *out, uint32_t n) {
   return n;
 }
 
+uint32_t captureReadSince(uint32_t *cursorTotal, uint16_t *dst, uint32_t maxN) {
+  const uint32_t total = vTotal;
+  // Modular lag so the counter's 2^32 wrap (~6h at 200kHz) is seamless; a
+  // "negative" lag (cursor ahead) means captureConfigure reset the counter
+  uint32_t lag = total - *cursorTotal;
+  if (lag > 0x80000000u) {
+    *cursorTotal = total; // reconfigure reset the counter; resynchronize
+    return 0;
+  }
+  // Keep a margin from the write head's overwrite frontier: samples close to
+  // the oldest edge of a full ring may be rewritten mid-copy by the ISR
+  constexpr uint32_t OverrunMargin = 4096;
+  if (lag > CaptureRingSamples - OverrunMargin) {
+    *cursorTotal = total - (CaptureRingSamples - OverrunMargin);
+    lag = CaptureRingSamples - OverrunMargin;
+  }
+  const uint32_t n = lag < maxN ? lag : maxN;
+  if (n == 0) {
+    return 0;
+  }
+  uint32_t idx = *cursorTotal & (CaptureRingSamples - 1);
+  for (uint32_t i = 0; i < n; i++) {
+    dst[i] = captureRing[idx];
+    idx = (idx + 1) & (CaptureRingSamples - 1);
+  }
+  *cursorTotal += n;
+  return n;
+}
+
 uint32_t captureDecimate(uint32_t count, uint32_t bins, uint16_t *outMin, uint16_t *outMax) {
   const uint32_t available = vTotal < CaptureRingSamples ? vTotal : CaptureRingSamples;
   if (count > available) {

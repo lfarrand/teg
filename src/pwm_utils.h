@@ -57,6 +57,13 @@ uint32_t modulationIndexNowMilli();
 uint32_t modulationIndexTargetMilli();
 uint64_t modulationActualMilliHz();
 
+// PLL steering: live DDS frequency override without a reconfigure (aligned
+// 32-bit writes are atomic; the ISR picks the new increment up next cycle)
+void modulationSetPhaseIncrement(uint32_t increment);
+uint32_t modulationPhaseIncrement();
+uint32_t modulationPhaseNow();  // DDS accumulator snapshot
+bool modulationDdsDriven();     // false in stepped playback (sequence/sample-step/stream)
+
 // Closed-loop amplitude regulation; call from loop()
 void runFeedbackLoop();
 

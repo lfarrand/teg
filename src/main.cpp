@@ -19,6 +19,7 @@
 #include "metrics.h"
 #include "meter.h"
 #include "acmp.h"
+#include "pll.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -258,6 +259,8 @@ void setup() {
 
   captureConfigure();
 
+  pllConfigure();
+
   thermalConfigure();
 
   printStats();
@@ -277,6 +280,8 @@ void loop() {
   networkHousekeeping();
 
   runFeedbackLoop();
+
+  pllTask();
 
   thermalTask();
 

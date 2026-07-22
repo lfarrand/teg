@@ -4,6 +4,7 @@
 #include "modulation.h"
 #include "capture.h"
 #include "acmp.h"
+#include "pll.h"
 #include "thermal.h"
 #include "waveform.h"
 #include "waveform_parse.h"
@@ -216,6 +217,9 @@ void applyPwmConfig(const MainConfig &previous) {
              sizeof(config.AsymmetricInduction)) != 0) {
     configureModule4();
   }
+  // After the module reconfigures (buildSpwmLut resets the increment): the
+  // PLL re-steers from its held estimate for a bumpless re-entry
+  pllConfigure();
   // A refused clear leaves the trip latched, but the reconfigures above may
   // have re-enabled timers: re-assert the trip's masking so the applied
   // settings take effect only after an explicit successful clear
@@ -307,7 +311,12 @@ void buildSpwmLut() {
 
   const uint32_t carrier = tm2.SpwmCarrierFrequency;
   vPhaseIncrement = spwmPhaseIncrement(carrier, tm2.SpwmModulationFrequency);
-  vPhase = 0;
+  // While PLL-locked, keep the accumulator: zeroing it would inject a phase
+  // discontinuity into an output that is aligned to an external reference.
+  // pllConfigure() (end of applyPwmConfig) re-steers the increment.
+  if (!pllLocked()) {
+    vPhase = 0;
+  }
 
   // Amplitude: the ISR ramps the current index toward the target. The
   // current value persists across reconfigures, so soft-start ramps from
@@ -354,6 +363,22 @@ uint32_t modulationIndexTargetMilli() {
 
 uint64_t modulationActualMilliHz() {
   return spwmActualMilliHz(vPhaseIncrement, config.Pwm.Tm2.SpwmCarrierFrequency);
+}
+
+void modulationSetPhaseIncrement(uint32_t increment) {
+  vPhaseIncrement = increment;
+}
+
+uint32_t modulationPhaseIncrement() {
+  return vPhaseIncrement;
+}
+
+uint32_t modulationPhaseNow() {
+  return vPhase;
+}
+
+bool modulationDdsDriven() {
+  return !(vRefSequence || vSampleStep || vStreamPlayback);
 }
 
 void configureModule1() {

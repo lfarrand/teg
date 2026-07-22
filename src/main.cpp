@@ -16,6 +16,7 @@
 #include "capture.h"
 #include "thermal.h"
 #include "waveform.h"
+#include "metrics.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -44,6 +45,80 @@ Print *stdPrint;
 
 bool sdAvailable = false;
 bool displayAvailable = false;
+
+// Reset cause (SRC_SRSR, captured at boot then cleared so the next reset
+// reports fresh) and the previous CrashReport, kept for /api/status and
+// persisted to SD
+static uint32_t bootResetStatus = 0;
+static char crashText[1024] = "";
+
+const char *resetCauseString() {
+  // i.MX RT1062 SRC_SRSR bits (write-1-clear)
+  if (bootResetStatus & (1u << 4)) return "watchdog";
+  if (bootResetStatus & (1u << 7)) return "watchdog3";
+  if (bootResetStatus & (1u << 1)) return "software/lockup";
+  if (bootResetStatus & (1u << 8)) return "overtemperature";
+  if (bootResetStatus & (1u << 3)) return "external";
+  if (bootResetStatus & (1u << 0)) return "power-on";
+  return "unknown";
+}
+
+const char *crashReportText() {
+  return crashText;
+}
+
+namespace {
+// Print adapter capturing CrashReport into a buffer
+class BufferPrint : public Print {
+ public:
+  BufferPrint(char *buffer, size_t capacity) : buf(buffer), cap(capacity) {}
+  size_t write(uint8_t c) override {
+    if (len + 1 < cap) {
+      buf[len++] = static_cast<char>(c);
+      buf[len] = '\0';
+      return 1;
+    }
+    return 0;
+  }
+
+ private:
+  char *buf;
+  size_t cap;
+  size_t len = 0;
+};
+} // namespace
+
+static void captureBootDiagnostics() {
+  bootResetStatus = SRC_SRSR;
+  SRC_SRSR = bootResetStatus; // write-1-clear for a fresh report next boot
+
+  if (CrashReport) {
+    BufferPrint bp(crashText, sizeof(crashText));
+    bp.print(CrashReport);
+  }
+
+  Serial.print(F("Reset cause: "));
+  Serial.println(resetCauseString());
+  if (crashText[0] != '\0') {
+    Serial.println(F("Previous crash report:"));
+    Serial.print(crashText);
+  }
+}
+
+static void persistCrashReport() {
+  if (!sdAvailable || crashText[0] == '\0') {
+    return;
+  }
+  FsFile f = sd.open("/crashlog.txt", O_RDWR | O_CREAT | O_AT_END);
+  if (f) {
+    f.print("=== reset cause: ");
+    f.print(resetCauseString());
+    f.println(" ===");
+    f.print(crashText);
+    f.println();
+    f.close();
+  }
+}
 
 void configureSdCard() {
   sdAvailable = sd.begin(FIFO_SDIO);
@@ -112,10 +187,7 @@ void configureNtp() {
 void setup() {
   Serial.begin(9600);
 
-  if (Serial && CrashReport) {
-    Serial.println("\n" __FILE__ " " __DATE__ " " __TIME__);
-    Serial.print(CrashReport);
-  }
+  captureBootDiagnostics();
 
   stdPrint = &Serial;
 
@@ -155,6 +227,8 @@ void setup() {
                 uid64[4], uid64[5], uid64[6], uid64[7]);
 
   configureSdCard();
+
+  persistCrashReport();
 
   loadSettings();
 
@@ -203,6 +277,8 @@ void loop() {
   thermalTask();
 
   waveformStreamTask();
+
+  metricsTask();
 
   static bool faultReported = false;
   if (vFaultTripped && !faultReported) {

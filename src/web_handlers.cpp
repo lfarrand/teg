@@ -9,6 +9,11 @@
 #include "modulation.h"
 #include "main.h"
 #include "utils.h"
+#if __has_include("version.h")
+#include "version.h"
+#else
+#define TEG_GIT_HASH "dev"
+#endif
 #include "web_assets.h"
 #include <ArduinoJson.h>
 
@@ -39,6 +44,8 @@ FLASHMEM void configureWebServer() {
   app.get("/api/capture", &api_capture);
   app.get("/api/waveform", &api_waveform_get);
   app.post("/api/waveform", &api_waveform_post);
+  app.post("/api/fault/clear", &api_fault_clear);
+  app.get("/api/crash", &api_crash);
 }
 
 void processWebServer() {
@@ -82,13 +89,30 @@ FLASHMEM void api_config_get(Request &req, Response &res) {
   serializeJson(doc, res);
 }
 
+// Constant-time comparison over the whole PIN buffer so response timing
+// leaks nothing about how many leading characters matched
+static bool pinMatches(const char *provided) {
+  if (provided == nullptr) {
+    return false;
+  }
+  uint8_t diff = 0;
+  bool providedEnded = false;
+  for (size_t i = 0; i < sizeof(config.Security.WritePin); i++) {
+    const char p = providedEnded ? '\0' : provided[i];
+    if (p == '\0') {
+      providedEnded = true;
+    }
+    diff |= static_cast<uint8_t>(p ^ config.Security.WritePin[i]);
+  }
+  return diff == 0;
+}
+
 // When a write PIN is configured, POSTs must carry it in X-Auth-Pin
 static bool writeAuthorized(Request &req) {
   if (config.Security.WritePin[0] == '\0') {
     return true;
   }
-  const char *provided = req.get("X-Auth-Pin");
-  return provided != nullptr && strcmp(provided, config.Security.WritePin) == 0;
+  return pinMatches(req.get("X-Auth-Pin"));
 }
 
 FLASHMEM void api_config_post(Request &req, Response &res) {
@@ -235,9 +259,30 @@ void api_capture(Request &req, Response &res) {
   serializeJson(doc, res);
 }
 
+FLASHMEM void api_fault_clear(Request &req, Response &res) {
+  if (!writeAuthorized(req)) {
+    res.sendStatus(401);
+    return;
+  }
+  clearFaultTrip();
+  res.set("Content-Type", "application/json");
+  JsonDocument out;
+  out["fault"] = vFaultTripped;
+  serializeJson(out, res);
+}
+
+FLASHMEM void api_crash(Request &req, Response &res) {
+  res.set("Content-Type", "text/plain");
+  const char *text = crashReportText();
+  res.print(text[0] != '\0' ? text : "none");
+}
+
 void api_status(Request &req, Response &res) {
   JsonDocument doc;
   doc["uptimeMs"] = millis();
+  doc["version"] = TEG_GIT_HASH;
+  doc["resetCause"] = resetCauseString();
+  doc["crash"] = crashReportText()[0] != '\0';
   doc["active"] = spwmActive();
   doc["fault"] = vFaultTripped;
   doc["isrCycles"] = vIsrCycles;

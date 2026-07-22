@@ -155,15 +155,25 @@ void configurePwm() {
 
 // Reconfigure only the timers whose settings actually changed, so an update to
 // one submodule never disturbs the others' outputs or phase.
-void applyPwmConfig(const MainConfig &previous) {
-  if (vFaultTripped) {
-    vFaultTripped = false;
-    writeLog("Fault cleared; re-enabling PWM outputs");
-    Tm1.enable();
-    Tm2.enable();
-    Tm3.enable();
-    Tm4.enable();
+void clearFaultTrip() {
+  if (!vFaultTripped) {
+    return;
   }
+  vFaultTripped = false;
+  writeLog("Fault cleared; re-enabling PWM outputs");
+  Tm1.enable();
+  Tm2.enable();
+  Tm3.enable();
+  Tm4.enable();
+  captureConfigure(); // unfreeze the flight recorder
+  if (spwmActive()) {
+    attachModule2PwmInterruptVectors();
+    enablePwmInterrupts();
+  }
+}
+
+void applyPwmConfig(const MainConfig &previous) {
+  clearFaultTrip();
   if (memcmp(&previous.FaultProtection, &config.FaultProtection, sizeof(config.FaultProtection)) != 0) {
     configureFaultProtection();
   }

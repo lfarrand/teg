@@ -44,4 +44,9 @@ void configureNtp();
 // uploads) must call this periodically
 void kickWatchdog();
 
+// Boot diagnostics for /api/status: why the last reset happened, and the
+// previous CrashReport text ("" if none)
+const char *resetCauseString();
+const char *crashReportText();
+
 #endif //TEG_MAIN_H

@@ -37,3 +37,4 @@
 .idea
 # Generated from web/ by scripts/gzip_web_assets.py
 src/web_assets.h
+src/version.h

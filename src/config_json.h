@@ -90,6 +90,7 @@ struct InfluxConfig {
   char Org[24] = "501eaf58ac3171cd";
   char Bucket[32] = "power_generator";
   char Token[96] = "";
+  uint16_t IntervalSeconds = 10; // metrics push cadence; 0 disables
 };
 
 // Write protection for the API: when WritePin is set, POST /api/config

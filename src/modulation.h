@@ -365,4 +365,55 @@ inline uint16_t modulationFinalDuty(uint16_t cellDuty, const CellPlan &plan) {
   return plan.dutyComplement ? static_cast<uint16_t>(65535U - cellDuty) : cellDuty;
 }
 
+// Everything the per-cycle pipeline needs beyond phase and index
+struct ModCycleConfig {
+  uint8_t scheme = ModSchemeSpwmUnipolar;
+  uint8_t cells = 2;
+  uint8_t dpwmVariant = DpwmGeneralised;
+  uint32_t dpwmClampPhase = 0;
+  bool nearestLevel = false;
+  int32_t dtCompQ15 = 0;
+};
+
+// How many duty slots modulationCycleDuties fills for a scheme
+constexpr uint8_t modulationCellCount(uint8_t scheme, uint8_t cells) {
+  return scheme == ModSchemeSvpwm || scheme == ModSchemeDpwm ? 3
+       : scheme == ModSchemeSvpwm3D                          ? 4
+                                                             : cells;
+}
+
+// One carrier cycle of the LUT-driven modulation pipeline: reference lookup,
+// index scaling, zero-sequence injection, band slicing, carrier geometry -
+// exactly the duties the ISR writes to the comparators. Shared between the
+// ISR and the host-side spectral tests so the tests measure the real thing.
+inline void modulationCycleDuties(const int16_t *lut, uint32_t phase, uint32_t indexQ15,
+                                  const ModCycleConfig &c, const CellPlan *plans,
+                                  uint16_t *duties) {
+  if (c.scheme == ModSchemeSvpwm || c.scheme == ModSchemeDpwm || c.scheme == ModSchemeSvpwm3D) {
+    int32_t v[3];
+    threePhaseScaledRefs(lut, phase, indexQ15, v);
+    const int32_t zss = c.scheme == ModSchemeDpwm
+                          ? dpwmZss(lut, phase, c.dpwmClampPhase, c.dpwmVariant, v)
+                          : continuousSvmZss(v);
+    for (uint8_t k = 0; k < 3; k++) {
+      duties[k] = dutyFromScaled(v[k] + zss, c.dtCompQ15, v[k]);
+    }
+    if (c.scheme == ModSchemeSvpwm3D) {
+      // Neutral leg carries the zero sequence, so phase-to-neutral = pure
+      // reference. No dead-time comp: its current is the (unknown) sum of
+      // the phase currents.
+      duties[3] = dutyFromScaled(zss, 0, 0);
+    }
+    return;
+  }
+  const int32_t s = refFromPhase(lut, phase);
+  // Dead-time compensation applies to full-reference legs; the band-sliced
+  // level-shifted cells switch at most one pair per instant, handled per cell
+  const uint16_t ref = refToDuty(s, indexQ15, c.scheme == ModSchemeLevelShifted ? 0 : c.dtCompQ15);
+  for (uint8_t k = 0; k < c.cells; k++) {
+    duties[k] = modulationFinalDuty(modulationCellDuty(c.scheme, ref, k, c.cells, c.nearestLevel),
+                                    plans[k]);
+  }
+}
+
 #endif

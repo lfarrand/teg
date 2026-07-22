@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <ArduinoJson.h>
 #include "config_json.h"
+#include "acmp_math.h" // pin routing check in validateConfig
 
 // Bounded, always-terminated string copy (portable across firmware and the
 // native test host, unlike strlcpy)
@@ -109,6 +110,14 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.FaultProtection.Pin = Config_FaultProtection["Pin"] | 32;
   config.FaultProtection.ActiveHigh = Config_FaultProtection["ActiveHigh"] | true;
 
+  JsonObjectConst Config_CurrentLimit = doc["Config"]["CurrentLimit"];
+  config.CurrentLimit.Enabled = Config_CurrentLimit["Enabled"] | false;
+  config.CurrentLimit.Pin = Config_CurrentLimit["Pin"] | 40;
+  config.CurrentLimit.ThresholdMillivolts = Config_CurrentLimit["ThresholdMillivolts"] | 2475;
+  config.CurrentLimit.CycleByCycle = Config_CurrentLimit["CycleByCycle"] | false;
+  config.CurrentLimit.FilterCount = Config_CurrentLimit["FilterCount"] | 0;
+  config.CurrentLimit.FilterPeriod = Config_CurrentLimit["FilterPeriod"] | 0;
+
   JsonObjectConst Config_Influx = doc["Config"]["Influx"];
   copyConfigString(config.Influx.Host, sizeof(config.Influx.Host), Config_Influx["Host"] | "ub-1.lan");
   config.Influx.Port = Config_Influx["Port"] | 8086;
@@ -160,6 +169,18 @@ inline bool validateConfig(MainConfig &config) {
   bool corrected = false;
   if (config.Pwm.Tm1.Sm13.PwmFrequency < 1 || config.Pwm.Tm1.Sm13.PwmFrequency > 1000000) {
     config.Pwm.Tm1.Sm13.PwmFrequency = 1000;
+    corrected = true;
+  }
+  if (acmpRouteForPin(config.CurrentLimit.Pin).cmp == 0) {
+    config.CurrentLimit.Pin = 40;
+    corrected = true;
+  }
+  if (config.CurrentLimit.ThresholdMillivolts < 100 || config.CurrentLimit.ThresholdMillivolts > 3300) {
+    config.CurrentLimit.ThresholdMillivolts = 2475;
+    corrected = true;
+  }
+  if (config.CurrentLimit.FilterCount > 7) {
+    config.CurrentLimit.FilterCount = 0;
     corrected = true;
   }
   return corrected;
@@ -290,6 +311,14 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_FaultProtection["Enabled"] = config.FaultProtection.Enabled;
   Config_FaultProtection["Pin"] = config.FaultProtection.Pin;
   Config_FaultProtection["ActiveHigh"] = config.FaultProtection.ActiveHigh;
+
+  JsonObject Config_CurrentLimit = doc["Config"]["CurrentLimit"].to<JsonObject>();
+  Config_CurrentLimit["Enabled"] = config.CurrentLimit.Enabled;
+  Config_CurrentLimit["Pin"] = config.CurrentLimit.Pin;
+  Config_CurrentLimit["ThresholdMillivolts"] = config.CurrentLimit.ThresholdMillivolts;
+  Config_CurrentLimit["CycleByCycle"] = config.CurrentLimit.CycleByCycle;
+  Config_CurrentLimit["FilterCount"] = config.CurrentLimit.FilterCount;
+  Config_CurrentLimit["FilterPeriod"] = config.CurrentLimit.FilterPeriod;
 
   JsonObject Config_Influx = doc["Config"]["Influx"].to<JsonObject>();
   Config_Influx["Host"] = config.Influx.Host;

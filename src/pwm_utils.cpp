@@ -3,6 +3,7 @@
 #include "pwm_timing.h"
 #include "modulation.h"
 #include "capture.h"
+#include "acmp.h"
 #include "thermal.h"
 #include "waveform.h"
 #include "waveform_parse.h"
@@ -159,6 +160,14 @@ void clearFaultTrip() {
   if (!vFaultTripped) {
     return;
   }
+  // A latched hardware overcurrent only clears safely once the comparator is
+  // quiet; a still-asserting pin means the fault condition persists (stuck
+  // sensor, DC offset above threshold, real short) - refuse and stay tripped
+  if (acmpArmedLatched() && acmpFaultPinActive()) {
+    writeLog("Fault clear refused: current-limit comparator still above threshold");
+    return;
+  }
+  acmpClearLatch(); // release the FlexPWM fault latch (its IRQ stays off for now)
   vFaultTripped = false;
   writeLog("Fault cleared; re-enabling PWM outputs");
   Tm1.enable();
@@ -170,16 +179,28 @@ void clearFaultTrip() {
     attachModule2PwmInterruptVectors();
     enablePwmInterrupts();
   }
+  // Last, so a comparator re-assert during this sequence re-trips cleanly
+  // through the pending interrupt instead of racing the writes above
+  acmpRearmFaultIrq();
 }
 
 void applyPwmConfig(const MainConfig &previous) {
+  // Current-limit config first: the clear below must judge refusal against
+  // the NEW protection state, so that disabling the limiter while tripped
+  // clears in one action instead of refusing against the outgoing config
+  if (memcmp(&previous.CurrentLimit, &config.CurrentLimit, sizeof(config.CurrentLimit)) != 0) {
+    acmpConfigure();
+  }
   clearFaultTrip();
   if (memcmp(&previous.FaultProtection, &config.FaultProtection, sizeof(config.FaultProtection)) != 0) {
     configureFaultProtection();
   }
-  // Re-arms capture (and clears a freeze) on every apply — also covers the
-  // fault-clear path above
-  captureConfigure();
+  // Re-arms capture (and clears a freeze) on every apply - covers the
+  // fault-clear path above. Skipped while a trip is still latched (refused
+  // clear): the frozen ring is the trip's flight record, keep the evidence.
+  if (!vFaultTripped) {
+    captureConfigure();
+  }
   thermalConfigure();
   if (memcmp(&previous.Pwm.Tm1, &config.Pwm.Tm1, sizeof(config.Pwm.Tm1)) != 0) {
     configureModule1();
@@ -194,6 +215,16 @@ void applyPwmConfig(const MainConfig &previous) {
       memcmp(&previous.AsymmetricInduction, &config.AsymmetricInduction,
              sizeof(config.AsymmetricInduction)) != 0) {
     configureModule4();
+  }
+  // A refused clear leaves the trip latched, but the reconfigures above may
+  // have re-enabled timers: re-assert the trip's masking so the applied
+  // settings take effect only after an explicit successful clear
+  if (vFaultTripped) {
+    Tm1.disable();
+    Tm2.disable();
+    Tm3.disable();
+    Tm4.disable();
+    NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
   }
 }
 
@@ -665,6 +696,8 @@ FASTRUN void IsrOverflowSm20() {
   Tm2.setPwmLdok(mask, true);
 
   captureTick(); // reload point = average-current instant for centre-aligned PWM
+
+  acmpCbcTick(); // count cycle-by-cycle current-limit trips (FFLAG0 poll)
 
   vIsrCycles = ARM_DWT_CYCCNT - t0;
 

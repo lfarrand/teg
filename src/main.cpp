@@ -18,6 +18,7 @@
 #include "waveform.h"
 #include "metrics.h"
 #include "meter.h"
+#include "acmp.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -253,6 +254,8 @@ void setup() {
 
   configureFaultProtection();
 
+  acmpConfigure(); // after configurePwm so submodule init can't disturb the armed fault channel
+
   captureConfigure();
 
   thermalConfigure();
@@ -280,6 +283,8 @@ void loop() {
   waveformStreamTask();
 
   meterTask();
+
+  acmpTask();
 
   metricsTask();
 

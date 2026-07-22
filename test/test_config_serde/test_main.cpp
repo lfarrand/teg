@@ -50,6 +50,12 @@ void test_defaults_from_empty_document() {
   TEST_ASSERT_FALSE(cfg.FaultProtection.Enabled);
   TEST_ASSERT_EQUAL_UINT8(32, cfg.FaultProtection.Pin);
   TEST_ASSERT_TRUE(cfg.FaultProtection.ActiveHigh);
+  TEST_ASSERT_FALSE(cfg.CurrentLimit.Enabled);
+  TEST_ASSERT_EQUAL_UINT8(40, cfg.CurrentLimit.Pin);
+  TEST_ASSERT_EQUAL_UINT16(2475, cfg.CurrentLimit.ThresholdMillivolts);
+  TEST_ASSERT_FALSE(cfg.CurrentLimit.CycleByCycle);
+  TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterCount);
+  TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterPeriod);
   TEST_ASSERT_EQUAL_STRING("ub-1.lan", cfg.Influx.Host);
   TEST_ASSERT_EQUAL_UINT16(8086, cfg.Influx.Port);
   TEST_ASSERT_EQUAL_STRING("power_generator", cfg.Influx.Bucket);
@@ -102,6 +108,12 @@ void test_roundtrip_preserves_every_field() {
   cfg.FaultProtection.Enabled = true;
   cfg.FaultProtection.Pin = 31;
   cfg.FaultProtection.ActiveHigh = false;
+  cfg.CurrentLimit.Enabled = true;
+  cfg.CurrentLimit.Pin = 23;
+  cfg.CurrentLimit.ThresholdMillivolts = 1800;
+  cfg.CurrentLimit.CycleByCycle = true;
+  cfg.CurrentLimit.FilterCount = 7;
+  cfg.CurrentLimit.FilterPeriod = 99;
   copyConfigString(cfg.Influx.Host, sizeof(cfg.Influx.Host), "influx.example.lan");
   cfg.Influx.Port = 9999;
   copyConfigString(cfg.Influx.Org, sizeof(cfg.Influx.Org), "myorg");
@@ -216,6 +228,30 @@ void test_validate_clamps_out_of_range_frequency() {
   TEST_ASSERT_EQUAL_UINT32(500000, cfg.Pwm.Tm1.Sm13.PwmFrequency);
 }
 
+void test_validate_current_limit() {
+  MainConfig cfg;
+  cfg.CurrentLimit.Pin = 13; // not comparator-capable
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT8(40, cfg.CurrentLimit.Pin);
+
+  cfg.CurrentLimit.ThresholdMillivolts = 50; // below the DAC's useful floor
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(2475, cfg.CurrentLimit.ThresholdMillivolts);
+
+  cfg.CurrentLimit.ThresholdMillivolts = 4000;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(2475, cfg.CurrentLimit.ThresholdMillivolts);
+
+  cfg.CurrentLimit.FilterCount = 9;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterCount);
+
+  cfg.CurrentLimit.Pin = 18; // valid alternative route (CMP1 channel 0)
+  cfg.CurrentLimit.ThresholdMillivolts = 1650;
+  TEST_ASSERT_FALSE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT8(18, cfg.CurrentLimit.Pin);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_defaults_from_empty_document);
@@ -224,5 +260,6 @@ int main() {
   RUN_TEST(test_redact_secrets_blanks_only_the_secrets);
   RUN_TEST(test_preserve_secrets_keeps_stored_values_on_empty_post);
   RUN_TEST(test_validate_clamps_out_of_range_frequency);
+  RUN_TEST(test_validate_current_limit);
   return UNITY_END();
 }

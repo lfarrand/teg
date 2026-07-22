@@ -614,20 +614,21 @@ FASTRUN void IsrOverflowSm20() {
   const bool sequence = vRefSequence;
   const bool stepped = sequence || vSampleStep || vStreamPlayback;
 
-  if (!stepped && (scheme == ModSchemeSvpwm || scheme == ModSchemeDpwm || scheme == ModSchemeSvpwm3D)) {
-    int32_t v[3];
-    threePhaseScaledRefs(spwmLut, phase, idx, v);
-    const int32_t zss = scheme == ModSchemeDpwm
-                          ? dpwmZss(spwmLut, phase, vDpwmClampPhase, vDpwmVariant, v)
-                          : continuousSvmZss(v);
-    for (uint8_t k = 0; k < 3; k++) {
-      CellSm[k]->updateDutyCycle(dutyFromScaled(v[k] + zss, comp, v[k]));
-    }
-    if (scheme == ModSchemeSvpwm3D) {
-      // Neutral leg carries the zero sequence, so phase-to-neutral = pure
-      // reference. No dead-time comp: its current is the (unknown) sum of
-      // the phase currents.
-      CellSm[3]->updateDutyCycle(dutyFromScaled(zss, 0, 0));
+  if (!stepped) {
+    // LUT-driven path: the whole per-cycle pipeline lives in modulation.h
+    // (modulationCycleDuties) so the native spectral tests exercise it as-is
+    uint16_t duties[MaxModulationCells];
+    ModCycleConfig mc;
+    mc.scheme = scheme;
+    mc.cells = cells;
+    mc.dpwmVariant = vDpwmVariant;
+    mc.dpwmClampPhase = vDpwmClampPhase;
+    mc.nearestLevel = vNearestLevel;
+    mc.dtCompQ15 = comp;
+    modulationCycleDuties(spwmLut, phase, idx, mc, cellPlan, duties);
+    const uint8_t n = modulationCellCount(scheme, cells);
+    for (uint8_t k = 0; k < n; k++) {
+      CellSm[k]->updateDutyCycle(duties[k]);
     }
   } else {
     int32_t s;
@@ -650,8 +651,6 @@ FASTRUN void IsrOverflowSm20() {
     } else {
       s = refFromPhase(spwmLut, phase);
     }
-    // Dead-time compensation applies to full-reference legs; the band-sliced
-    // level-shifted cells switch at most one pair per instant, handled per cell
     const uint16_t ref = refToDuty(s, idx, scheme == ModSchemeLevelShifted ? 0 : comp);
     const bool nlm = vNearestLevel;
     for (uint8_t k = 0; k < cells; k++) {

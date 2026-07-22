@@ -172,6 +172,8 @@ const chIsr = new Chart(host, "Modulation ISR time", "µs", ["duration"], { deci
 const chTemp = new Chart(host, "Temperatures", "°C", ["hot", "cold", "die"], { decimals: 1 });
 const chDerate = new Chart(host, "Thermal derate", "%", ["derate"], { decimals: 0, min: 0, max: 105 });
 const chRam = new Chart(host, "Free RAM", "kB", ["DTCM", "OCRAM"], { decimals: 0, min: 0 });
+const chPower = new Chart(host, "Real power", "W", ["power"], { decimals: 2 });
+const chRms = new Chart(host, "RMS output", "", ["Vrms (V)", "Irms (A)"], { decimals: 2, min: 0 });
 
 const t = (deci) => (deci > -32768 ? deci / 10 : null);
 
@@ -247,6 +249,8 @@ async function poll() {
     chTemp.push([t(s.hotDeciC), t(s.coldDeciC), t(s.chipDeciC)]);
     chDerate.push([s.derateMilli / 10]);
     chRam.push([s.dtcmFree / 1024, s.ocramFree / 1024]);
+    chPower.push([s.meterActive ? s.powerMw / 1000 : null]);
+    chRms.push([s.meterActive ? s.vrmsMv / 1000 : null, s.meterActive ? s.irmsMa / 1000 : null]);
     $("#fault-banner").style.display = s.fault ? "block" : "none";
     pollSpectrum();
     const up = Math.floor(s.uptimeMs / 1000);
@@ -255,7 +259,10 @@ async function poll() {
       `apply ${s.applyMicros} µs · f ${(s.modMilliHz / 1000).toFixed(3)} Hz · ` +
       `capture ${s.captureActive ? (s.captureFrozen ? "FROZEN" : "running") : "off"} · ` +
       `underruns ${s.streamUnderruns ?? 0} · fw ${s.version ?? "?"} · ` +
-      `last reset: ${s.resetCause ?? "?"}${s.crash ? " (crash report at /api/crash)" : ""}`;
+      `last reset: ${s.resetCause ?? "?"}${s.crash ? " (crash report at /api/crash)" : ""}` +
+      (s.meterActive
+        ? ` · PF ${(s.pfMilli / 1000).toFixed(2)} · energy ${(s.energyMwh / 1000).toFixed(2)} Wh`
+        : "");
   } catch (e) { /* device busy; next tick */ }
 }
 

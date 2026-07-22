@@ -55,6 +55,12 @@ void test_defaults_from_empty_document() {
   TEST_ASSERT_EQUAL_STRING("power_generator", cfg.Influx.Bucket);
   TEST_ASSERT_EQUAL_STRING("", cfg.Influx.Token); // no token in source or defaults
   TEST_ASSERT_EQUAL_UINT16(10, cfg.Influx.IntervalSeconds);
+  TEST_ASSERT_FALSE(cfg.Meter.Enabled);
+  TEST_ASSERT_EQUAL_UINT8(40, cfg.Meter.CurrentPin);
+  TEST_ASSERT_EQUAL_UINT16(1650, cfg.Meter.VoltageZeroMillivolts);
+  TEST_ASSERT_EQUAL_UINT16(1650, cfg.Meter.CurrentZeroMillivolts);
+  TEST_ASSERT_EQUAL_UINT16(10000, cfg.Meter.CurrentMilliampPerVolt);
+  TEST_ASSERT_EQUAL_UINT16(1000, cfg.Meter.VoltageRatioMilli);
   TEST_ASSERT_EQUAL_STRING("", cfg.Security.WritePin);
   TEST_ASSERT_EQUAL_UINT16(50, cfg.Pwm.Tm1.Sm13.DeadTime);
   TEST_ASSERT_EQUAL_UINT32(1000, cfg.Pwm.Tm1.Sm13.PwmFrequency);
@@ -102,6 +108,12 @@ void test_roundtrip_preserves_every_field() {
   copyConfigString(cfg.Influx.Bucket, sizeof(cfg.Influx.Bucket), "test_bucket");
   copyConfigString(cfg.Influx.Token, sizeof(cfg.Influx.Token), "secret-token-value==");
   cfg.Influx.IntervalSeconds = 30;
+  cfg.Meter.Enabled = true;
+  cfg.Meter.CurrentPin = 39;
+  cfg.Meter.VoltageZeroMillivolts = 1600;
+  cfg.Meter.CurrentZeroMillivolts = 1700;
+  cfg.Meter.CurrentMilliampPerVolt = 5000;
+  cfg.Meter.VoltageRatioMilli = 15000;
   cfg.Pwm.Tm1.Sm13.DeadTime = 11;
   cfg.Pwm.Tm1.Sm13.PwmFrequency = 1111;
   cfg.Pwm.Tm1.Sm13.ChannelA.DutyCycle = 1001;

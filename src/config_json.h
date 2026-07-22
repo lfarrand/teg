@@ -105,6 +105,19 @@ struct CaptureConfig {
   bool Enabled = false;
 };
 
+// Dual-channel power metering: the capture ISR also samples a current sensor
+// (on the other ADC module) every carrier cycle and accumulates V*I.
+// Requires Capture.Enabled. Both channels are assumed mid-rail biased.
+struct MeterConfig {
+  bool Enabled = false;
+  uint8_t CurrentPin = 40;               // A16
+  uint16_t VoltageZeroMillivolts = 1650; // voltage-sense bias point at the pin
+  uint16_t CurrentZeroMillivolts = 1650; // current-sensor zero-amp output
+  uint32_t CurrentMilliampPerVolt = 10000; // e.g. ACS712-20A: 100mV/A
+  uint32_t VoltageRatioMilli = 1000;       // output volts per pin volt, x1000
+                                           // (e.g. a 240:1 divider = 240000)
+};
+
 // DS18B20 probes on OneWire (index 0 = TEG hot side, 1 = cold side) plus the
 // RT1062 die temperature. The worst of (hot, die) linearly derates the
 // modulation index between DerateStartC and DerateEndC.
@@ -133,6 +146,7 @@ struct MainConfig {
   InfluxConfig Influx;
   SecurityConfig Security;
   CaptureConfig Capture;
+  MeterConfig Meter;
   ThermalConfig Thermal;
 };
 

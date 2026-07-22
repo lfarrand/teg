@@ -122,6 +122,14 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
 
   config.Capture.Enabled = doc["Config"]["Capture"]["Enabled"] | false;
 
+  JsonObjectConst Config_Meter = doc["Config"]["Meter"];
+  config.Meter.Enabled = Config_Meter["Enabled"] | false;
+  config.Meter.CurrentPin = Config_Meter["CurrentPin"] | 40;
+  config.Meter.VoltageZeroMillivolts = Config_Meter["VoltageZeroMillivolts"] | 1650;
+  config.Meter.CurrentZeroMillivolts = Config_Meter["CurrentZeroMillivolts"] | 1650;
+  config.Meter.CurrentMilliampPerVolt = Config_Meter["CurrentMilliampPerVolt"] | 10000;
+  config.Meter.VoltageRatioMilli = Config_Meter["VoltageRatioMilli"] | 1000;
+
   JsonObjectConst Config_Thermal = doc["Config"]["Thermal"];
   config.Thermal.Enabled = Config_Thermal["Enabled"] | false;
   config.Thermal.OneWirePin = Config_Thermal["OneWirePin"] | 21;
@@ -294,6 +302,14 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   doc["Config"]["Security"].to<JsonObject>()["WritePin"] = config.Security.WritePin;
 
   doc["Config"]["Capture"].to<JsonObject>()["Enabled"] = config.Capture.Enabled;
+
+  JsonObject Config_Meter = doc["Config"]["Meter"].to<JsonObject>();
+  Config_Meter["Enabled"] = config.Meter.Enabled;
+  Config_Meter["CurrentPin"] = config.Meter.CurrentPin;
+  Config_Meter["VoltageZeroMillivolts"] = config.Meter.VoltageZeroMillivolts;
+  Config_Meter["CurrentZeroMillivolts"] = config.Meter.CurrentZeroMillivolts;
+  Config_Meter["CurrentMilliampPerVolt"] = config.Meter.CurrentMilliampPerVolt;
+  Config_Meter["VoltageRatioMilli"] = config.Meter.VoltageRatioMilli;
 
   JsonObject Config_Thermal = doc["Config"]["Thermal"].to<JsonObject>();
   Config_Thermal["Enabled"] = config.Thermal.Enabled;

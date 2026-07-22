@@ -122,6 +122,19 @@
   </article>
 
   <article>
+    <header>Power Metering</header>
+    <label><input type="checkbox" role="switch" data-path="Meter.Enabled"> Sample a current sensor alongside the voltage channel every carrier cycle (requires Waveform Capture; the current pin must be on the other ADC module)</label>
+    <div class="grid-fields">
+      <label>Current pin <input type="number" data-path="Meter.CurrentPin" min="0" max="41"></label>
+      <label>V zero mV <input type="number" data-path="Meter.VoltageZeroMillivolts" min="0" max="3300"></label>
+      <label>I zero mV <input type="number" data-path="Meter.CurrentZeroMillivolts" min="0" max="3300"></label>
+      <label>mA per volt <input type="number" data-path="Meter.CurrentMilliampPerVolt" min="1" max="10000000"></label>
+      <label>V ratio /1000 <input type="number" data-path="Meter.VoltageRatioMilli" min="1" max="10000000"></label>
+    </div>
+    <p class="hint">Both channels are assumed mid-rail biased; zeros are the sensor outputs at 0&thinsp;V / 0&thinsp;A. Live readings appear on the Stats page.</p>
+  </article>
+
+  <article>
     <header>Thermal Monitoring</header>
     <label><input type="checkbox" role="switch" data-path="Thermal.Enabled"> DS18B20 probes (index 0 = hot side, 1 = cold side) + die temperature; the worst of hot/die linearly derates the modulation index</label>
     <div class="grid-fields">
@@ -139,6 +152,10 @@
         <option value="1">Last 1 s</option>
         <option value="5" selected>Last 5 s</option>
         <option value="30">Last 30 s</option>
+      </select>
+      <select id="cap-channel" style="width:auto;margin:0">
+        <option value="v">Voltage</option>
+        <option value="i">Current</option>
       </select>
       <button id="cap-refresh" class="secondary outline" style="width:auto;margin:0">Refresh</button>
       <span class="hint" id="cap-info"></span>
@@ -395,7 +412,8 @@ async function refreshCapture() {
   const rate = cfg ? cfg.Pwm.Tm2.SpwmCarrierFrequency : 20000;
   const sec = Number($("#cap-window").value);
   try {
-    const d = await (await fetch(`/api/capture?count=${rate * sec}&bins=600`)).json();
+    const chan = $("#cap-channel").value;
+    const d = await (await fetch(`/api/capture?count=${rate * sec}&bins=600&channel=${chan}`)).json();
     const c = $("#cap-canvas");
     c.width = c.clientWidth * (window.devicePixelRatio || 1);
     const ctx = c.getContext("2d");

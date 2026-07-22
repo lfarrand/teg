@@ -97,6 +97,37 @@ void test_clean_sine_has_negligible_thd() {
   TEST_ASSERT_LESS_THAN_FLOAT(0.5f, thdPercent(mag, n / 2, findFundamentalBin(mag, n / 2)));
 }
 
+void test_packed_magnitudes_match_complex_layout() {
+  // CMSIS rfft packing: [DC, Nyquist, re1, im1, re2, im2, ...]. Build a packed
+  // buffer whose bins are known and check the unpacked magnitudes.
+  float packed[16] = {0};
+  packed[0] = -3.0f; // DC (sign must not survive)
+  packed[1] = 9.0f;  // Nyquist, ignored by the single-sided output
+  packed[2] = 3.0f;  // bin 1: 3+4i -> 5
+  packed[3] = 4.0f;
+  packed[4] = 0.0f;  // bin 2: 0-2i -> 2
+  packed[5] = -2.0f;
+  float m[8];
+  spectrumMagnitudesPacked(packed, m, 8);
+  TEST_ASSERT_EQUAL_FLOAT(3.0f, m[0]);
+  TEST_ASSERT_EQUAL_FLOAT(5.0f, m[1]);
+  TEST_ASSERT_EQUAL_FLOAT(2.0f, m[2]);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, m[3]);
+}
+
+void test_real_and_complex_prep_agree() {
+  const uint32_t n = 512;
+  for (uint32_t i = 0; i < n; i++) {
+    samples[i] = static_cast<int16_t>(2048 + 900.0f * sinf(6.28318530717958648f * 7 * i / n));
+  }
+  prepareSpectrumInput(samples, n, re, im);
+  static float realOnly[512];
+  prepareSpectrumInputReal(samples, n, realOnly);
+  for (uint32_t i = 0; i < n; i++) {
+    TEST_ASSERT_EQUAL_FLOAT(re[i], realOnly[i]);
+  }
+}
+
 void test_thd_guards() {
   for (uint32_t i = 0; i < 64; i++) mag[i] = 0.0f;
   TEST_ASSERT_EQUAL_FLOAT(0.0f, thdPercent(mag, 64, 10)); // silent input
@@ -114,6 +145,8 @@ int main() {
   RUN_TEST(test_prepare_removes_dc_and_windows);
   RUN_TEST(test_full_chain_measures_known_thd);
   RUN_TEST(test_clean_sine_has_negligible_thd);
+  RUN_TEST(test_packed_magnitudes_match_complex_layout);
+  RUN_TEST(test_real_and_complex_prep_agree);
   RUN_TEST(test_thd_guards);
   return UNITY_END();
 }

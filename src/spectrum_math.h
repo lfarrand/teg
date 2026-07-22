@@ -73,6 +73,34 @@ inline void spectrumMagnitudes(const float *re, const float *im, float *mag, uin
   }
 }
 
+// Magnitudes from CMSIS arm_rfft_fast_f32 packed output: element 0 is the DC
+// real part, element 1 is the (real) Nyquist bin, then interleaved re/im
+// pairs for bins 1..n/2-1. Kept here (portable) so the unpacking is covered
+// by the native tests even though the CMSIS transform itself is ARM-only.
+inline void spectrumMagnitudesPacked(const float *packed, float *mag, uint32_t halfN) {
+  mag[0] = fabsf(packed[0]);
+  for (uint32_t k = 1; k < halfN; k++) {
+    const float re = packed[2 * k];
+    const float im = packed[2 * k + 1];
+    mag[k] = sqrtf(re * re + im * im);
+  }
+}
+
+// Windowed real input for the CMSIS path (same DC removal + Hann as
+// prepareSpectrumInput, without the imaginary array)
+inline void prepareSpectrumInputReal(const int16_t *samples, uint32_t n, float *out) {
+  float mean = 0.0f;
+  for (uint32_t i = 0; i < n; i++) {
+    mean += samples[i];
+  }
+  mean /= static_cast<float>(n);
+  const float w = 6.28318530717958648f / static_cast<float>(n);
+  for (uint32_t i = 0; i < n; i++) {
+    const float hann = 0.5f * (1.0f - cosf(w * static_cast<float>(i)));
+    out[i] = (static_cast<float>(samples[i]) - mean) * hann;
+  }
+}
+
 // Largest bin above the near-DC region (Hann smears DC across ~2 bins)
 inline uint32_t findFundamentalBin(const float *mag, uint32_t bins, uint32_t minBin = 3) {
   uint32_t best = minBin;

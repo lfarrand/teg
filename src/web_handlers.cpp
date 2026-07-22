@@ -4,6 +4,7 @@
 #include "pwm_utils.h"
 #include "capture.h"
 #include "spectrum_math.h"
+#include <arm_math.h>
 #include "thermal.h"
 #include "waveform.h"
 #include "waveform_parse.h"
@@ -232,6 +233,10 @@ DMAMEM static float fftRe[SpectrumMaxPoints];
 DMAMEM static float fftIm[SpectrumMaxPoints];
 DMAMEM static int16_t fftSamples[SpectrumMaxPoints];
 
+// CMSIS real-FFT instance, re-initialised when the point count changes
+static arm_rfft_fast_instance_f32 rfftInstance;
+static uint32_t rfftInstancePoints = 0;
+
 FLASHMEM void api_spectrum(Request &req, Response &res) {
   char qbuf[12];
   uint32_t points = SpectrumMaxPoints;
@@ -240,6 +245,12 @@ FLASHMEM void api_spectrum(Request &req, Response &res) {
   }
   if (points < 256 || points > SpectrumMaxPoints || (points & (points - 1)) != 0) {
     points = SpectrumMaxPoints;
+  }
+  // Engine: "portable" (the natively-tested radix-2, default) or "cmsis"
+  // (ARM's mixed-radix real FFT, ~5x faster)
+  bool useCmsis = false;
+  if (req.query("engine", qbuf, sizeof(qbuf))) {
+    useCmsis = strcmp(qbuf, "cmsis") == 0;
   }
 
   res.set("Content-Type", "application/json");
@@ -254,12 +265,32 @@ FLASHMEM void api_spectrum(Request &req, Response &res) {
     return;
   }
 
-  prepareSpectrumInput(fftSamples, points, fftRe, fftIm);
-  fftRadix2(fftRe, fftIm, points);
+  const uint32_t computeStart = ARM_DWT_CYCCNT;
   const uint32_t halfN = points / 2;
-  // In-place: mag[i] depends only on re[i]/im[i], so re[] can hold the result
-  float *mag = fftRe;
-  spectrumMagnitudes(fftRe, fftIm, mag, halfN);
+  float *mag;
+  if (useCmsis) {
+    if (rfftInstancePoints != points) {
+      if (arm_rfft_fast_init_f32(&rfftInstance, points) != ARM_MATH_SUCCESS) {
+        useCmsis = false; // unsupported length: fall back
+      } else {
+        rfftInstancePoints = points;
+      }
+    }
+  }
+  if (useCmsis) {
+    prepareSpectrumInputReal(fftSamples, points, fftRe);
+    arm_rfft_fast_f32(&rfftInstance, fftRe, fftIm, 0); // consumes fftRe
+    mag = fftRe;
+    spectrumMagnitudesPacked(fftIm, mag, halfN);
+  } else {
+    prepareSpectrumInput(fftSamples, points, fftRe, fftIm);
+    fftRadix2(fftRe, fftIm, points);
+    // In-place: mag[i] depends only on re[i]/im[i], so re[] can hold the result
+    mag = fftRe;
+    spectrumMagnitudes(fftRe, fftIm, mag, halfN);
+  }
+  doc["engine"] = useCmsis ? "cmsis" : "portable";
+  doc["computeMicros"] = (ARM_DWT_CYCCNT - computeStart) / (F_CPU_ACTUAL / 1000000);
 
   const uint32_t fundBin = findFundamentalBin(mag, halfN);
   const float fund = harmonicPeak(mag, halfN, fundBin);

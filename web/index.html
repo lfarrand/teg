@@ -161,6 +161,28 @@
       <span class="hint" id="cap-info"></span>
     </div>
     <canvas id="cap-canvas" height="220" style="width:100%;border:1px solid var(--pico-muted-border-color);border-radius:6px"></canvas>
+    <details style="margin-top:0.6rem">
+      <summary>Trigger &amp; raw download</summary>
+      <p class="hint">Arm a level trigger: capture keeps rolling, then freezes a set number of samples after the crossing &mdash; everything already in the ring becomes pre-trigger history. Release resumes rolling capture.</p>
+      <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
+        <select id="trig-source" style="width:auto;margin:0">
+          <option value="v">Voltage</option>
+          <option value="i">Current</option>
+        </select>
+        <select id="trig-edge" style="width:auto;margin:0">
+          <option value="rising">Rising</option>
+          <option value="falling">Falling</option>
+        </select>
+        <label style="margin:0">Level mV <input type="number" id="trig-level" value="1650" min="0" max="3300" style="width:6rem;margin:0"></label>
+        <label style="margin:0">Post samples <input type="number" id="trig-post" value="4096" min="0" max="1048576" style="width:8rem;margin:0"></label>
+        <button id="trig-arm" class="secondary outline" style="width:auto;margin:0">Arm</button>
+        <button id="trig-release" class="secondary outline" style="width:auto;margin:0">Release</button>
+        <span class="hint" id="trig-info">idle</span>
+      </div>
+      <p class="hint">Raw download: 20-byte <code>TEGC</code> header (version, channel, flags, sample rate, count, trigger offset) + little-endian uint16 samples. Freeze first (trigger or fault) for a consistent record.
+        <a href="/api/capture/raw?channel=v" download>voltage.tegc</a> &middot;
+        <a href="/api/capture/raw?channel=i" download>current.tegc</a></p>
+    </details>
   </article>
 
   <article>
@@ -441,6 +463,80 @@ async function refreshCapture() {
   }
 }
 $("#cap-refresh").addEventListener("click", refreshCapture);
+
+function showScopeState(s) {
+  const labels = {
+    idle: "idle",
+    armed: `armed (${s.source === "i" ? "I" : "V"} ${s.edge} @ ${s.levelMv} mV)`,
+    triggered: "triggered — filling post-trigger…",
+    complete: `complete — trigger ${s.postSamples} samples before end${s.frozen ? ", frozen" : ""}`,
+  };
+  $("#trig-info").textContent = labels[s.state] || s.state;
+}
+
+async function scopePost(path, body) {
+  let r = await fetch(path, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body || {}),
+  });
+  if (r.status === 401) {
+    const pin = prompt("Write PIN required:");
+    if (pin === null) return null;
+    sessionStorage.setItem("pin", pin);
+    r = await fetch(path, {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body || {}),
+    });
+  }
+  return r;
+}
+
+$("#trig-arm").addEventListener("click", async () => {
+  try {
+    const r = await scopePost("/api/scope/arm", {
+      source: $("#trig-source").value,
+      edge: $("#trig-edge").value,
+      levelMv: Number($("#trig-level").value),
+      postSamples: Number($("#trig-post").value),
+    });
+    if (!r) return;
+    if (r.status === 409) {
+      $("#trig-info").textContent = "channel not sampling (enable capture/meter and save)";
+      return;
+    }
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    showScopeState(await r.json());
+  } catch (e) {
+    $("#trig-info").textContent = "arm failed: " + e.message;
+  }
+});
+
+$("#trig-release").addEventListener("click", async () => {
+  try {
+    const r = await scopePost("/api/scope/release");
+    if (!r) return;
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    showScopeState(await r.json());
+  } catch (e) {
+    $("#trig-info").textContent = "release failed: " + e.message;
+  }
+});
+
+// Poll the trigger state while the details panel is open so an armed trigger
+// visibly flips to triggered/complete, then redraw the frozen record once
+let scopeWasComplete = false;
+setInterval(async () => {
+  const panel = $("#trig-info").closest("details");
+  if (!panel || !panel.open) return;
+  try {
+    const s = await (await fetch("/api/scope")).json();
+    showScopeState(s);
+    if (s.state === "complete" && !scopeWasComplete) refreshCapture();
+    scopeWasComplete = s.state === "complete";
+  } catch (e) { /* device busy */ }
+}, 2000);
 
 function drawWavePreview(pts) {
   // pts: array of {x: 0..1, y: -32767..32767}

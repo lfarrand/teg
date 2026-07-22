@@ -1,6 +1,7 @@
 #include "capture.h"
 #include "capture_math.h"
 #include "meter_math.h"
+#include "scope_math.h"
 #include "config_json.h"
 #include "pwm_utils.h" // vFaultTripped
 #include "utils.h"
@@ -37,8 +38,18 @@ static int32_t zeroI = 2048;
 static MeterBank meterBanks[2];
 static volatile uint8_t vMeterBank = 0;
 
+// Scope trigger: vScopeEnabled gates the ISR's access to the machine so the
+// web handler can reconfigure it without racing (worst case the ISR skips or
+// double-checks one sample either side of an arm - harmless)
+static ScopeMachine scopeM;
+static volatile bool vScopeEnabled = false;
+static volatile bool vScopeSourceCurrent = false;
+static volatile uint32_t vScopeTrigSample = 0;
+
 void captureConfigure() {
   vEnabled = false; // stop the ISR touching the module while we reconfigure
+  vScopeEnabled = false; // reconfigure invalidates an armed trigger
+  scopeDisarm(scopeM);
 
   if (!config.Capture.Enabled) {
     return;
@@ -117,6 +128,17 @@ FASTRUN void captureTick() {
     vHead = (h + 1) & (CaptureRingSamples - 1);
     vTotal = vTotal + 1;
 
+    if (vScopeEnabled && !vScopeSourceCurrent && scopeM.state != ScopeComplete) {
+      const uint8_t before = scopeM.state;
+      const bool freeze = scopeStep(scopeM, v);
+      if (before == ScopeArmed && scopeM.state != ScopeArmed) {
+        vScopeTrigSample = vTotal; // this sample's 1-based index
+      }
+      if (freeze) {
+        vFrozen = true;
+      }
+    }
+
     // Paired current sample: both conversions started in the same tick, so
     // both are ready together; accumulate zero-corrected V*I / V^2 / I^2
     if (vMeterEnabled && currentModule->isComplete()) {
@@ -132,6 +154,18 @@ FASTRUN void captureTick() {
       bank.sumVsq += static_cast<uint64_t>(static_cast<int64_t>(vs) * vs);
       bank.sumIsq += static_cast<uint64_t>(static_cast<int64_t>(is) * is);
       bank.n++;
+
+      if (vScopeEnabled && vScopeSourceCurrent && scopeM.state != ScopeComplete) {
+        const uint8_t before = scopeM.state;
+        const bool freeze = scopeStep(scopeM, iRaw);
+        if (before == ScopeArmed && scopeM.state != ScopeArmed) {
+          vScopeTrigSample = vTotal;
+        }
+        if (freeze) {
+          vFrozen = true;
+        }
+      }
+
       currentModule->startSingleRead(activeCurrentPin);
     }
 
@@ -223,4 +257,69 @@ MeterBank captureMeterTake(uint8_t bank) {
   const MeterBank out = meterBanks[bank];
   meterBanks[bank] = MeterBank{};
   return out;
+}
+
+bool captureScopeArm(bool currentSource, uint16_t levelCounts, bool fallingEdge,
+                     uint32_t postSamples) {
+  if (!vEnabled || (currentSource && !vMeterEnabled)) {
+    return false;
+  }
+  vScopeEnabled = false; // take the machine away from the ISR while we set up
+  vScopeSourceCurrent = currentSource;
+  vScopeTrigSample = 0;
+  scopeArm(scopeM, levelCounts, fallingEdge, postSamples);
+  vFrozen = false; // arming releases a previous scope/fault freeze
+  vScopeEnabled = true;
+  return true;
+}
+
+void captureScopeRelease() {
+  vScopeEnabled = false;
+  scopeDisarm(scopeM);
+  vFrozen = false; // resume rolling capture (a live fault re-freezes next tick)
+}
+
+uint8_t captureScopeState() {
+  return vScopeEnabled ? scopeM.state : static_cast<uint8_t>(ScopeIdle);
+}
+
+bool captureScopeSourceIsCurrent() {
+  return vScopeSourceCurrent;
+}
+
+uint16_t captureScopeLevelCounts() {
+  return scopeM.level;
+}
+
+bool captureScopeFalling() {
+  return scopeM.fallingEdge;
+}
+
+uint32_t captureScopePostSamples() {
+  return scopeM.postTotal;
+}
+
+uint32_t captureScopeTrigSample() {
+  return vScopeTrigSample;
+}
+
+uint32_t captureRawAvailable(bool currentChannel) {
+  if (currentChannel && !vMeterEnabled) {
+    return 0;
+  }
+  const uint32_t ring = currentChannel ? CurrentRingSamples : CaptureRingSamples;
+  return vTotal < ring ? vTotal : ring;
+}
+
+void captureRawCopy(bool currentChannel, uint32_t windowN, uint32_t offset,
+                    uint16_t *dst, uint32_t n) {
+  const uint16_t *ring = currentChannel ? currentRing : captureRing;
+  const uint32_t size = currentChannel ? CurrentRingSamples : CaptureRingSamples;
+  const uint32_t head = currentChannel ? vCurrentHead : vHead;
+  // Window start = head - windowN (mod size); copy [offset, offset+n) of it
+  uint32_t idx = (head + size - (windowN % size) + offset) & (size - 1);
+  for (uint32_t i = 0; i < n; i++) {
+    dst[i] = ring[idx];
+    idx = (idx + 1) & (size - 1);
+  }
 }

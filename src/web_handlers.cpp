@@ -4,6 +4,7 @@
 #include "pwm_utils.h"
 #include "capture.h"
 #include "meter.h"
+#include "scope_math.h"
 #include "spectrum_math.h"
 #include <arm_math.h>
 #include "thermal.h"
@@ -44,7 +45,11 @@ FLASHMEM void configureWebServer() {
   app.get("/api/config", &api_config_get);
   app.post("/api/config", &api_config_post);
   app.get("/api/status", &api_status);
+  app.get("/api/capture/raw", &api_capture_raw);
   app.get("/api/capture", &api_capture);
+  app.get("/api/scope", &api_scope_get);
+  app.post("/api/scope/arm", &api_scope_arm);
+  app.post("/api/scope/release", &api_scope_release);
   app.get("/api/waveform", &api_waveform_get);
   app.post("/api/waveform", &api_waveform_post);
   app.post("/api/fault/clear", &api_fault_clear);
@@ -348,6 +353,124 @@ void api_capture(Request &req, Response &res) {
   }
   res.set("Content-Type", "application/json");
   serializeJson(doc, res);
+}
+
+static const char *scopeStateName(uint8_t s) {
+  switch (s) {
+    case ScopeArmed: return "armed";
+    case ScopeTriggered: return "triggered";
+    case ScopeComplete: return "complete";
+    default: return "idle";
+  }
+}
+
+FLASHMEM void api_scope_get(Request &req, Response &res) {
+  JsonDocument doc;
+  doc["state"] = scopeStateName(captureScopeState());
+  doc["source"] = captureScopeSourceIsCurrent() ? "i" : "v";
+  doc["edge"] = captureScopeFalling() ? "falling" : "rising";
+  doc["levelMv"] = (static_cast<uint32_t>(captureScopeLevelCounts()) * 3300 + 2047) / 4095;
+  doc["postSamples"] = captureScopePostSamples();
+  doc["trigSample"] = captureScopeTrigSample();
+  doc["totalSamples"] = captureSampleCount();
+  doc["frozen"] = captureIsFrozen();
+  res.set("Content-Type", "application/json");
+  serializeJson(doc, res);
+}
+
+FLASHMEM void api_scope_arm(Request &req, Response &res) {
+  if (!writeAuthorized(req)) {
+    res.sendStatus(401);
+    return;
+  }
+  JsonDocument doc;
+  if (deserializeJson(doc, req)) {
+    res.sendStatus(400);
+    return;
+  }
+  const char *source = doc["source"] | "v";
+  const char *edge = doc["edge"] | "rising";
+  const uint32_t levelMv = doc["levelMv"] | 1650;
+  uint32_t postSamples = doc["postSamples"] | 4096;
+  if (postSamples > captureRingSamples()) {
+    postSamples = captureRingSamples();
+  }
+  if (!captureScopeArm(source[0] == 'i', scopeLevelCounts(levelMv), edge[0] == 'f', postSamples)) {
+    res.status(409);
+    res.set("Content-Type", "application/json");
+    res.print(F("{\"error\":\"channel not sampling (enable capture/meter and save)\"}"));
+    return;
+  }
+  api_scope_get(req, res);
+}
+
+FLASHMEM void api_scope_release(Request &req, Response &res) {
+  if (!writeAuthorized(req)) {
+    res.sendStatus(401);
+    return;
+  }
+  captureScopeRelease();
+  api_scope_get(req, res);
+}
+
+// Raw ring download: 20-byte TEGC header + little-endian uint16 samples.
+//   0  "TEGC"   4 magic
+//   4  u8       version (1)
+//   5  u8       channel (0 = voltage, 1 = current)
+//   6  u16 LE   flags: bit0 frozen, bit1 trigger offset valid
+//   8  u32 LE   sample rate Hz
+//   12 u32 LE   sample count
+//   16 u32 LE   trigger sample offset within the data (0xFFFFFFFF = none)
+// For a guaranteed-consistent record download while frozen (trigger or
+// fault); a rolling capture may overwrite the oldest samples mid-transfer.
+DMAMEM static uint16_t rawChunk[2048];
+
+void api_capture_raw(Request &req, Response &res) {
+  char qbuf[16];
+  bool currentChannel = false;
+  if (req.query("channel", qbuf, sizeof(qbuf))) {
+    currentChannel = qbuf[0] == 'i';
+  }
+  const uint32_t available = captureRawAvailable(currentChannel);
+  uint32_t count = available;
+  if (req.query("count", qbuf, sizeof(qbuf))) {
+    count = strtoul(qbuf, nullptr, 10);
+    if (count > available) {
+      count = available;
+    }
+  }
+  if (count == 0) {
+    res.sendStatus(404);
+    return;
+  }
+
+  const bool trigOnThisChannel = captureScopeState() == ScopeComplete &&
+                                 captureScopeSourceIsCurrent() == currentChannel;
+  const uint32_t trigOffset = scopeTrigOffset(trigOnThisChannel, captureScopePostSamples(), count);
+
+  uint8_t hdr[20];
+  memcpy(hdr, "TEGC", 4);
+  hdr[4] = 1;
+  hdr[5] = currentChannel ? 1 : 0;
+  const uint16_t flags = (captureIsFrozen() ? 1 : 0) | (trigOffset != 0xFFFFFFFFu ? 2 : 0);
+  memcpy(hdr + 6, &flags, 2);
+  const uint32_t rate = config.Pwm.Tm2.SpwmCarrierFrequency;
+  memcpy(hdr + 8, &rate, 4);
+  memcpy(hdr + 12, &count, 4);
+  memcpy(hdr + 16, &trigOffset, 4);
+
+  res.set("Content-Type", "application/octet-stream");
+  res.set("Content-Disposition", currentChannel ? "attachment; filename=\"capture_i.tegc\""
+                                                : "attachment; filename=\"capture_v.tegc\"");
+  res.write(hdr, sizeof(hdr));
+
+  constexpr uint32_t ChunkSamples = sizeof(rawChunk) / sizeof(rawChunk[0]);
+  for (uint32_t offset = 0; offset < count; offset += ChunkSamples) {
+    const uint32_t n = count - offset < ChunkSamples ? count - offset : ChunkSamples;
+    captureRawCopy(currentChannel, count, offset, rawChunk, n);
+    res.write(reinterpret_cast<uint8_t *>(rawChunk), n * 2);
+    kickWatchdog(); // a full 2MB ring takes seconds to stream
+  }
 }
 
 FLASHMEM void api_fault_clear(Request &req, Response &res) {

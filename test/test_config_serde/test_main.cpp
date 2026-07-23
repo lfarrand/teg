@@ -56,6 +56,13 @@ void test_defaults_from_empty_document() {
   TEST_ASSERT_FALSE(cfg.CurrentLimit.CycleByCycle);
   TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterCount);
   TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterPeriod);
+  TEST_ASSERT_FALSE(cfg.Mqtt.Enabled);
+  TEST_ASSERT_EQUAL_STRING("", cfg.Mqtt.Host);
+  TEST_ASSERT_EQUAL_UINT16(1883, cfg.Mqtt.Port);
+  TEST_ASSERT_EQUAL_STRING("teg", cfg.Mqtt.BaseTopic);
+  TEST_ASSERT_EQUAL_STRING("homeassistant", cfg.Mqtt.DiscoveryPrefix);
+  TEST_ASSERT_TRUE(cfg.Mqtt.DiscoveryEnabled);
+  TEST_ASSERT_EQUAL_UINT16(10, cfg.Mqtt.IntervalSeconds);
   TEST_ASSERT_FALSE(cfg.Mppt.Enabled);
   TEST_ASSERT_EQUAL_UINT16(3000, cfg.Mppt.IntervalMs);
   TEST_ASSERT_EQUAL_UINT16(20, cfg.Mppt.StepMilli);
@@ -129,6 +136,15 @@ void test_roundtrip_preserves_every_field() {
   cfg.CurrentLimit.CycleByCycle = true;
   cfg.CurrentLimit.FilterCount = 7;
   cfg.CurrentLimit.FilterPeriod = 99;
+  cfg.Mqtt.Enabled = true;
+  copyConfigString(cfg.Mqtt.Host, sizeof(cfg.Mqtt.Host), "broker.lan");
+  cfg.Mqtt.Port = 8883;
+  copyConfigString(cfg.Mqtt.Username, sizeof(cfg.Mqtt.Username), "teguser");
+  copyConfigString(cfg.Mqtt.Password, sizeof(cfg.Mqtt.Password), "tegpass");
+  copyConfigString(cfg.Mqtt.BaseTopic, sizeof(cfg.Mqtt.BaseTopic), "power/teg");
+  copyConfigString(cfg.Mqtt.DiscoveryPrefix, sizeof(cfg.Mqtt.DiscoveryPrefix), "ha");
+  cfg.Mqtt.DiscoveryEnabled = false;
+  cfg.Mqtt.IntervalSeconds = 30;
   cfg.Mppt.Enabled = true;
   cfg.Mppt.IntervalMs = 5000;
   cfg.Mppt.StepMilli = 30;
@@ -214,13 +230,17 @@ void test_redact_secrets_blanks_only_the_secrets() {
   MainConfig cfg;
   copyConfigString(cfg.Influx.Token, sizeof(cfg.Influx.Token), "super-secret==");
   copyConfigString(cfg.Security.WritePin, sizeof(cfg.Security.WritePin), "1234");
+  copyConfigString(cfg.Mqtt.Password, sizeof(cfg.Mqtt.Password), "mqtt-pass");
+  copyConfigString(cfg.Mqtt.Username, sizeof(cfg.Mqtt.Username), "mqtt-user");
   JsonDocument doc;
   configToJson(cfg, doc);
   redactSecrets(doc);
 
   TEST_ASSERT_EQUAL_STRING("", doc["Config"]["Influx"]["Token"] | "x");
   TEST_ASSERT_EQUAL_STRING("", doc["Config"]["Security"]["WritePin"] | "x");
+  TEST_ASSERT_EQUAL_STRING("", doc["Config"]["Mqtt"]["Password"] | "x");
   TEST_ASSERT_EQUAL_STRING("ub-1.lan", doc["Config"]["Influx"]["Host"] | ""); // untouched
+  TEST_ASSERT_EQUAL_STRING("mqtt-user", doc["Config"]["Mqtt"]["Username"] | ""); // not a secret
 }
 
 void test_preserve_secrets_keeps_stored_values_on_empty_post() {
@@ -241,6 +261,13 @@ void test_preserve_secrets_keeps_stored_values_on_empty_post() {
   preserveSecrets(updated, previous);
   TEST_ASSERT_EQUAL_STRING("new-token", updated.Influx.Token);
   TEST_ASSERT_EQUAL_STRING("0000", updated.Security.WritePin);
+
+  // Same contract for the MQTT password
+  MainConfig prevMqtt;
+  copyConfigString(prevMqtt.Mqtt.Password, sizeof(prevMqtt.Mqtt.Password), "stored-pass");
+  MainConfig inMqtt;
+  preserveSecrets(inMqtt, prevMqtt);
+  TEST_ASSERT_EQUAL_STRING("stored-pass", inMqtt.Mqtt.Password);
 }
 
 void test_validate_clamps_out_of_range_frequency() {

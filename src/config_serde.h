@@ -127,6 +127,18 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   copyConfigString(config.Influx.Token, sizeof(config.Influx.Token), Config_Influx["Token"] | "");
   config.Influx.IntervalSeconds = Config_Influx["IntervalSeconds"] | 10;
 
+  JsonObjectConst Config_Mqtt = doc["Config"]["Mqtt"];
+  config.Mqtt.Enabled = Config_Mqtt["Enabled"] | false;
+  copyConfigString(config.Mqtt.Host, sizeof(config.Mqtt.Host), Config_Mqtt["Host"] | "");
+  config.Mqtt.Port = Config_Mqtt["Port"] | 1883;
+  copyConfigString(config.Mqtt.Username, sizeof(config.Mqtt.Username), Config_Mqtt["Username"] | "");
+  copyConfigString(config.Mqtt.Password, sizeof(config.Mqtt.Password), Config_Mqtt["Password"] | "");
+  copyConfigString(config.Mqtt.BaseTopic, sizeof(config.Mqtt.BaseTopic), Config_Mqtt["BaseTopic"] | "teg");
+  copyConfigString(config.Mqtt.DiscoveryPrefix, sizeof(config.Mqtt.DiscoveryPrefix),
+                   Config_Mqtt["DiscoveryPrefix"] | "homeassistant");
+  config.Mqtt.DiscoveryEnabled = Config_Mqtt["DiscoveryEnabled"] | true;
+  config.Mqtt.IntervalSeconds = Config_Mqtt["IntervalSeconds"] | 10;
+
   copyConfigString(config.Security.WritePin, sizeof(config.Security.WritePin),
                    doc["Config"]["Security"]["WritePin"] | "");
 
@@ -170,6 +182,7 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
 inline void redactSecrets(JsonDocument &doc) {
   doc["Config"]["Influx"]["Token"] = "";
   doc["Config"]["Security"]["WritePin"] = "";
+  doc["Config"]["Mqtt"]["Password"] = "";
 }
 
 // An empty secret in an incoming document means "keep the current value" —
@@ -181,6 +194,9 @@ inline void preserveSecrets(MainConfig &config, const MainConfig &previous) {
   }
   if (config.Security.WritePin[0] == '\0') {
     copyConfigString(config.Security.WritePin, sizeof(config.Security.WritePin), previous.Security.WritePin);
+  }
+  if (config.Mqtt.Password[0] == '\0') {
+    copyConfigString(config.Mqtt.Password, sizeof(config.Mqtt.Password), previous.Mqtt.Password);
   }
 }
 
@@ -293,6 +309,25 @@ inline bool validateConfig(MainConfig &config) {
   // feature wins, matching the PLL-vs-Feedback precedent
   if (config.Mppt.Enabled && config.Feedback.Enabled) {
     config.Mppt.Enabled = false;
+    corrected = true;
+  }
+  if (config.Mqtt.Port == 0) {
+    config.Mqtt.Port = 1883;
+    corrected = true;
+  }
+  if (config.Mqtt.IntervalSeconds == 0 || config.Mqtt.IntervalSeconds > 3600) {
+    // 0 would connect, discover and report online while every sensor sits
+    // at 'unknown' forever
+    config.Mqtt.IntervalSeconds = 10;
+    corrected = true;
+  }
+  if (config.Mqtt.BaseTopic[0] == '\0') {
+    copyConfigString(config.Mqtt.BaseTopic, sizeof(config.Mqtt.BaseTopic), "teg");
+    corrected = true;
+  }
+  if (config.Mqtt.DiscoveryPrefix[0] == '\0') {
+    copyConfigString(config.Mqtt.DiscoveryPrefix, sizeof(config.Mqtt.DiscoveryPrefix),
+                     "homeassistant");
     corrected = true;
   }
   return corrected;
@@ -439,6 +474,17 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Influx["Bucket"] = config.Influx.Bucket;
   Config_Influx["Token"] = config.Influx.Token;
   Config_Influx["IntervalSeconds"] = config.Influx.IntervalSeconds;
+
+  JsonObject Config_Mqtt = doc["Config"]["Mqtt"].to<JsonObject>();
+  Config_Mqtt["Enabled"] = config.Mqtt.Enabled;
+  Config_Mqtt["Host"] = config.Mqtt.Host;
+  Config_Mqtt["Port"] = config.Mqtt.Port;
+  Config_Mqtt["Username"] = config.Mqtt.Username;
+  Config_Mqtt["Password"] = config.Mqtt.Password;
+  Config_Mqtt["BaseTopic"] = config.Mqtt.BaseTopic;
+  Config_Mqtt["DiscoveryPrefix"] = config.Mqtt.DiscoveryPrefix;
+  Config_Mqtt["DiscoveryEnabled"] = config.Mqtt.DiscoveryEnabled;
+  Config_Mqtt["IntervalSeconds"] = config.Mqtt.IntervalSeconds;
 
   doc["Config"]["Security"].to<JsonObject>()["WritePin"] = config.Security.WritePin;
 

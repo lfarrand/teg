@@ -21,6 +21,7 @@
 #include "acmp.h"
 #include "pll.h"
 #include "mppt.h"
+#include "mqtt.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -297,6 +298,8 @@ void loop() {
   acmpTask();
 
   metricsTask();
+
+  mqttTask();
 
   static bool faultReported = false;
   if (vFaultTripped && !faultReported) {

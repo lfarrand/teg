@@ -7,6 +7,7 @@
 #include "acmp.h"
 #include "pll.h"
 #include "mppt.h"
+#include "mqtt.h"
 #include "scope_math.h"
 #include "spectrum_math.h"
 #include <arm_math.h>
@@ -524,6 +525,8 @@ void api_status(Request &req, Response &res) {
   doc["captureActive"] = captureActive();
   doc["captureFrozen"] = captureIsFrozen();
   doc["captureSamples"] = captureSampleCount();
+  doc["mqttConnected"] = mqttConnected();
+  doc["mqttPublishFailures"] = mqttPublishFailures();
   doc["mpptEnabled"] = config.Mppt.Enabled;
   if (config.Mppt.Enabled) {
     doc["mpptActive"] = mpptActive();

@@ -6,6 +6,7 @@
 #include "acmp.h"
 #include "pll.h"
 #include "mppt.h"
+#include "mqtt.h"
 #include "thermal.h"
 #include "waveform.h"
 #include "waveform_parse.h"
@@ -227,6 +228,9 @@ void applyPwmConfig(const MainConfig &previous) {
     // Reseed from the (freshly applied) index target - a Tm2 change rewrote
     // it via buildSpwmLut, and stale P&O state would yank the output back
     mpptConfigure();
+  }
+  if (memcmp(&previous.Mqtt, &config.Mqtt, sizeof(config.Mqtt)) != 0) {
+    mqttConfigure(); // reconnect with the new broker settings
   }
   // A refused clear leaves the trip latched, but the reconfigures above may
   // have re-enabled timers: re-assert the trip's masking so the applied

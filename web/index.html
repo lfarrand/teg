@@ -252,6 +252,23 @@
   </article>
 
   <article>
+    <header>MQTT / Home Assistant</header>
+    <p class="hint">Telemetry with Home Assistant auto-discovery: sensors appear under one &ldquo;TEG Inverter&rdquo; device (power, energy for the HA dashboard, temperatures, fault alert&hellip;). Read-only &mdash; no command topics.</p>
+    <label><input type="checkbox" role="switch" data-path="Mqtt.Enabled"> Enabled</label>
+    <div class="grid-fields">
+      <label>Broker host <input type="text" data-str data-path="Mqtt.Host" maxlength="39"></label>
+      <label>Port <input type="number" data-path="Mqtt.Port" min="1" max="65535"></label>
+      <label>Interval s <input type="number" data-path="Mqtt.IntervalSeconds" min="1" max="3600"></label>
+      <label>Username <input type="text" data-str data-path="Mqtt.Username" maxlength="31"></label>
+      <label>Password <input type="password" data-str data-path="Mqtt.Password" maxlength="63" autocomplete="off"></label>
+      <label>Base topic <input type="text" data-str data-path="Mqtt.BaseTopic" maxlength="23"></label>
+      <label>Discovery prefix <input type="text" data-str data-path="Mqtt.DiscoveryPrefix" maxlength="15"></label>
+    </div>
+    <label><input type="checkbox" role="switch" data-path="Mqtt.DiscoveryEnabled"> Publish Home Assistant discovery configs</label>
+    <p class="hint">Secrets read back blank &mdash; leave blank on save to keep the stored value. <span id="mqtt-status"></span></p>
+  </article>
+
+  <article>
     <header>InfluxDB Metrics</header>
     <p class="hint">Metrics are disabled until a token is set. The token is stored only in the device config, never in firmware source.</p>
     <div class="grid-fields">
@@ -472,6 +489,8 @@ async function pollStatus() {
     $("#st-derate").textContent = s.derateMilli < 1000 ? (s.derateMilli / 10).toFixed(0) + "%" : "none";
     $("#st-derate").style.color = s.derateMilli < 1000 ? "#c62828" : "";
     $("#fault-banner").style.display = s.fault ? "block" : "none";
+    $("#mqtt-status").textContent =
+      s.mqttConnected ? "· connected" : (s.mqttPublishFailures ? `· ${s.mqttPublishFailures} publish failures` : "");
     $("#mppt-status").textContent = s.mpptEnabled
       ? (s.mpptActive
           ? `tracking · index ${(s.mpptIndexMilli / 1000).toFixed(3)} ${s.mpptDir > 0 ? "▲" : "▼"} step ${s.mpptStepMilli} · ΔP ${s.mpptDeltaMw} mW`

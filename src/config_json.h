@@ -115,6 +115,21 @@ struct SecurityConfig {
   char WritePin[16] = "";
 };
 
+// MQTT telemetry with Home Assistant discovery. Read-only in v1 (no command
+// topics). Password is a secret: redacted from GET, empty POST keeps the
+// stored value - same contract as the Influx token.
+struct MqttConfig {
+  bool Enabled = false;
+  char Host[40] = "";
+  uint16_t Port = 1883;
+  char Username[32] = "";
+  char Password[64] = ""; // HA/Mosquitto setups commonly use long passwords
+  char BaseTopic[24] = "teg";
+  char DiscoveryPrefix[16] = "homeassistant";
+  bool DiscoveryEnabled = true;
+  uint16_t IntervalSeconds = 10;
+};
+
 // PWM-synchronous waveform capture of the feedback pin into PSRAM (one sample
 // per carrier cycle at the reload point). Freezes on fault trip.
 struct CaptureConfig {
@@ -196,6 +211,7 @@ struct MainConfig {
   FaultProtectionConfig FaultProtection;
   CurrentLimitConfig CurrentLimit;
   InfluxConfig Influx;
+  MqttConfig Mqtt;
   SecurityConfig Security;
   CaptureConfig Capture;
   MeterConfig Meter;

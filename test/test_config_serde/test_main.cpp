@@ -270,6 +270,52 @@ void test_preserve_secrets_keeps_stored_values_on_empty_post() {
   TEST_ASSERT_EQUAL_STRING("stored-pass", inMqtt.Mqtt.Password);
 }
 
+void test_restore_secrets_is_unconditional() {
+  // preserveSecrets keeps stored values only when the incoming field is
+  // blank - right for the UI round-trip, wrong for a file the operator did
+  // not author. restoreSecrets must overwrite even a populated credential,
+  // so an imported file can never change the write PIN or pair the device's
+  // real password with someone else's broker.
+  MainConfig previous;
+  copyConfigString(previous.Influx.Token, sizeof(previous.Influx.Token), "device-token");
+  copyConfigString(previous.Security.WritePin, sizeof(previous.Security.WritePin), "1234");
+  copyConfigString(previous.Mqtt.Password, sizeof(previous.Mqtt.Password), "device-pass");
+
+  MainConfig incoming;
+  copyConfigString(incoming.Influx.Token, sizeof(incoming.Influx.Token), "attacker-token");
+  copyConfigString(incoming.Security.WritePin, sizeof(incoming.Security.WritePin), "9999");
+  copyConfigString(incoming.Mqtt.Password, sizeof(incoming.Mqtt.Password), "attacker-pass");
+
+  restoreSecrets(incoming, previous);
+  TEST_ASSERT_EQUAL_STRING("device-token", incoming.Influx.Token);
+  TEST_ASSERT_EQUAL_STRING("1234", incoming.Security.WritePin);
+  TEST_ASSERT_EQUAL_STRING("device-pass", incoming.Mqtt.Password);
+}
+
+void test_doc_completeness_gate() {
+  // Absent sections default to compiled values, which would disarm fault
+  // protection, the current limit and thermal derating
+  MainConfig cfg;
+  JsonDocument full;
+  configToJson(cfg, full);
+  TEST_ASSERT_TRUE(configDocComplete(full));
+
+  JsonDocument empty;
+  TEST_ASSERT_FALSE(configDocComplete(empty));
+
+  JsonDocument noConfig;
+  noConfig["something"] = 1;
+  TEST_ASSERT_FALSE(configDocComplete(noConfig));
+
+  const char *sections[] = {"Pwm", "FaultProtection", "CurrentLimit", "Thermal"};
+  for (unsigned i = 0; i < sizeof(sections) / sizeof(sections[0]); i++) {
+    JsonDocument partial;
+    configToJson(cfg, partial);
+    partial["Config"].as<JsonObject>().remove(sections[i]);
+    TEST_ASSERT_FALSE(configDocComplete(partial));
+  }
+}
+
 void test_validate_clamps_out_of_range_frequency() {
   MainConfig cfg;
   cfg.Pwm.Tm1.Sm13.PwmFrequency = 0;
@@ -429,6 +475,8 @@ int main() {
   RUN_TEST(test_partial_document_keeps_defaults_elsewhere);
   RUN_TEST(test_redact_secrets_blanks_only_the_secrets);
   RUN_TEST(test_preserve_secrets_keeps_stored_values_on_empty_post);
+  RUN_TEST(test_restore_secrets_is_unconditional);
+  RUN_TEST(test_doc_completeness_gate);
   RUN_TEST(test_validate_clamps_out_of_range_frequency);
   RUN_TEST(test_validate_current_limit);
   RUN_TEST(test_validate_pll);

@@ -9,6 +9,8 @@
 #include "mppt.h"
 #include "mqtt.h"
 #include "ota.h"
+#include "presets.h"
+#include "preset_name.h"
 #include "scope_math.h"
 #include "spectrum_math.h"
 #include <arm_math.h>
@@ -60,6 +62,12 @@ FLASHMEM void configureWebServer() {
   app.post("/api/fault/clear", &api_fault_clear);
   app.get("/api/crash", &api_crash);
   app.get("/api/spectrum", &api_spectrum);
+  app.get("/api/config/export", &api_config_export);
+  app.post("/api/config/import", &api_config_import);
+  app.get("/api/presets", &api_presets_get);
+  app.post("/api/presets/save", &api_presets_save);
+  app.post("/api/presets/load", &api_presets_load);
+  app.post("/api/presets/delete", &api_presets_delete);
   app.post("/api/ota/commit", &api_ota_commit);
   app.post("/api/ota/abort", &api_ota_abort);
   app.get("/api/ota", &api_ota_get);
@@ -372,6 +380,128 @@ void api_capture(Request &req, Response &res) {
   }
   res.set("Content-Type", "application/json");
   serializeJson(doc, res);
+}
+
+// Download the running configuration as a file. Secrets are redacted, so
+// the export is safe to store or share; importing it back keeps whatever
+// credentials are currently on the device.
+FLASHMEM void api_config_export(Request &req, Response &res) {
+  JsonDocument doc;
+  configToJson(config, doc);
+  redactSecrets(doc);
+  doc["ExportedBy"] = TEG_GIT_HASH; // which firmware wrote this file
+  res.set("Content-Type", "application/json");
+  res.set("Content-Disposition", "attachment; filename=\"teg-config.json\"");
+  serializeJson(doc, res);
+}
+
+FLASHMEM void api_presets_get(Request &req, Response &res) {
+  JsonDocument doc;
+  const bool ok = presetList(doc);
+  doc["available"] = ok;
+  res.set("Content-Type", "application/json");
+  serializeJson(doc, res);
+}
+
+// Body {"name": "..."} for all three mutating preset endpoints
+static bool presetNameFromBody(Request &req, Response &res, char *out, size_t size) {
+  JsonDocument doc;
+  if (deserializeJson(doc, req)) {
+    res.sendStatus(400);
+    return false;
+  }
+  const char *name = doc["name"] | "";
+  if (!presetNameValid(name)) {
+    res.status(400);
+    res.set("Content-Type", "application/json");
+    res.print(F("{\"error\":\"invalid preset name\"}"));
+    return false;
+  }
+  snprintf(out, size, "%s", name);
+  return true;
+}
+
+static void presetResult(Response &res, bool ok, const char *err) {
+  res.status(ok ? 200 : 400);
+  res.set("Content-Type", "application/json");
+  JsonDocument out;
+  out["ok"] = ok;
+  out["error"] = ok ? "" : err;
+  serializeJson(out, res);
+}
+
+FLASHMEM void api_presets_save(Request &req, Response &res) {
+  if (!writeAuthorized(req)) {
+    res.sendStatus(401);
+    return;
+  }
+  if (otaInProgress()) {
+    res.sendStatus(409);
+    return;
+  }
+  char name[PresetNameMax + 1];
+  if (!presetNameFromBody(req, res, name, sizeof(name))) {
+    return;
+  }
+  const char *err = "";
+  presetResult(res, presetSave(name, &err), err);
+}
+
+FLASHMEM void api_presets_load(Request &req, Response &res) {
+  if (!writeAuthorized(req)) {
+    res.sendStatus(401);
+    return;
+  }
+  if (otaInProgress()) {
+    res.sendStatus(409); // loading a preset reapplies PWM settings
+    return;
+  }
+  char name[PresetNameMax + 1];
+  if (!presetNameFromBody(req, res, name, sizeof(name))) {
+    return;
+  }
+  const char *err = "";
+  presetResult(res, presetLoad(name, &err), err);
+}
+
+// Import a settings file. Deliberately NOT the plain config POST: an
+// imported file is not operator-authored, so secrets are always taken from
+// the device and an incomplete document is rejected instead of defaulting
+// safety sections off.
+FLASHMEM void api_config_import(Request &req, Response &res) {
+  if (!writeAuthorized(req)) {
+    res.sendStatus(401);
+    return;
+  }
+  if (otaInProgress()) {
+    res.sendStatus(409);
+    return;
+  }
+  JsonDocument doc;
+  if (deserializeJson(doc, req)) {
+    res.sendStatus(400);
+    return;
+  }
+  const char *err = "";
+  const bool ok = configApplyDocument(doc, &err);
+  presetResult(res, ok, err);
+}
+
+FLASHMEM void api_presets_delete(Request &req, Response &res) {
+  if (!writeAuthorized(req)) {
+    res.sendStatus(401);
+    return;
+  }
+  if (otaInProgress()) {
+    res.sendStatus(409); // uniform with the other mutating preset endpoints
+    return;
+  }
+  char name[PresetNameMax + 1];
+  if (!presetNameFromBody(req, res, name, sizeof(name))) {
+    return;
+  }
+  const char *err = "";
+  presetResult(res, presetDelete(name, &err), err);
 }
 
 FLASHMEM void api_ota_get(Request &req, Response &res) {

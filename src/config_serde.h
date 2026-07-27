@@ -200,6 +200,32 @@ inline void preserveSecrets(MainConfig &config, const MainConfig &previous) {
   }
 }
 
+// UNCONDITIONAL secret restore, for documents the operator did not author
+// (presets, imported files). preserveSecrets only fills in EMPTY fields, so
+// a file carrying a real credential would replace the live one - locking
+// the operator out via a changed write PIN, or pairing a stolen broker host
+// with the device's genuine password. Config applied from such a file must
+// never be able to set a secret; only an explicit UI edit can.
+inline void restoreSecrets(MainConfig &config, const MainConfig &previous) {
+  copyConfigString(config.Influx.Token, sizeof(config.Influx.Token), previous.Influx.Token);
+  copyConfigString(config.Security.WritePin, sizeof(config.Security.WritePin),
+                   previous.Security.WritePin);
+  copyConfigString(config.Mqtt.Password, sizeof(config.Mqtt.Password), previous.Mqtt.Password);
+}
+
+// A whole-config document must carry every safety-relevant section: absent
+// keys fall back to compiled defaults, so a truncated or older-firmware
+// file would silently disarm fault protection, the hardware current limit
+// and thermal derating rather than leaving them as configured.
+inline bool configDocComplete(const JsonDocument &doc) {
+  JsonObjectConst c = doc["Config"];
+  if (c.isNull()) {
+    return false;
+  }
+  return !c["Pwm"].isNull() && !c["FaultProtection"].isNull() &&
+         !c["CurrentLimit"].isNull() && !c["Thermal"].isNull();
+}
+
 // Clamps out-of-range values; returns true if anything was corrected.
 inline bool validateConfig(MainConfig &config) {
   bool corrected = false;

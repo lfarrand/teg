@@ -252,6 +252,26 @@
   </article>
 
   <article>
+    <header>Presets &amp; Backup</header>
+    <p class="hint">Save the current settings under a name and switch between them later. Presets and exports omit credentials (InfluxDB token, MQTT password, write PIN), and loading or importing never changes them &mdash; the device always keeps its own. Note the files <em>do</em> contain host names, topics and usernames, so treat them as configuration, not as public data.</p>
+    <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
+      <select id="preset-list" style="width:auto;margin:0;min-width:12rem"></select>
+      <button id="preset-load" class="secondary outline" style="width:auto;margin:0">Load</button>
+      <button id="preset-delete" class="secondary outline" style="width:auto;margin:0">Delete</button>
+    </div>
+    <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
+      <input type="text" id="preset-name" placeholder="New preset name" maxlength="32" style="width:auto;margin:0">
+      <button id="preset-save" class="secondary outline" style="width:auto;margin:0">Save current</button>
+    </div>
+    <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap">
+      <a href="/api/config/export" download="teg-config.json" role="button" class="secondary outline" style="width:auto;margin:0">Export settings</a>
+      <input type="file" id="cfg-import-file" accept=".json" style="margin:0;width:auto">
+      <button id="cfg-import" class="secondary outline" style="width:auto;margin:0">Import</button>
+    </div>
+    <span class="hint" id="preset-info"></span>
+  </article>
+
+  <article>
     <header>Firmware Update (OTA)</header>
     <p class="hint"><strong>Starting an upload disables the inverter outputs until reboot.</strong> Upload the PlatformIO <code>.hex</code> build; it stages into upper flash and is structurally verified (Teensy 4.1 boot headers, board marker, density) before the Commit button becomes available. Commit rewrites the firmware and reboots &mdash; do not remove power during the ~10&thinsp;s flash write. Abort invalidates the staged image and reboots into the current firmware.</p>
     <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
@@ -584,6 +604,114 @@ async function scopePost(path, body) {
   }
   return r;
 }
+
+async function refreshPresets() {
+  try {
+    const d = await (await fetch("/api/presets")).json();
+    const sel = $("#preset-list");
+    const prev = sel.value;
+    sel.innerHTML = "";
+    (d.presets || []).forEach((n) => {
+      const o = document.createElement("option");
+      o.value = n;
+      o.textContent = n;
+      sel.appendChild(o);
+    });
+    if (prev) sel.value = prev;
+    if (!d.available) $("#preset-info").textContent = "no SD card — presets unavailable";
+    else if (!(d.presets || []).length) $("#preset-info").textContent = "no presets saved yet";
+  } catch (e) { /* device busy */ }
+}
+
+async function presetPost(path, name) {
+  const body = JSON.stringify({ name });
+  let r = await fetch(path, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body,
+  });
+  if (r.status === 401) {
+    const pin = prompt("Write PIN required:");
+    if (pin === null) return null;
+    sessionStorage.setItem("pin", pin);
+    r = await fetch(path, {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body,
+    });
+  }
+  return r;
+}
+
+$("#preset-save").addEventListener("click", async () => {
+  const name = $("#preset-name").value.trim();
+  if (!name) { $("#preset-info").textContent = "enter a preset name"; return; }
+  const r = await presetPost("/api/presets/save", name);
+  if (!r) return;
+  const out = await r.json().catch(() => ({}));
+  $("#preset-info").textContent = r.ok ? `saved “${name}”` : `save failed: ${out.error || r.status}`;
+  if (r.ok) { $("#preset-name").value = ""; refreshPresets(); }
+});
+
+$("#preset-load").addEventListener("click", async () => {
+  const name = $("#preset-list").value;
+  if (!name) return;
+  if (!confirm(`Load preset “${name}”? This replaces the current settings and applies them immediately.`)) return;
+  const r = await presetPost("/api/presets/load", name);
+  if (!r) return;
+  const out = await r.json().catch(() => ({}));
+  if (r.ok) { $("#preset-info").textContent = `loaded “${name}”`; load(); }
+  else $("#preset-info").textContent = `load failed: ${out.error || r.status}`;
+});
+
+$("#preset-delete").addEventListener("click", async () => {
+  const name = $("#preset-list").value;
+  if (!name) return;
+  if (!confirm(`Delete preset “${name}”?`)) return;
+  const r = await presetPost("/api/presets/delete", name);
+  if (!r) return;
+  const out = await r.json().catch(() => ({}));
+  $("#preset-info").textContent = r.ok ? `deleted “${name}”` : `delete failed: ${out.error || r.status}`;
+  if (r.ok) $("#preset-list").value = ""; // don't restore the deleted name
+  refreshPresets();
+});
+
+$("#cfg-import").addEventListener("click", async () => {
+  const f = $("#cfg-import-file").files[0];
+  if (!f) { $("#preset-info").textContent = "choose an exported .json file first"; return; }
+  if (!confirm("Import settings from this file and apply them immediately?")) return;
+  try {
+    const text = await f.text();
+    const parsed = JSON.parse(text); // fail before touching the device
+    if (!parsed.Config) throw new Error("not a TEG settings export");
+    // Dedicated import endpoint: the device enforces secret preservation and
+    // rejects incomplete documents rather than defaulting safety sections off
+    let r = await fetch("/api/config/import", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: text,
+    });
+    if (r.status === 401) {
+      const pin = prompt("Write PIN required:");
+      if (pin === null) return;
+      sessionStorage.setItem("pin", pin);
+      r = await fetch("/api/config/import", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: text,
+      });
+    }
+    const out = await r.json().catch(() => ({}));
+    $("#preset-info").textContent = r.ok
+      ? "imported and applied"
+      : `import failed: ${out.error || "HTTP " + r.status}`;
+    if (r.ok) load();
+  } catch (e) {
+    $("#preset-info").textContent = "import failed: " + e.message;
+  }
+});
+
+refreshPresets();
 
 let otaSize = 0;
 $("#ota-upload").addEventListener("click", async () => {

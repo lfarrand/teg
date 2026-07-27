@@ -22,6 +22,7 @@
 #include "pll.h"
 #include "mppt.h"
 #include "mqtt.h"
+#include "ota.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -283,23 +284,30 @@ void loop() {
 
   networkHousekeeping();
 
-  runFeedbackLoop();
+  // During an OTA the outputs are masked and flash contents are in flux:
+  // idle every control/telemetry task in one place (they would only publish
+  // garbage); the web server stays up for the commit/abort endpoints
+  if (!otaInProgress()) {
+    runFeedbackLoop();
 
-  pllTask();
+    pllTask();
 
-  thermalTask();
+    thermalTask();
 
-  waveformStreamTask();
+    waveformStreamTask();
 
-  meterTask();
+    meterTask();
 
-  mpptTask();
+    mpptTask();
 
-  acmpTask();
+    acmpTask();
 
-  metricsTask();
+    metricsTask();
 
-  mqttTask();
+    mqttTask();
+  }
+
+  otaLoopTask(); // deferred commit/abort, after the HTTP response flushed
 
   static bool faultReported = false;
   if (vFaultTripped && !faultReported) {

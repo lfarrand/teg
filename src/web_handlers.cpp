@@ -8,6 +8,7 @@
 #include "pll.h"
 #include "mppt.h"
 #include "mqtt.h"
+#include "ota.h"
 #include "scope_math.h"
 #include "spectrum_math.h"
 #include <arm_math.h>
@@ -59,6 +60,10 @@ FLASHMEM void configureWebServer() {
   app.post("/api/fault/clear", &api_fault_clear);
   app.get("/api/crash", &api_crash);
   app.get("/api/spectrum", &api_spectrum);
+  app.post("/api/ota/commit", &api_ota_commit);
+  app.post("/api/ota/abort", &api_ota_abort);
+  app.get("/api/ota", &api_ota_get);
+  app.post("/api/ota", &api_ota_post);
 }
 
 void processWebServer() {
@@ -133,6 +138,10 @@ FLASHMEM void api_config_post(Request &req, Response &res) {
     res.sendStatus(401);
     return;
   }
+  if (otaInProgress()) {
+    res.sendStatus(409); // config applies could re-enable outputs mid-flash
+    return;
+  }
 
   JsonDocument doc;
   const DeserializationError err = deserializeJson(doc, req);
@@ -179,6 +188,10 @@ FLASHMEM void api_config_post(Request &req, Response &res) {
 FLASHMEM void api_waveform_post(Request &req, Response &res) {
   if (!writeAuthorized(req)) {
     res.sendStatus(401);
+    return;
+  }
+  if (otaInProgress()) {
+    res.sendStatus(409);
     return;
   }
 
@@ -361,6 +374,75 @@ void api_capture(Request &req, Response &res) {
   serializeJson(doc, res);
 }
 
+FLASHMEM void api_ota_get(Request &req, Response &res) {
+  JsonDocument doc;
+  doc["inProgress"] = otaInProgress();
+  doc["valid"] = otaImageVerified();
+  doc["received"] = otaReceivedBytes();
+  doc["size"] = otaImageSize();
+  doc["error"] = otaLastError();
+  doc["version"] = TEG_GIT_HASH;
+  res.set("Content-Type", "application/json");
+  serializeJson(doc, res);
+}
+
+void api_ota_post(Request &req, Response &res) {
+  if (!writeAuthorized(req)) {
+    // Drain the (multi-MB) body before answering: replying mid-upload makes
+    // the browser see a connection reset instead of the 401, so the PIN
+    // prompt would never appear
+    while (req.available()) {
+      req.read();
+      kickWatchdog();
+    }
+    res.sendStatus(401);
+    return;
+  }
+  const char *err = "";
+  const bool ok = otaIngestStream(req, &err, &kickWatchdog);
+  res.status(ok ? 200 : 400);
+  res.set("Content-Type", "application/json");
+  JsonDocument out;
+  out["received"] = otaReceivedBytes();
+  out["lines"] = otaLineCount();
+  out["size"] = otaImageSize();
+  out["valid"] = ok;
+  out["error"] = err;
+  serializeJson(out, res);
+}
+
+FLASHMEM void api_ota_commit(Request &req, Response &res) {
+  if (!writeAuthorized(req)) {
+    res.sendStatus(401);
+    return;
+  }
+  JsonDocument doc;
+  if (deserializeJson(doc, req)) {
+    res.sendStatus(400);
+    return;
+  }
+  // The UI must echo the verified size back - a stale or mismatched confirm
+  // cannot trigger a flash
+  const uint32_t size = doc["size"] | 0U;
+  if (!otaRequestCommit(size)) {
+    res.sendStatus(409);
+    return;
+  }
+  res.set("Content-Type", "application/json");
+  res.print(F("{\"committing\":true}"));
+  // The copy-down + reboot runs from loop() after this response flushes
+}
+
+FLASHMEM void api_ota_abort(Request &req, Response &res) {
+  if (!writeAuthorized(req)) {
+    res.sendStatus(401);
+    return;
+  }
+  otaRequestAbort();
+  res.set("Content-Type", "application/json");
+  res.print(F("{\"aborted\":true,\"rebooting\":true}"));
+}
+
 static const char *scopeStateName(uint8_t s) {
   switch (s) {
     case ScopeArmed: return "armed";
@@ -389,6 +471,10 @@ FLASHMEM void api_scope_arm(Request &req, Response &res) {
     res.sendStatus(401);
     return;
   }
+  if (otaInProgress()) {
+    res.sendStatus(409);
+    return;
+  }
   JsonDocument doc;
   if (deserializeJson(doc, req)) {
     res.sendStatus(400);
@@ -413,6 +499,10 @@ FLASHMEM void api_scope_arm(Request &req, Response &res) {
 FLASHMEM void api_scope_release(Request &req, Response &res) {
   if (!writeAuthorized(req)) {
     res.sendStatus(401);
+    return;
+  }
+  if (otaInProgress()) {
+    res.sendStatus(409); // uniform policy: no state changes during an OTA
     return;
   }
   captureScopeRelease();
@@ -484,6 +574,10 @@ FLASHMEM void api_fault_clear(Request &req, Response &res) {
     res.sendStatus(401);
     return;
   }
+  if (otaInProgress()) {
+    res.sendStatus(409); // clearing would re-enable outputs mid-flash
+    return;
+  }
   clearFaultTrip();
   res.set("Content-Type", "application/json");
   JsonDocument out;
@@ -507,6 +601,7 @@ void api_status(Request &req, Response &res) {
   doc["crash"] = crashReportText()[0] != '\0';
   doc["active"] = spwmActive();
   doc["fault"] = vFaultTripped;
+  doc["ota"] = otaInProgress();
   doc["ocLimit"] = config.CurrentLimit.Enabled;
   if (config.CurrentLimit.Enabled) {
     doc["ocMode"] = config.CurrentLimit.CycleByCycle ? "cbc" : "latched";

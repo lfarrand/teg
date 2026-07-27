@@ -252,6 +252,18 @@
   </article>
 
   <article>
+    <header>Firmware Update (OTA)</header>
+    <p class="hint"><strong>Starting an upload disables the inverter outputs until reboot.</strong> Upload the PlatformIO <code>.hex</code> build; it stages into upper flash and is structurally verified (Teensy 4.1 boot headers, board marker, density) before the Commit button becomes available. Commit rewrites the firmware and reboots &mdash; do not remove power during the ~10&thinsp;s flash write. Abort invalidates the staged image and reboots into the current firmware.</p>
+    <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
+      <input type="file" id="ota-file" accept=".hex" style="margin:0;width:auto">
+      <button id="ota-upload" class="secondary outline" style="width:auto;margin:0">Upload &amp; verify</button>
+      <button id="ota-commit" style="width:auto;margin:0" disabled>Commit &amp; reboot</button>
+      <button id="ota-abort" class="secondary outline" style="width:auto;margin:0" disabled>Abort</button>
+    </div>
+    <span class="hint" id="ota-info"></span>
+  </article>
+
+  <article>
     <header>MQTT / Home Assistant</header>
     <p class="hint">Telemetry with Home Assistant auto-discovery: sensors appear under one &ldquo;TEG Inverter&rdquo; device (power, energy for the HA dashboard, temperatures, fault alert&hellip;). Read-only &mdash; no command topics.</p>
     <label><input type="checkbox" role="switch" data-path="Mqtt.Enabled"> Enabled</label>
@@ -572,6 +584,87 @@ async function scopePost(path, body) {
   }
   return r;
 }
+
+let otaSize = 0;
+$("#ota-upload").addEventListener("click", async () => {
+  const f = $("#ota-file").files[0];
+  if (!f) { $("#ota-info").textContent = "choose a .hex file first"; return; }
+  if (!confirm("Starting an OTA upload DISABLES the inverter outputs until reboot. Continue?")) return;
+  $("#ota-info").textContent = `uploading ${f.name} (${(f.size / 1024).toFixed(0)} kB)…`;
+  $("#ota-commit").disabled = true;
+  $("#ota-abort").disabled = true;
+  $("#ota-upload").disabled = true;
+  try {
+    let r = await fetch("/api/ota", { method: "POST", headers: authHeaders(), body: f });
+    if (r.status === 401) {
+      const pin = prompt("Write PIN required:");
+      if (pin === null) return;
+      sessionStorage.setItem("pin", pin);
+      r = await fetch("/api/ota", { method: "POST", headers: authHeaders(), body: f });
+    }
+    const out = await r.json();
+    if (out.valid) {
+      otaSize = out.size;
+      $("#ota-info").textContent =
+        `verified: ${out.size} bytes staged (${out.lines} records) — ready to commit`;
+      $("#ota-commit").disabled = false;
+      $("#ota-abort").disabled = false;
+    } else {
+      $("#ota-info").textContent = `rejected: ${out.error} — outputs stay disabled; abort to reboot`;
+      $("#ota-abort").disabled = false;
+    }
+  } catch (e) {
+    $("#ota-info").textContent = "upload failed: " + e.message;
+    $("#ota-abort").disabled = false;
+  } finally {
+    $("#ota-upload").disabled = false;
+  }
+});
+
+$("#ota-commit").addEventListener("click", async () => {
+  if (!confirm(`Flash the verified ${otaSize}-byte image and reboot? Do NOT remove power during the write.`)) return;
+  if (!confirm("Final confirmation: commit new firmware now?")) return;
+  try {
+    const r = await fetch("/api/ota/commit", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ size: otaSize }),
+    });
+    $("#ota-info").textContent = r.ok
+      ? "committing — the device reboots into the new firmware; reload this page in ~30 s"
+      : "commit refused (HTTP " + r.status + ") — re-upload and try again";
+  } catch (e) {
+    $("#ota-info").textContent = "commit request failed: " + e.message;
+  }
+});
+
+$("#ota-abort").addEventListener("click", async () => {
+  if (!confirm("Discard the staged image and reboot into the current firmware?")) return;
+  try {
+    const r = await fetch("/api/ota/abort", { method: "POST", headers: authHeaders() });
+    $("#ota-info").textContent = r.ok
+      ? "aborted — rebooting into the current firmware"
+      : "abort refused (HTTP " + r.status + ")";
+  } catch (e) {
+    $("#ota-info").textContent = "abort request failed: " + e.message;
+  }
+});
+
+// An OTA leaves the outputs disabled until reboot: if the page is reloaded
+// mid-flow, re-expose the abort path so the device is never stranded
+(async () => {
+  try {
+    const s = await (await fetch("/api/ota")).json();
+    if (s.inProgress) {
+      otaSize = s.size;
+      $("#ota-abort").disabled = false;
+      $("#ota-commit").disabled = !s.valid;
+      $("#ota-info").textContent = s.valid
+        ? `staged image verified (${s.size} bytes) — outputs disabled until commit or abort`
+        : `OTA in progress, outputs disabled${s.error ? " — " + s.error : ""}`;
+    }
+  } catch (e) { /* device busy */ }
+})();
 
 $("#trig-arm").addEventListener("click", async () => {
   try {

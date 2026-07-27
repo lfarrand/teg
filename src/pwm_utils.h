@@ -69,6 +69,7 @@ void runFeedbackLoop();
 
 // Fast software fault trip on a GPIO pin; call after configurePwm() and on config change
 void configureFaultProtection();
+void enterOtaSafeState(); // mask outputs + modulation IRQ; only reboot leaves
 // Clear a latched trip and restore outputs/interrupts/capture
 void clearFaultTrip();
 extern volatile bool vFaultTripped;

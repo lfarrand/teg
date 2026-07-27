@@ -803,6 +803,21 @@ FASTRUN static void faultTripIsr() {
   asm volatile("dsb");
 }
 
+// OTA safe state: mask every output and silence the modulation interrupt at
+// the source, exactly like the fault trip, but with no clear path - flash
+// operations follow, and only the post-update reboot re-enters the verified
+// setup() bring-up. Idempotent; safe to call while fault-tripped (flashing
+// a fix for a faulting build is a primary use case).
+void enterOtaSafeState() {
+  Sm20.disableInterrupts(kPWM_CompareVal1InterruptEnable);
+  NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
+  Tm1.disable();
+  Tm2.disable();
+  Tm3.disable();
+  Tm4.disable();
+  asm volatile("dsb");
+}
+
 void configureFaultProtection() {
   static bool attached = false;
   static uint8_t attachedPin = 0;

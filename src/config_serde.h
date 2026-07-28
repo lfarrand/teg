@@ -139,6 +139,8 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Mqtt.DiscoveryEnabled = Config_Mqtt["DiscoveryEnabled"] | true;
   config.Mqtt.IntervalSeconds = Config_Mqtt["IntervalSeconds"] | 10;
 
+  config.Mtp.Enabled = doc["Config"]["Mtp"]["Enabled"] | false;
+
   copyConfigString(config.Security.WritePin, sizeof(config.Security.WritePin),
                    doc["Config"]["Security"]["WritePin"] | "");
 
@@ -511,6 +513,8 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Mqtt["DiscoveryPrefix"] = config.Mqtt.DiscoveryPrefix;
   Config_Mqtt["DiscoveryEnabled"] = config.Mqtt.DiscoveryEnabled;
   Config_Mqtt["IntervalSeconds"] = config.Mqtt.IntervalSeconds;
+
+  doc["Config"]["Mtp"].to<JsonObject>()["Enabled"] = config.Mtp.Enabled;
 
   doc["Config"]["Security"].to<JsonObject>()["WritePin"] = config.Security.WritePin;
 

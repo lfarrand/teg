@@ -4,5 +4,6 @@
 void initMemory();
 void reportMemoryUsage();
 bool testPsram();
+bool flashFSAvailable(); // QSPI LittleFS mounted successfully
 
 #endif

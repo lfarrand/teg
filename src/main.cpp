@@ -24,6 +24,7 @@
 #include "mqtt.h"
 #include "ota.h"
 #include "event_log_api.h"
+#include "mtp_service.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -279,11 +280,18 @@ void setup() {
 
   enableWatchdog();
 
+  // LAST: MTP.begin() arms an interval timer whose handler queries the
+  // filesystem from interrupt context, so nothing else may touch the card
+  // after this point in setup()
+  mtpBegin();
+
   digitalWriteFast(LED_BUILTIN, HIGH);
 }
 
 void loop() {
   kickWatchdog();
+
+  mtpTask(); // first: a host transfer holds the pass, and it feeds the watchdog
 
   processWebServer();
 

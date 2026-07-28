@@ -23,6 +23,7 @@
 #include "mppt.h"
 #include "mqtt.h"
 #include "ota.h"
+#include "event_log_api.h"
 #include "utils.h"
 
 const char* filename = "/settings.cfg";
@@ -166,7 +167,7 @@ static void networkHousekeeping() {
              Ethernet.localIP()[2], Ethernet.localIP()[3]);
     writeLog(buf);
   } else if (!up && wasUp) {
-    writeLog("Network down");
+    writeLogLevel(EventWarn, "Network down");
   }
   wasUp = up;
 }
@@ -185,9 +186,11 @@ void kickWatchdog() {
 }
 
 void configureNtp() {
+  // Deliberately NO setSyncProvider: TimeLib would re-invoke the provider
+  // from now(), turning any call to it (including a log timestamp) into a
+  // blocking DNS + NTP round trip. ntpTask() drives synchronization from
+  // loop() instead and pushes the result into TimeLib and the RTC.
   ntpUDP.begin(8888);
-  setSyncProvider(getNtpTime);
-  setSyncInterval(300);
 }
 
 void setup() {
@@ -231,6 +234,8 @@ void setup() {
   Serial.printf("Teensy Serial: %02X-%02X-%02X-%02X \n", serial[0], serial[1], serial[2], serial[3]);
   Serial.printf("UID 64-bit: %02X-%02X-%02X-%02X-%02X-%02X-%02X-%02X\n", uid64[0], uid64[1], uid64[2], uid64[3],
                 uid64[4], uid64[5], uid64[6], uid64[7]);
+
+  eventLogBegin(); // seed the clock from the RTC before anything logs
 
   configureSdCard();
 
@@ -284,6 +289,8 @@ void loop() {
 
   networkHousekeeping();
 
+  ntpTask();
+
   // During an OTA the outputs are masked and flash contents are in flux:
   // idle every control/telemetry task in one place (they would only publish
   // garbage); the web server stays up for the commit/abort endpoints
@@ -311,7 +318,7 @@ void loop() {
 
   static bool faultReported = false;
   if (vFaultTripped && !faultReported) {
-    writeLog("FAULT TRIP: all PWM outputs disabled (save settings to clear)");
+    writeLogLevel(EventError, "FAULT TRIP: all PWM outputs disabled (save settings to clear)");
     faultReported = true;
   } else if (!vFaultTripped) {
     faultReported = false;

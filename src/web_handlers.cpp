@@ -11,6 +11,7 @@
 #include "ota.h"
 #include "presets.h"
 #include "preset_name.h"
+#include "event_log_api.h"
 #include "scope_math.h"
 #include "spectrum_math.h"
 #include <arm_math.h>
@@ -61,6 +62,7 @@ FLASHMEM void configureWebServer() {
   app.post("/api/waveform", &api_waveform_post);
   app.post("/api/fault/clear", &api_fault_clear);
   app.get("/api/crash", &api_crash);
+  app.get("/api/log", &api_log);
   app.get("/api/spectrum", &api_spectrum);
   app.get("/api/config/export", &api_config_export);
   app.post("/api/config/import", &api_config_import);
@@ -715,6 +717,58 @@ FLASHMEM void api_fault_clear(Request &req, Response &res) {
   // Why a clear may not stick: the overcurrent comparator is still asserting
   out["ocStillActive"] = acmpFaultPinActive();
   serializeJson(out, res);
+}
+
+// Event log. ?since=N returns everything newer than sequence N, so a client
+// polls with the last seq it saw and never repeats or misses an entry;
+// "gap" tells it entries were evicted before it caught up.
+FLASHMEM void api_log(Request &req, Response &res) {
+  char qbuf[16];
+  uint32_t since = 0;
+  if (req.query("since", qbuf, sizeof(qbuf))) {
+    since = strtoul(qbuf, nullptr, 10);
+  }
+  const EventLog &log = eventLogRef();
+  const uint32_t newest = eventLogNewestSeq(log);
+  constexpr uint32_t MaxPerResponse = 64; // bound the response size
+  uint32_t n = eventLogCountSince(log, since);
+  bool skipped = eventLogGapSince(log, since);
+  if (n > MaxPerResponse) {
+    // Return the NEWEST entries, not the oldest: a first call (since=0) must
+    // show what just happened, and a client that fell behind cares about now
+    since = newest - MaxPerResponse;
+    n = MaxPerResponse;
+    skipped = true;
+  }
+
+  JsonDocument doc;
+  doc["clockValid"] = eventClockValid();
+  doc["ntpSynced"] = eventClockNtpSynced();
+  doc["now"] = eventNowEpoch();
+  doc["bootId"] = eventBootId(); // changes on reset: clients reset their cursor
+  doc["newest"] = newest;
+  doc["gap"] = skipped;
+  JsonArray arr = doc["events"].to<JsonArray>();
+  char iso[24];
+  for (uint32_t i = 0; i < n; i++) {
+    const EventEntry *e = eventLogAt(log, since, i);
+    if (e == nullptr) {
+      break;
+    }
+    JsonObject o = arr.add<JsonObject>();
+    o["seq"] = e->seq;
+    o["uptimeMs"] = e->uptimeMs;
+    o["level"] = eventLevelName(e->level);
+    // Points into the ring rather than copying: safe because nothing writes
+    // the log between here and serialization (writeLog is never called from
+    // an interrupt, and this handler runs to completion inside loop())
+    o["text"] = e->text;
+    if (formatIso8601(iso, sizeof(iso), e->epoch) && iso[0] != '\0') {
+      o["time"] = iso;
+    }
+  }
+  res.set("Content-Type", "application/json");
+  serializeJson(doc, res);
 }
 
 FLASHMEM void api_crash(Request &req, Response &res) {

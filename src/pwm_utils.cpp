@@ -167,7 +167,7 @@ void clearFaultTrip() {
   // quiet; a still-asserting pin means the fault condition persists (stuck
   // sensor, DC offset above threshold, real short) - refuse and stay tripped
   if (acmpArmedLatched() && acmpFaultPinActive()) {
-    writeLog("Fault clear refused: current-limit comparator still above threshold");
+    writeLogLevel(EventWarn, "Fault clear refused: current-limit comparator still above threshold");
     return;
   }
   acmpClearLatch(); // release the FlexPWM fault latch (its IRQ stays off for now)

@@ -12,6 +12,15 @@ both software and hardware fault protection.
 > verified only by host-side unit tests and datasheet/reference-manual
 > analysis — never on hardware. Read **[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md)**
 > before using them on a real power stage.
+>
+> **This is a bench instrument, not a product.** It has no transport security,
+> authentication defaults to *off*, and OTA accepts unsigned firmware — so
+> anyone who can reach port 80 can permanently install arbitrary code. Keep it
+> on a trusted, isolated network. **[docs/SECURITY.md](docs/SECURITY.md)** states
+> the posture and the fixes in priority order;
+> **[docs/PRODUCT_READINESS.md](docs/PRODUCT_READINESS.md)** covers what would
+> have to change to build products on it (including an AGPL licence blocker in
+> the Ethernet stack).
 
 ## Highlights
 
@@ -134,9 +143,14 @@ The API underneath is plain JSON:
 | `/api/crash` | GET | Crash report from the previous run, if any |
 
 When a **write PIN** is configured (Security section), POSTs require a matching
-`X-Auth-Pin` header — the UI prompts automatically. Secrets (the InfluxDB token
-and the PIN itself) are redacted from GET responses; an empty secret in a POST
-keeps the stored value.
+`X-Auth-Pin` header — the UI prompts automatically. Secrets (the InfluxDB token,
+MQTT password and the PIN itself) are redacted from GET responses; an empty
+secret in a POST keeps the stored value.
+
+> **Set a PIN.** It defaults to empty, and an empty PIN means *every* write
+> endpoint — including firmware update — is unauthenticated. There is no TLS, no
+> rate limiting and no Origin checking, and every GET is unauthenticated. See
+> [docs/SECURITY.md](docs/SECURITY.md).
 
 The device also announces itself via mDNS as **`http://teg.local`**.
 
@@ -626,6 +640,23 @@ Items to confirm on a scope before driving a real power stage:
 
 Everything added in PRs #18–#29 — metering, the scope, the hardware current
 limit, the PLL, MPPT, MQTT, OTA, presets, the event log and USB MTP — is
-**bench-unverified**, and MTP in particular cuts the available stack to
-~18.4 KB. See **[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md)** for the
+**bench-unverified**. See **[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md)** for the
 per-feature checklist, ordered by what goes wrong if you skip it.
+
+### Known measurement and timing gaps
+
+Found by audit, not yet fixed — they matter because they affect what you can
+trust while bench testing:
+
+- `getFreeMemory()` subtracts an OCRAM pointer from a DTCM pointer, so the one
+  telemetry field that would reveal a stack overflow is meaningless.
+- There is **no missed-carrier-cycle counter**: if the modulation ISR is starved,
+  nothing reports it.
+- The OneWire temperature harvest masks interrupts for 65–70 µs at a time, long
+  enough to drop carrier cycles silently.
+- `Pwm.Tm2.SpwmCarrierFrequency` (used by the ISR for its maths) and the
+  per-submodule `PwmFrequency` actually programmed into the hardware are
+  independent config fields with no cross-validation — set them inconsistently
+  and the modulation maths silently disagrees with the switching.
+- Most of the DTCM shortfall is **CMSIS-DSP FFT tables**, pulled in by an opt-in
+  spectrum query, not by MTP as previously assumed.

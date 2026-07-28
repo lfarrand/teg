@@ -4,7 +4,14 @@ Firmware for a **Teensy 4.1** (NXP i.MX RT1062, Cortex-M7 @ 600 MHz) that acts a
 network-controlled PWM signal generator and inverter modulator for a thermoelectric
 generator (TEG) power system. It drives complementary IGBT/MOSFET gate pairs across
 all four FlexPWM timer modules, with a modern web UI, a JSON API, closed-loop
-amplitude regulation, and a fast fault trip.
+amplitude regulation, grid synchronisation, maximum-power-point tracking, and
+both software and hardware fault protection.
+
+> **New features are bench-unverified.** The twelve capabilities added in
+> PRs #18–#29 (everything from *Power metering* onward below) have been
+> verified only by host-side unit tests and datasheet/reference-manual
+> analysis — never on hardware. Read **[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md)**
+> before using them on a real power stage.
 
 ## Highlights
 
@@ -16,11 +23,28 @@ amplitude regulation, and a fast fault trip.
   period of saving; the measured apply latency is reported per change
 - **Closed-loop regulation** — PI controller steers the modulation index toward a
   voltage setpoint read from an analog feedback pin
-- **Protection** — latched ~1 µs software fault trip that masks every PWM output
+- **Grid/reference PLL** — SOGI-QSG + SRF-PLL locks the output fundamental in
+  frequency *and* phase to an external AC reference, steering the DDS with no
+  waveform discontinuity
+- **MPPT** — adaptive perturb & observe on the modulation index, fed by real
+  power measurement
+- **True power metering** — simultaneous V and I sampling with real power, RMS,
+  power factor and accumulated energy
+- **Protection in depth** — latched ~1 µs software fault trip, plus an on-chip
+  analog comparator path (comparator → XBAR → FlexPWM fault) giving hardware
+  overcurrent shutdown and cycle-by-cycle current limiting with no software in
+  the loop
+- **Instrumentation** — spectrum/THD analysis, a triggered single-shot scope with
+  raw capture download, and a timestamped event log with an NTP-disciplined RTC
+- **Integrations** — InfluxDB metrics, MQTT with Home Assistant auto-discovery,
+  and read-only USB MTP file access
+- **Maintainable in the field** — OTA firmware updates with verify-before-commit,
+  plus named configuration presets with export/import
 - **Modern web UI** — single-page app with automatic dark mode, live telemetry,
   and scheme-aware forms, served gzip-compressed from flash
-- **Tested** — the hardware-independent logic (modulation math, config mapping,
-  timing calculations) runs as native unit tests in CI, gated at 80% line coverage
+- **Tested** — 231 native unit tests cover the hardware-independent logic
+  (modulation, metering, PLL, MPPT, OTA image verification, config mapping) and
+  run in CI, gated at 80% line coverage
 
 ## Hardware
 
@@ -29,9 +53,13 @@ amplitude regulation, and a fast fault trip.
 | Board | Teensy 4.1 (600 MHz Cortex-M7, 512 KB TCM, 512 KB OCRAM, 8 MB PSRAM) |
 | PWM | All four FlexPWM modules, 9 submodules (see pin map below) |
 | Network | On-board Ethernet (QNEthernet, DHCP), NTP time sync |
-| Storage | SD card (settings persistence), QSPI flash (LittleFS available) |
+| Storage | SD card (settings, presets, waveforms), QSPI flash (LittleFS) |
 | Display | 128×64 SSD1306 OLED over I²C — rolling 5-line log + status line |
 | Scope trigger | Pin 13 (LED) toggles every modulation ISR cycle |
+| Analog sense | Voltage/feedback pin (default A17/41) + current pin (default A16/40), sampled once per carrier cycle by both ADC modules |
+| Overcurrent | On-chip analog comparator vs internal 6-bit DAC → XBARA1 → FlexPWM2 FAULT0 |
+| Clock | SNVS RTC disciplined by NTP — fit a CR2032 on VBAT to keep time across power cycles |
+| USB | CDC serial + MTP composite (`USB_MTPDISK_SERIAL`); PID `0x04D5` |
 
 ### PWM pin map
 
@@ -89,6 +117,21 @@ The API underneath is plain JSON:
 | `/api/capture` | GET | Min/max envelope of the waveform capture ring (`?count=&bins=`) |
 | `/api/waveform` | GET | Current uploaded custom waveform (type, size, preview) |
 | `/api/waveform` | POST | Upload a `teg-wave v1` file (body = raw text); applies live if active |
+| `/api/capture/raw` | GET | Binary capture download — 20-byte `TEGC` header + LE `uint16` samples (`?channel=v\|i&count=`) |
+| `/api/spectrum` | GET | FFT magnitudes, fundamental and THD (`?points=&engine=portable\|cmsis`) |
+| `/api/scope` | GET | Trigger state, source, edge, level, post-trigger count |
+| `/api/scope/arm` | POST | Arm the single-shot trigger `{source, edge, levelMv, postSamples}` |
+| `/api/scope/release` | POST | Disarm and resume rolling capture |
+| `/api/fault/clear` | POST | Clear a latched trip (refused while the current-limit comparator still asserts) |
+| `/api/log` | GET | Event log since a sequence number (`?since=n`) with ISO-8601 timestamps |
+| `/api/presets` | GET | List saved presets |
+| `/api/presets/save\|load\|delete` | POST | Manage presets `{name}` |
+| `/api/config/export` | GET | Download settings as a file (secrets omitted) |
+| `/api/config/import` | POST | Apply a settings file (secrets always preserved from the device) |
+| `/api/ota` | GET/POST | OTA status; upload an Intel-HEX firmware image for verification |
+| `/api/ota/commit` | POST | Flash the verified image and reboot (echo the verified size back) |
+| `/api/ota/abort` | POST | Discard the staged image and reboot |
+| `/api/crash` | GET | Crash report from the previous run, if any |
 
 When a **write PIN** is configured (Security section), POSTs require a matching
 `X-Auth-Pin` header — the UI prompts automatically. Secrets (the InfluxDB token
@@ -254,6 +297,238 @@ windows). On a **fault trip the ring freezes**, preserving the pre-fault
 waveform as a flight record until settings are re-applied. While capture runs,
 the closed-loop controller uses the synchronous samples instead of `analogRead`.
 
+## Triggered scope and raw capture
+
+The capture ring doubles as a **single-shot oscilloscope**. Arm a level trigger
+on either channel (voltage or current), choose the edge and how many samples to
+keep *after* the crossing, and the ring freezes that many samples past the
+trigger point — everything already in the ring becomes pre-trigger history, up
+to ~52 s of it, for free.
+
+Arming requires the signal to first appear on the *pre-crossing* side of the
+level, so a signal already sitting above a rising-edge threshold cannot
+false-trigger. The trigger costs a couple of integer compares per carrier cycle
+when armed and nothing when idle.
+
+`GET /api/capture/raw` downloads the ring as a binary file for offline
+analysis: a 20-byte `TEGC` header (version, channel, flags, sample rate, count,
+**trigger offset within the data**) followed by little-endian `uint16` raw ADC
+counts, chunk-streamed with the watchdog serviced throughout.
+
+## Spectrum analysis and THD
+
+`GET /api/spectrum` runs a Hann-windowed FFT over the most recent capture
+samples and returns normalised magnitudes, the detected fundamental, and **total
+harmonic distortion**. The stats page renders it as a dBc plot.
+
+Two engines are selectable from the UI: a **portable radix-2** implementation
+(the default — it is the one carrying the unit tests, so the exact code that
+runs on the device is verified on the host) and **CMSIS `arm_rfft_fast_f32`**
+for speed. The measured compute time is reported either way.
+
+The modulation schemes' spectral claims are themselves unit-tested: the suite
+synthesises the switched output by driving the *same* per-cycle pipeline the ISR
+uses, then FFTs it to confirm carrier-group cancellation, triplen-free line-line
+voltages, the 4/π six-step series, the trapezoid's harmonic envelope, and
+dither's carrier spreading.
+
+## Power metering
+
+With `Meter` enabled, the modulation ISR samples a **current sensor on the
+second ADC module** in lockstep with the voltage channel, once per carrier
+cycle, and accumulates zero-corrected `V·I`, `V²` and `I²` into double-buffered
+banks. A 1 Hz task drains the idle bank and computes:
+
+| Reading | Notes |
+|---|---|
+| **Real power** (mW) | Signed — negative means export/reverse flow |
+| **Vrms / Irms** | From the accumulated squares |
+| **Power factor** (/1000) | Signed with power direction |
+| **Energy** (mWh) | Integrated continuously |
+
+The flip/drain protocol means the meter never locks against the ISR. Current
+samples also land in their own PSRAM ring, so the scope and spectrum tools work
+on either channel. Readings feed the status API, the stats charts, InfluxDB and
+MQTT.
+
+## Hardware current limit (analog comparator)
+
+Beyond the software fault trip, an **on-chip analog comparator** compares the
+current-sense pin against its internal 6-bit DAC threshold and routes the result
+through XBARA1 to **FlexPWM2's private FAULT0 input** — disabling the modulated
+outputs combinationally, with no software in the loop and sub-microsecond
+latency. It works even if the CPU clock fails.
+
+Two modes:
+
+- **Latched fault** — outputs stay off until explicitly cleared, and recovery
+  additionally requires the comparator to be quiet. The trip mirrors the
+  software fault path (capture freezes, UI banner).
+- **Cycle-by-cycle limiting** — the comparator chops the outputs the instant
+  current exceeds the threshold; the hardware re-enables them at the next cycle
+  boundary while the comparator reads quiet. Classic per-cycle current limiting,
+  not a fault — the modulation ISR counts limited cycles for telemetry.
+
+| Option | Meaning |
+|---|---|
+| **Pin** | Must be comparator-capable (0, 1, 14–21, 25, 26, 38–41; 22/23 are PWM outputs here) |
+| **Threshold** (mV) | At the pin; quantised to ~52 mV DAC steps, and the actual programmed value is reported back |
+| **Cycle-by-cycle** | Off = latched fault |
+| **Filter count / period** | Optional glitch rejection (0 = continuous mode, which the RM recommends for PWM fault inputs) |
+
+Clearing a latched trip is **refused while the comparator still asserts** — a
+persistent overcurrent is reported rather than silently half-cleared.
+
+## Grid / reference PLL
+
+Locks the output fundamental in frequency **and phase** to an external AC
+reference sensed on the capture channel. A SOGI quadrature generator feeds a
+park-transform SRF-PLL; the loop steers the DDS phase increment, so the **DDS
+accumulator is the PLL's VCO** — driving the phase error to zero aligns the
+actual output waveform, and the accumulator is never written, so there is no
+waveform discontinuity at lock, at a phase-offset change, or across a settings
+save.
+
+| Option | Meaning |
+|---|---|
+| **Phase offset** (c°) | Inverter fundamental leads the reference by this much — also where you absorb the sensing chain's fixed phase shift |
+| **Min / Max Hz** | Steering clamp; doubles as the PI's anti-windup rail and the lock-qualification window |
+| **Bandwidth** (dHz) | Loop natural frequency (default 20.0 Hz), auto-capped for low carriers |
+| **Zero / Min level** (mV) | Reference bias point, and the amplitude below which there is no usable reference |
+
+State is reported as `off / noCapture / excluded / acquiring / locked /
+coasting / noRef`. Lock requires a small filtered phase error, adequate
+amplitude, a stable estimate and a frequency strictly inside the clamps, all
+sustained. Signal loss coasts on the held frequency rather than jumping back to
+nominal.
+
+Mutually exclusive with carrier dither, stepped waveform playback and the
+closed-loop feedback (which regulates the same pin as a DC level); enabling the
+PLL turns those off on save. **PLL + MPPT together is the grid-tie topology** —
+frequency/phase from one, amplitude from the other.
+
+## MPPT
+
+Adaptive **perturb & observe** on the modulation index, fed by the power meter.
+A TEG is an EMF behind internal resistance, so drawn power is concave in the
+index — the tracker climbs that curve:
+
+- two consecutive improvements **double** the step (fast re-tracking after a
+  thermal shift); a reversal **halves** it (tight limit cycle at the peak)
+- a power jump beyond `RestartDeltaMw` resets to the coarse step — the operating
+  environment changed
+- inside the noise deadband the tracker keeps exploring but is **bounded**: after
+  a few flat results it turns around, so a power plateau (for example, output
+  saturated by the current limiter) cannot walk the index rail to rail
+
+The evaluation interval is floored at *soft-start ramp + 2.1 s* so every
+measurement reflects a settled operating point. The tracker also clamps itself
+to the thermal derate ceiling rather than pushing against an invisible wall, and
+hands the actuator back to the configured index when disabled. Mutually
+exclusive with the closed-loop feedback (same actuator).
+
+## MQTT and Home Assistant
+
+Publishes telemetry to an MQTT broker with **Home Assistant auto-discovery**:
+one retained config per entity, a single shared JSON state topic read via
+`value_template`, and an availability topic wired as the connection's last will.
+A "TEG Inverter" device appears with 13 entities — power, voltage, current,
+power factor, an **energy sensor the HA energy dashboard accepts directly**,
+frequency, modulation index, all three temperatures, thermal derate, PLL state,
+and a fault alert.
+
+Read-only: there are no command topics, so the PIN-authenticated HTTP API stays
+the only write path. The broker password follows the same secret contract as the
+InfluxDB token — redacted from GET, and an empty value in a POST keeps the
+stored one. No TLS.
+
+## OTA firmware updates
+
+Upload a PlatformIO `.hex` through the web UI. It stages into upper flash and is
+**fully verified while the running firmware is still intact**; only an explicit
+second step copies it down and reboots.
+
+Verification reads back the *staged image* (so what is checked is exactly what
+gets copied) and covers the FlexSPI configuration block, the image vector table,
+a Thumb entry point inside the image, the boot-data triple, dense coverage, a
+CRC over the whole body, and two identity checks: the flash-size word — the only
+intrinsic marker separating a **Teensy 4.0** build, which is otherwise
+structurally identical and would mostly boot — and a project marker embedded in
+this firmware, so another Teensy 4.1 project's hex is refused.
+
+Uploading enters an outputs-masked safe state that only a reboot leaves; every
+state-changing endpoint returns 409 meanwhile. Commit requires the client to
+echo the verified size back, runs deferred after the HTTP response flushes,
+services the watchdog throughout the copy, and **verifies the copied image by
+read-back CRC — retrying while the staged source is still intact** — before the
+irreversible reset. Abort erases the staged image's boot magic and reboots into
+the current firmware.
+
+> **There is a power-loss window.** From the first erase of the commit until the
+> reset (~10–60 s), losing power leaves the board needing physical USB recovery.
+> The RT1062 has no A/B boot; verify-before-commit narrows the window to the
+> copy itself but cannot remove it.
+
+## Configuration presets, export and import
+
+Save the current settings under a name and switch between them later; presets
+live at `/presets/<name>.json` on the SD card. Also available: a settings
+download, and an import that applies a file.
+
+**Credentials never travel with configuration.** Presets and exports are written
+redacted, and applying any file the operator did not author restores secrets
+*unconditionally* from the device — so an imported file can never change the
+write PIN (locking you out) or pair the device's real broker password with
+someone else's host. Files still contain host names, topics and usernames, so
+treat them as configuration rather than public data.
+
+Applying a document also **requires the safety-relevant sections to be present**:
+absent JSON sections would otherwise fall back to compiled defaults and silently
+disarm fault protection, the current limit and thermal derating.
+
+Preset names are validated as a security boundary (they arrive from the network
+and become filenames): separators, parent references, hidden-file forms and
+control bytes are *rejected* rather than sanitised, and names are compared the
+way FAT resolves them so a case-variant save cannot silently destroy an existing
+preset.
+
+## Event log and real-time clock
+
+Every log line the firmware already printed is now retained in a 128-entry
+timestamped ring and served from `GET /api/log?since=n`, with a scrolling viewer
+on the stats page. **Monotonic sequence numbers** mean a polling client never
+repeats or misses an entry, and a `gap` flag reports when entries were evicted
+before it caught up. Levels (`info` / `warn` / `error`) are colour-coded.
+
+Timestamps come from the SNVS **battery-backed RTC**, seeded at boot and
+disciplined by NTP, so entries are correctly dated from the first line of boot
+rather than waiting for the network. Entries logged before any clock is
+available carry uptime instead of a misleading 1970 date. NTP runs as a
+non-blocking send/collect task — timestamping never touches the network — and a
+malformed or unsolicited reply can neither set the clock nor reach the RTC.
+
+## USB file access (MTP)
+
+Optionally exposes the SD card and QSPI flash over USB so captures, waveforms,
+presets and logs can be copied off without pulling the card. **Off by default**;
+takes effect at reboot.
+
+**Read-only.** Delete, write, move, copy and format are refused at the MTP
+dispatcher. That is a safety property, not a preference: those operations reach
+code that walks the filesystem or copies bytes without bound and under host
+control, inside a single service call — either an 8 s watchdog reset of a
+running inverter, or a hang the watchdog cannot rescue. Refusing them leaves
+browse and read, which is the whole use case, and means a host can never damage
+`/settings.cfg`, `/presets` or an uploaded waveform.
+
+Service is withheld automatically while the inverter is actually generating
+(streamed playback or capture with the output live) and during a firmware
+update: a transfer runs to completion inside one service pass, and a streamed
+waveform's buffer is only ~819 ms deep at a 20 kHz carrier.
+
+The library is vendored and patched in `lib/MTP_Teensy` — see
+`lib/MTP_Teensy/PATCHES.md` for exactly what diverges from upstream and why.
+
 ## Thermal monitoring and derating
 
 DS18B20 probes on a configurable OneWire pin (index 0 = TEG **hot side**,
@@ -270,7 +545,16 @@ temperatures and the active derate factor appear in the status bar.
   retrying the network in the background.
 - **Hardware watchdog**: WDOG1 resets the device if the main loop stalls for
   ~8 s, returning to the known-safe boot path instead of leaving PWM
-  free-running with stale state.
+  free-running with stale state. Long operations that legitimately outlast a
+  loop pass (OTA flash copy, MTP transfers, staging erases) service it
+  explicitly from inside their loops.
+- **Crash reports**: the reset cause and any CrashReport are captured at boot,
+  persisted to `/crashlog.txt`, and served from `/api/crash`.
+- **Actuator arbitration**: only one controller owns the modulation index at a
+  time. Configuration validation enforces the exclusions (closed-loop feedback
+  vs MPPT, PLL vs dither/stepped playback/feedback) rather than letting two
+  loops fight, and the thermal task yields its open-loop index re-push to
+  whichever controller is active.
 
 ## Metrics (InfluxDB)
 
@@ -302,10 +586,17 @@ device's config file on the SD card, never in firmware source or this repository
 
 ## Architecture notes
 
-- `src/modulation.h`, `spwm_math.h`, `pwm_timing.h`, `config_serde.h`,
-  `config_fields.h`, `ntp_utils.h`, `pi_controller.h` are **pure headers** with no
-  hardware dependencies — they compile on the host and carry the unit tests
-  (`test/`, run with `pio test -e native`, coverage-gated in CI).
+- The hardware-independent logic lives in **pure headers** with no Arduino
+  dependencies — they compile on the host and carry the unit tests (`test/`, run
+  with `pio test -e native`, coverage-gated in CI): `modulation.h`,
+  `spwm_math.h`, `pwm_timing.h`, `spectrum_math.h`, `capture_math.h`,
+  `meter_math.h`, `scope_math.h`, `acmp_math.h`, `pll_math.h`, `mppt_math.h`,
+  `hex_parse.h`, `ota_ingest.h`, `ota_verify.h`, `ota_crc.h`, `preset_name.h`,
+  `event_log.h`, `mqtt_discovery.h`, `config_serde.h`, `config_fields.h`,
+  `ntp_utils.h`, `pi_controller.h`.
+- The ISR's per-cycle duty pipeline is itself one of those headers
+  (`modulationCycleDuties`), called verbatim by the interrupt — so the spectral
+  tests measure the real thing rather than a reimplementation.
 - The web UI lives in `web/` and is gzipped into flash at build time by
   `scripts/gzip_web_assets.py` (Pico.css v2 is vendored; no build toolchain).
 - `lib/aWOT` and `lib/eFlexPwm` are forks (submodules): aWOT is bound to QNEthernet
@@ -315,10 +606,16 @@ device's config file on the SD card, never in firmware source or this repository
   (web handlers, config I/O) is marked `FLASHMEM` to keep ITCM for the fast paths.
 - True N-cell phase-shifted PWM needs RT1170 silicon — the analysis and migration
   checklist are in `docs/RT1170_PSPWM.md`.
+- **The platform, framework and toolchain are pinned** in `platformio.ini`, and
+  the pins are load-bearing rather than tidiness: Teensyduino 1.60+ bundles an
+  MTP implementation that collides with the patched `lib/MTP_Teensy`, and the
+  framework and compiler must move together or the core's own `imxrt.h` fails to
+  build. Read the comment there before bumping anything. (Pinning also makes
+  firmware builds reproducible, which they previously were not.)
 
-## Bench verification checklist
+## Bench verification
 
-Items that should be confirmed on a scope before driving a real power stage:
+Items to confirm on a scope before driving a real power stage:
 
 1. Dead-time on each complementary pair matches the configured nanoseconds
 2. Bipolar (scheme 2) leg opposition and POD/APOD inverted-cell idle states
@@ -326,3 +623,9 @@ Items that should be confirmed on a scope before driving a real power stage:
 4. Carrier-dither spectrum (carrier peak spreads; fundamental unmoved)
 5. The `Settings applied in Nus` and `SPWM ISR: n cycles` figures against the
    documented expectations
+
+Everything added in PRs #18–#29 — metering, the scope, the hardware current
+limit, the PLL, MPPT, MQTT, OTA, presets, the event log and USB MTP — is
+**bench-unverified**, and MTP in particular cuts the available stack to
+~18.4 KB. See **[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md)** for the
+per-feature checklist, ordered by what goes wrong if you skip it.

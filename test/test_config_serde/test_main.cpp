@@ -56,6 +56,7 @@ void test_defaults_from_empty_document() {
   TEST_ASSERT_FALSE(cfg.CurrentLimit.CycleByCycle);
   TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterCount);
   TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterPeriod);
+  TEST_ASSERT_FALSE(cfg.Mtp.Enabled); // USB file access is opt-in
   TEST_ASSERT_FALSE(cfg.Mqtt.Enabled);
   TEST_ASSERT_EQUAL_STRING("", cfg.Mqtt.Host);
   TEST_ASSERT_EQUAL_UINT16(1883, cfg.Mqtt.Port);
@@ -136,6 +137,7 @@ void test_roundtrip_preserves_every_field() {
   cfg.CurrentLimit.CycleByCycle = true;
   cfg.CurrentLimit.FilterCount = 7;
   cfg.CurrentLimit.FilterPeriod = 99;
+  cfg.Mtp.Enabled = true;
   cfg.Mqtt.Enabled = true;
   copyConfigString(cfg.Mqtt.Host, sizeof(cfg.Mqtt.Host), "broker.lan");
   cfg.Mqtt.Port = 8883;

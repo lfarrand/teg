@@ -109,6 +109,14 @@ struct InfluxConfig {
   uint16_t IntervalSeconds = 10; // metrics push cadence; 0 disables
 };
 
+// USB MTP file access to the SD card and QSPI flash. OFF by default: a host
+// transfer runs to completion inside one service call, stalling the control
+// tasks meanwhile, so this is a maintenance-mode feature. Takes effect at
+// the next reboot (the USB descriptor and MTP's own startup are boot-time).
+struct MtpConfig {
+  bool Enabled = false;
+};
+
 // Write protection for the API: when WritePin is set, POST /api/config
 // requires a matching X-Auth-Pin header. Redacted from GET responses.
 struct SecurityConfig {
@@ -212,6 +220,7 @@ struct MainConfig {
   CurrentLimitConfig CurrentLimit;
   InfluxConfig Influx;
   MqttConfig Mqtt;
+  MtpConfig Mtp;
   SecurityConfig Security;
   CaptureConfig Capture;
   MeterConfig Meter;

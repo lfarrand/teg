@@ -12,6 +12,7 @@
 #include "presets.h"
 #include "preset_name.h"
 #include "event_log_api.h"
+#include "mtp_service.h"
 #include "scope_math.h"
 #include "spectrum_math.h"
 #include <arm_math.h>
@@ -786,6 +787,10 @@ void api_status(Request &req, Response &res) {
   doc["active"] = spwmActive();
   doc["fault"] = vFaultTripped;
   doc["ota"] = otaInProgress();
+  doc["mtp"] = mtpEnabled();
+  if (mtpEnabled()) {
+    doc["mtpPaused"] = mtpPaused();
+  }
   doc["ocLimit"] = config.CurrentLimit.Enabled;
   if (config.CurrentLimit.Enabled) {
     doc["ocMode"] = config.CurrentLimit.CycleByCycle ? "cbc" : "latched";

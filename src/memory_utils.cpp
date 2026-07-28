@@ -3,7 +3,12 @@
 #include <LittleFS.h>
 
 LittleFS_QSPIFlash flashFS;
+static bool flashFSMounted = false;
 EXTMEM uint8_t buf[1024];
+
+bool flashFSAvailable() {
+  return flashFSMounted;
+}
 
 bool testPsram() {
   memset(buf, 0xAA, sizeof(buf));
@@ -16,7 +21,8 @@ void initMemory() {
   } else {
     writeLog("PSRAM not detected!");
   }
-  if (flashFS.begin()) {
+  flashFSMounted = flashFS.begin();
+  if (flashFSMounted) {
     writeLog("Flash detected (16MB)");
   } else {
     writeLog("Flash init failed");

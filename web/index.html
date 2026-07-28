@@ -252,6 +252,13 @@
   </article>
 
   <article>
+    <header>USB File Access (MTP)</header>
+    <p class="hint"><strong>Read-only.</strong> Exposes the SD card and QSPI flash over USB so captures, waveforms and presets can be copied off without pulling the card; the host cannot delete, modify or format anything (those operations run unbounded inside a single service pass, so they are refused outright). <strong>Takes effect after a reboot.</strong> A transfer stalls the control tasks while it runs, so service is withheld automatically whenever the inverter is actually generating &mdash; streaming playback or capture with the output live &mdash; and during a firmware update.</p>
+    <label><input type="checkbox" role="switch" data-path="Mtp.Enabled"> Enabled (reboot to apply)</label>
+    <span class="hint" id="mtp-status"></span>
+  </article>
+
+  <article>
     <header>Presets &amp; Backup</header>
     <p class="hint">Save the current settings under a name and switch between them later. Presets and exports omit credentials (InfluxDB token, MQTT password, write PIN), and loading or importing never changes them &mdash; the device always keeps its own. Note the files <em>do</em> contain host names, topics and usernames, so treat them as configuration, not as public data.</p>
     <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
@@ -521,6 +528,9 @@ async function pollStatus() {
     $("#st-derate").textContent = s.derateMilli < 1000 ? (s.derateMilli / 10).toFixed(0) + "%" : "none";
     $("#st-derate").style.color = s.derateMilli < 1000 ? "#c62828" : "";
     $("#fault-banner").style.display = s.fault ? "block" : "none";
+    $("#mtp-status").textContent = s.mtp
+      ? (s.mtpPaused ? "· active but paused (inverter busy)" : "· active")
+      : (cfg && cfg.Mtp && cfg.Mtp.Enabled ? "· enabled in settings — reboot to start" : "");
     $("#mqtt-status").textContent =
       s.mqttConnected ? "· connected" : (s.mqttPublishFailures ? `· ${s.mqttPublishFailures} publish failures` : "");
     $("#mppt-status").textContent = s.mpptEnabled

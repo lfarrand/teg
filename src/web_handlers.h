@@ -19,6 +19,7 @@ void api_waveform_get(Request &req, Response &res);
 void api_waveform_post(Request &req, Response &res);
 void api_fault_clear(Request &req, Response &res);
 void api_crash(Request &req, Response &res);
+void api_log(Request &req, Response &res);
 void api_spectrum(Request &req, Response &res);
 void api_scope_get(Request &req, Response &res);
 void api_config_export(Request &req, Response &res);

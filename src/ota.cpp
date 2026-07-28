@@ -79,7 +79,7 @@ bool otaIngestStream(Stream &in, const char **err, void (*progress)()) {
   if (!active) {
     enterOtaSafeState();
     active = true;
-    writeLog("OTA: safe state entered; outputs disabled until reboot");
+    writeLogLevel(EventWarn, "OTA: safe state entered; outputs disabled until reboot");
   }
   verified = false;
   otaIngestInit(ing);
@@ -159,7 +159,7 @@ void otaRequestAbort() {
 void otaLoopTask() {
   if (commitPending) {
     commitPending = false;
-    writeLog("OTA: committing new firmware and rebooting");
+    writeLogLevel(EventWarn, "OTA: committing new firmware and rebooting");
     delay(50); // let the log/socket drain
     kickWatchdog();
     otaFlashCommit(verifiedSize, verifiedCrc); // never returns

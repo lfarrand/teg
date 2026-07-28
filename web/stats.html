@@ -61,6 +61,15 @@
     </div>
   </div>
 
+  <div class="chart-card" style="margin-top:1rem">
+    <h2><span>Event log</span><span class="now" id="log-info">&mdash;</span></h2>
+    <div id="log-lines" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.72rem;line-height:1.45;max-height:16rem;overflow-y:auto"></div>
+    <div class="legend" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
+      <span>Newest last &middot; times are UTC from the battery-backed clock; entries logged before the clock was set show uptime instead</span>
+      <label style="margin:0"><input type="checkbox" id="log-auto" checked> auto-refresh</label>
+    </div>
+  </div>
+
   <p class="legend" id="footer"></p>
 </main>
 
@@ -258,6 +267,7 @@ async function poll() {
     chPllErr.push([pllLive ? s.pllPhaseErrCentiDeg / 100 : null]);
     $("#fault-banner").style.display = s.fault ? "block" : "none";
     pollSpectrum();
+    pollLog();
     const up = Math.floor(s.uptimeMs / 1000);
     $("#footer").textContent =
       `uptime ${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m ${up % 60}s · ` +
@@ -270,6 +280,66 @@ async function poll() {
         : "") +
       (s.pllEnabled ? ` · PLL ${s.pllState}` : "");
   } catch (e) { /* device busy; next tick */ }
+}
+
+// Event log: poll with the last sequence number seen, so nothing repeats
+// and nothing is missed between refreshes
+let logCursor = 0;
+let logBootId = null;
+let logBusy = false;
+function fmtUptimeShort(ms) {
+  const s = Math.floor(ms / 1000);
+  return `+${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m${String(s % 60).padStart(2, "0")}s`;
+}
+async function pollLog() {
+  if (!$("#log-auto").checked || logBusy) return; // one request in flight at a time
+  logBusy = true;
+  try {
+    const d = await (await fetch(`/api/log?since=${logCursor}`)).json();
+    const box = $("#log-lines");
+    // The device rebooted (OTA commit, watchdog, power cycle): sequence
+    // numbers restarted, so a retained cursor would silently match nothing
+    if (logBootId !== null && d.bootId !== logBootId) {
+      box.innerHTML = "";
+      logCursor = 0;
+      const r = document.createElement("div");
+      r.style.opacity = "0.6";
+      r.textContent = "— device restarted —";
+      box.appendChild(r);
+      logBusy = false;
+      return; // fetch the fresh log on the next tick
+    }
+    logBootId = d.bootId;
+    if (d.newest < logCursor) { // defensive: cursor ahead of the device
+      box.innerHTML = "";
+      logCursor = 0;
+      logBusy = false;
+      return;
+    }
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+    if (d.gap && (d.events || []).length) {
+      const g = document.createElement("div");
+      g.style.opacity = "0.6";
+      g.textContent = "… older entries dropped (log full)";
+      box.appendChild(g);
+    }
+    (d.events || []).forEach((e) => {
+      const row = document.createElement("div");
+      const when = e.time || fmtUptimeShort(e.uptimeMs);
+      row.textContent = `${when}  ${e.text}`;
+      if (e.level === "error") row.style.color = "#c62828";
+      else if (e.level === "warn") row.style.color = "#b26a00";
+      box.appendChild(row);
+      logCursor = e.seq;
+    });
+    while (box.childElementCount > 300) box.removeChild(box.firstChild);
+    if (atBottom) box.scrollTop = box.scrollHeight;
+    $("#log-info").textContent = d.ntpSynced
+      ? "NTP synced"
+      : (d.clockValid ? "RTC time (no NTP yet)" : "clock not set");
+  } catch (e) { /* device busy */ } finally {
+    logBusy = false;
+  }
 }
 
 function schedule() {

@@ -1,5 +1,8 @@
 #include "utils.h"
+#include "event_log_api.h"
+#include "main.h" // kickWatchdog
 #include "ntp_utils.h"
+#include <QNEthernet.h>
 #include "config_json.h"
 #include "Adafruit_SSD1306.h"
 #include "qnethernet/QNEthernetClient.h"
@@ -37,6 +40,10 @@ constexpr unsigned long DisplayFlushIntervalMs = 250;
 // apply path in particular). loop() calls flushDisplay() every pass, so the
 // display still updates within a millisecond of the log line.
 void writeLog(const String &msg) {
+  writeLogLevel(EventInfo, msg);
+}
+
+void writeLogLevel(uint8_t level, const String &msg) {
   for (int i = 0; i < LogSize - 1; i++) {
     logs[i] = logs[i + 1];
   }
@@ -44,6 +51,9 @@ void writeLog(const String &msg) {
   logs[LogSize - 1] = msg;
 
   Serial.println(msg);
+
+  // Timestamped copy for /api/log
+  eventLogRecord(level, msg.c_str());
 
   displayDirty = true;
 }
@@ -99,34 +109,78 @@ void printDigits(int digits) {
   Serial.print(digits);
 }
 
-time_t getNtpTime() {
-  while (ntpUDP.parsePacket() > 0);
-  Serial.println(F("Transmit NTP Request"));
-  sendNTPpacket(timeServer);
-  uint32_t beginWait = millis();
-  while (millis() - beginWait < 1500) {
-    int size = ntpUDP.parsePacket();
+// Non-blocking NTP client. The request is sent from loop() and the reply is
+// collected on later passes, so no control task ever waits on the network.
+// The server name is resolved ONCE (DNS lookups block for seconds) and the
+// address cached; a failed resolve is retried on a slow cadence with the
+// watchdog serviced around it.
+namespace {
+constexpr uint32_t NtpResyncIntervalMs = 3600000UL; // hourly is ample for logs
+constexpr uint32_t NtpRetryIntervalMs = 60000UL;
+constexpr uint32_t NtpReplyTimeoutMs = 2000UL;
+
+IPAddress ntpAddr;
+bool ntpAddrValid = false;
+bool ntpAwaiting = false;
+uint32_t ntpSentAt = 0;
+uint32_t ntpLastAttempt = 0;
+bool ntpEverAttempted = false;
+} // namespace
+
+void ntpTask() {
+  const uint32_t nowMs = millis();
+  const bool haveTime = eventClockNtpSynced();
+  const uint32_t due = haveTime ? NtpResyncIntervalMs : NtpRetryIntervalMs;
+
+  if (ntpAwaiting) {
+    const int size = ntpUDP.parsePacket();
     if (size >= NTP_PACKET_SIZE) {
-      Serial.println(F("Receive NTP Response"));
       ntpUDP.read(packetBuffer, NTP_PACKET_SIZE);
-      uint32_t secsSince1900 = parseNtpSeconds(packetBuffer);
-      Serial.print(F("Seconds since 1 Jan 1900: "));
-      Serial.println(secsSince1900);
-      time_t time = ntpToUnixEpoch(secsSince1900);
-      Serial.print(F("Seconds since 1 Jan 1970: "));
-      Serial.println(time);
-      return time;
+      const uint32_t secsSince1900 = parseNtpSeconds(packetBuffer);
+      const uint32_t epoch = static_cast<uint32_t>(ntpToUnixEpoch(secsSince1900));
+      ntpAwaiting = false;
+      // Validate before adopting: an unsolicited or malformed datagram must
+      // never set the clock, and must never reach the battery-backed RTC
+      if (epoch >= MinPlausibleEpoch) {
+        eventClockSynced(epoch);
+      } else {
+        writeLogLevel(EventWarn, "NTP reply rejected (implausible time)");
+      }
+      return;
+    }
+    if (nowMs - ntpSentAt > NtpReplyTimeoutMs) {
+      ntpAwaiting = false; // no reply; retry on the normal cadence
+    }
+    return;
+  }
+
+  if (ntpEverAttempted && nowMs - ntpLastAttempt < due) {
+    return;
+  }
+  if (static_cast<uint32_t>(Ethernet.localIP()) == 0) {
+    return; // no link yet
+  }
+  ntpLastAttempt = nowMs;
+  ntpEverAttempted = true;
+
+  if (!ntpAddrValid) {
+    // The one blocking step, rate-limited to once a minute at worst and
+    // bracketed by watchdog kicks
+    kickWatchdog();
+    ntpAddrValid = Ethernet.hostByName(timeServer, ntpAddr);
+    kickWatchdog();
+    if (!ntpAddrValid) {
+      return;
     }
   }
-  Serial.println("No NTP Response :-(");
-  return 0;
-}
-
-void sendNTPpacket(const char *host) {
+  while (ntpUDP.parsePacket() > 0) {
+  }
   buildNtpRequest(packetBuffer);
-  ntpUDP.beginPacket(host, 123);
+  ntpUDP.beginPacket(ntpAddr, 123);
   ntpUDP.write(packetBuffer, NTP_PACKET_SIZE);
   ntpUDP.endPacket();
+  ntpSentAt = millis();
+  ntpAwaiting = true;
 }
 
 void writeInfluxDb(const String &data) {

@@ -437,7 +437,7 @@ void configureModule1() {
     .dutyA = config.Pwm.Tm1.Sm13.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm1.Sm13.ChannelB.DutyCycle,
     .hasChanB = true,
-    .complementary = true
+    .complementary = config.Pwm.ComplementaryPairs
   };
   setupSubmodule(Sm13, settings, config.Pwm.PrintRegs);
   writeLog("Started TM1");
@@ -456,7 +456,8 @@ void configureModule2() {
   // polarity, so an inverted pair would go high on fault. Rewrite the plans in
   // place first, so the ISR's duty complement and the polarity below agree.
   for (uint8_t k = 0; k < MaxModulationCells; k++) {
-    cellPlan[k] = modulationCellPlanForPairMode(cellPlan[k], CellComplementary[k]);
+    cellPlan[k] = modulationCellPlanForPairMode(cellPlan[k],
+                                                CellComplementary[k] && config.Pwm.ComplementaryPairs);
   }
 
   // Everything else is explicitly restored to normal polarity so scheme changes
@@ -473,7 +474,7 @@ void configureModule2() {
     .dutyA = config.Pwm.Tm2.Sm20.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm2.Sm20.ChannelB.DutyCycle,
     .hasChanB = true,
-    .complementary = true
+    .complementary = config.Pwm.ComplementaryPairs
   };
   setupSubmodule(Sm20, sm20Settings, config.Pwm.PrintRegs);
 
@@ -495,7 +496,7 @@ void configureModule2() {
     .dutyA = config.Pwm.Tm2.Sm22.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm2.Sm22.ChannelB.DutyCycle,
     .hasChanB = true,
-    .complementary = true
+    .complementary = config.Pwm.ComplementaryPairs
   };
   setupSubmodule(Sm22, sm22Settings, config.Pwm.PrintRegs);
 
@@ -506,7 +507,7 @@ void configureModule2() {
     .dutyA = config.Pwm.Tm2.Sm23.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm2.Sm23.ChannelB.DutyCycle,
     .hasChanB = true,
-    .complementary = true
+    .complementary = config.Pwm.ComplementaryPairs
   };
   setupSubmodule(Sm23, sm23Settings, config.Pwm.PrintRegs);
 
@@ -542,7 +543,7 @@ void configureModule3() {
     .dutyA = config.Pwm.Tm3.Sm31.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm3.Sm31.ChannelB.DutyCycle,
     .hasChanB = true,
-    .complementary = true
+    .complementary = config.Pwm.ComplementaryPairs
   };
   setupSubmodule(Sm31, settings, config.Pwm.PrintRegs);
   writeLog("Started TM3");

@@ -318,6 +318,56 @@ void test_doc_completeness_gate() {
   }
 }
 
+void test_complementary_pairs_roundtrips_and_defaults_on() {
+  // Defaults on: an inverter leg needs it, and it is what the dead-time settings
+  // have always implied.
+  MainConfig fresh;
+  TEST_ASSERT_TRUE(fresh.Pwm.ComplementaryPairs);
+  TEST_ASSERT_EQUAL_UINT16(MinComplementaryDeadTimeNs, fresh.Pwm.Tm2.Sm20.DeadTime);
+
+  // An explicit false survives a save/load cycle - an escape hatch that silently
+  // reverted to on would be worse than not having one.
+  MainConfig saved;
+  saved.Pwm.ComplementaryPairs = false;
+  JsonDocument doc;
+  configToJson(saved, doc);
+
+  MainConfig loaded;
+  configFromJson(doc, loaded);
+  TEST_ASSERT_FALSE(loaded.Pwm.ComplementaryPairs);
+
+  // And a document that omits the key keeps the safe default rather than
+  // inheriting a zero-initialised bool.
+  JsonDocument partial;
+  partial["Pwm"]["PrintRegs"] = true;
+  MainConfig fromPartial;
+  fromPartial.Pwm.ComplementaryPairs = false;
+  configFromJson(partial, fromPartial);
+  TEST_ASSERT_TRUE(fromPartial.Pwm.ComplementaryPairs);
+}
+
+void test_validate_floors_dead_time_only_when_complementary() {
+  // With complementary pairs on, a zero dead time is a shoot-through on every
+  // carrier edge, so validation raises it and reports the correction.
+  MainConfig cfg;
+  cfg.Pwm.ComplementaryPairs = true;
+  cfg.Pwm.Tm2.Sm20.DeadTime = 0;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(MinComplementaryDeadTimeNs, cfg.Pwm.Tm2.Sm20.DeadTime);
+
+  // A value already above the floor is left alone.
+  cfg.Pwm.Tm2.Sm20.DeadTime = 250;
+  validateConfig(cfg);
+  TEST_ASSERT_EQUAL_UINT16(250, cfg.Pwm.Tm2.Sm20.DeadTime);
+
+  // With independent channels the hardware ignores dead time anyway, so
+  // validation must not silently rewrite a value set for some other reason.
+  cfg.Pwm.ComplementaryPairs = false;
+  cfg.Pwm.Tm2.Sm20.DeadTime = 0;
+  validateConfig(cfg);
+  TEST_ASSERT_EQUAL_UINT16(0, cfg.Pwm.Tm2.Sm20.DeadTime);
+}
+
 void test_validate_clamps_out_of_range_frequency() {
   MainConfig cfg;
   cfg.Pwm.Tm1.Sm13.PwmFrequency = 0;
@@ -483,5 +533,7 @@ int main() {
   RUN_TEST(test_validate_current_limit);
   RUN_TEST(test_validate_pll);
   RUN_TEST(test_validate_mppt);
+  RUN_TEST(test_complementary_pairs_roundtrips_and_defaults_on);
+  RUN_TEST(test_validate_floors_dead_time_only_when_complementary);
   return UNITY_END();
 }

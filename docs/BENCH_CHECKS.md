@@ -41,6 +41,14 @@ What to confirm, in this order:
 - [ ] **Sm42 (asymmetric induction mode) is deliberately still independent**, so
       its A/B start/stop timing is unchanged. Confirm if you use that mode.
 
+There is an escape hatch: **`Pwm.ComplementaryPairs`** (System section of the
+config page), default **on**. Turning it off restores the old independent-channel
+behaviour — channel B carries its own static duty and the hardware ignores dead
+time — which is a shoot-through on any half-bridge. It exists for bring-up and
+for hardware that genuinely drives A and B as unrelated outputs, not as a normal
+operating mode. The dead-time floor is only applied while it is on, so that
+turning it off does not silently rewrite a value you set for another reason.
+
 ### What was wrong (kept for context)
 
 **Confirmed by source inspection 2026-07-29. This affected the shipping firmware,

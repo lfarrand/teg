@@ -342,6 +342,8 @@
 
   <article>
     <header>System</header>
+    <label><input type="checkbox" role="switch" data-path="Pwm.ComplementaryPairs"> Complementary output pairs (hardware dead-time)</label>
+    <small>Off makes channel B an independent output carrying its own static duty, and the hardware ignores dead time entirely &mdash; a shoot-through on any half-bridge. Only turn it off for bring-up, or for hardware that drives A and B as unrelated outputs.</small>
     <label><input type="checkbox" role="switch" data-path="Pwm.SyncPwm"> Sync PWM timers via XBAR (applies at boot)</label>
     <label><input type="checkbox" role="switch" data-path="Pwm.PrintRegs"> Print registers on configure</label>
   </article>

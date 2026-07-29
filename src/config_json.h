@@ -8,7 +8,11 @@ struct ChannelConfig {
 };
 
 struct SubmoduleConfig {
-  uint16_t DeadTime{};
+  // Not zero-initialised: this is the compiled-in default a board falls back to
+  // when there is no readable settings file, and with complementary pairs a zero
+  // here is a shoot-through on every carrier edge. Matches
+  // MinComplementaryDeadTimeNs; validateConfig and setupSubmodule both floor it.
+  uint16_t DeadTime = 100;
   uint32_t PwmFrequency{};
   ChannelConfig ChannelA;
   ChannelConfig ChannelB;
@@ -208,6 +212,15 @@ struct PwmConfig {
   Module3Config Tm3;
   Module4Config Tm4;
   bool PrintRegs = false;
+  // Channel B is generated as A's dead-time-separated complement, for the
+  // submodules that drive a half-bridge pair. Defaults on because that is what
+  // an inverter leg needs and what the dead-time settings have always implied.
+  // Turning it off restores independent channels - B then carries its own static
+  // configured duty and the dead-time registers are ignored by the hardware,
+  // which is a shoot-through on any complementary power stage. It exists as an
+  // escape hatch for bring-up and for hardware that genuinely drives A and B as
+  // unrelated outputs, not as a normal operating mode.
+  bool ComplementaryPairs = true;
   bool SyncPwm = false;
   bool Verbose = false;
 };

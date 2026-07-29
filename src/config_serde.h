@@ -25,6 +25,7 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
 
   JsonObjectConst Config_Pwm = doc["Config"]["Pwm"];
   config.Pwm.PrintRegs = Config_Pwm["PrintRegs"] | false;
+  config.Pwm.ComplementaryPairs = Config_Pwm["ComplementaryPairs"] | true;
   config.Pwm.SyncPwm = Config_Pwm["SyncPwm"] | false;
   config.Pwm.Verbose = Config_Pwm["Verbose"] | false;
 
@@ -238,17 +239,22 @@ inline bool validateConfig(MainConfig &config) {
   // distorted waveform. setupSubmodule() clamps again at the point of programming
   // - loadConfiguration() can return early and skip this function entirely - but
   // correcting here is what lets the operator see the change through the API.
-  const auto floorDeadTime = [&corrected](uint16_t &deadTime) {
-    if (deadTime < MinComplementaryDeadTimeNs) {
-      deadTime = MinComplementaryDeadTimeNs;
-      corrected = true;
-    }
-  };
-  floorDeadTime(config.Pwm.Tm1.Sm13.DeadTime);
-  floorDeadTime(config.Pwm.Tm2.Sm20.DeadTime);
-  floorDeadTime(config.Pwm.Tm2.Sm22.DeadTime);
-  floorDeadTime(config.Pwm.Tm2.Sm23.DeadTime);
-  floorDeadTime(config.Pwm.Tm3.Sm31.DeadTime);
+  // Only meaningful when the pairs are complementary: with independent channels
+  // the dead-time registers are ignored by the hardware anyway, and clamping
+  // would silently change a value the operator set for some other reason.
+  if (config.Pwm.ComplementaryPairs) {
+    const auto floorDeadTime = [&corrected](uint16_t &deadTime) {
+      if (deadTime < MinComplementaryDeadTimeNs) {
+        deadTime = MinComplementaryDeadTimeNs;
+        corrected = true;
+      }
+    };
+    floorDeadTime(config.Pwm.Tm1.Sm13.DeadTime);
+    floorDeadTime(config.Pwm.Tm2.Sm20.DeadTime);
+    floorDeadTime(config.Pwm.Tm2.Sm22.DeadTime);
+    floorDeadTime(config.Pwm.Tm2.Sm23.DeadTime);
+    floorDeadTime(config.Pwm.Tm3.Sm31.DeadTime);
+  }
 
   if (config.Pwm.Tm1.Sm13.PwmFrequency < 1 || config.Pwm.Tm1.Sm13.PwmFrequency > 1000000) {
     config.Pwm.Tm1.Sm13.PwmFrequency = 1000;
@@ -388,6 +394,7 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
 
   JsonObject Config_Pwm = doc["Config"]["Pwm"].to<JsonObject>();
   Config_Pwm["PrintRegs"] = config.Pwm.PrintRegs;
+  Config_Pwm["ComplementaryPairs"] = config.Pwm.ComplementaryPairs;
   Config_Pwm["SyncPwm"] = config.Pwm.SyncPwm;
   Config_Pwm["Verbose"] = config.Pwm.Verbose;
 

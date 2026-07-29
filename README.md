@@ -643,10 +643,24 @@ limit, the PLL, MPPT, MQTT, OTA, presets, the event log and USB MTP — is
 **bench-unverified**. See **[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md)** for the
 per-feature checklist, ordered by what goes wrong if you skip it.
 
-### Known measurement and timing gaps
+### Known defects
+
+> **Complementary operation and dead time do not work.** The Teensy core sets
+> `SMCTRL2[INDEP]` on every FlexPWM submodule and this firmware never clears it,
+> so channel B is not the complement of channel A and the configured dead time is
+> ignored by the hardware. Channel B outputs its static configured duty (default
+> 50%). **Do not drive a half-bridge or H-bridge from this firmware** until it is
+> fixed and verified on a scope — both switches of a leg would conduct together
+> every carrier cycle. Cold-boot dead time is also 0, not 50 ns. Details and the
+> knock-on effects are in [docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md) §0.
 
 Found by audit, not yet fixed — they matter because they affect what you can
 trust while bench testing:
+
+- The carrier frequency the hardware actually switches at comes from
+  `Sm2x.PwmFrequency` (default **1000**), not `SpwmCarrierFrequency`
+  (default **20000**) which the ISR uses for its maths. Set inconsistently, the
+  modulation maths silently disagrees with the switching.
 
 - `getFreeMemory()` subtracts an OCRAM pointer from a DTCM pointer, so the one
   telemetry field that would reveal a stack overflow is meaningless.

@@ -97,14 +97,20 @@ state.
 ## Supply chain
 
 Only four libraries are vendored and reviewable in-tree (`lib/aWOT`,
-`lib/eFlexPwm`, `lib/miniz`, `lib/MTP_Teensy`). The other ten come from the
-PlatformIO registry using **caret ranges** (`^4.0.6`, `^0.36.0`, …), so they float
-within their major version: the same commit can build against different library
-code on different days, with nothing in the repo to show it.
+`lib/eFlexPwm`, `lib/miniz`, `lib/MTP_Teensy`). The rest come from the PlatformIO
+registry.
 
-The platform, framework and toolchain *are* pinned exactly (see `platformio.ini`).
-Pinning the libraries too — and committing the resolved versions — is the cheap
-completion of that work.
+**Fixed 2026-07-29.** Those registry libraries previously used caret ranges
+(`^4.0.6`, `^0.36.0`, …) and so floated within their major version: the same
+commit could build against different library code on different days, with nothing
+in the repo to show it. They are now pinned to exact versions in `platformio.ini`,
+including the two transitive dependencies (`Adafruit BusIO` via SSD1306, `OneWire`
+via DallasTemperature) — an unpinned transitive dependency floats just as freely
+as a direct one. Verified: firmware builds and all 231 native tests pass against
+the pinned set.
+
+The platform, framework and toolchain were already pinned exactly. A commit now
+means one binary.
 
 ### Licence blocker for any commercial use
 
@@ -122,7 +128,9 @@ intend to keep**, because the obligation attaches to whatever is in the binary.
 
 ## Recommended order
 
-1. Pin library versions; decide the QNEthernet licence question.
+1. ~~Pin library versions~~ (done 2026-07-29); **decide the QNEthernet licence
+   question** — this is the one that gets harder with time, because the AGPL
+   obligation attaches to whatever ends up in the binary.
 2. Ed25519-signed OTA with anti-rollback.
 3. Close the pre-auth DoS trio; require auth before the OTA safe state.
 4. Non-empty PIN enforced, rate limiting, failed-auth logging, Origin checks.

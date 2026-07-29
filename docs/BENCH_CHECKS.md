@@ -17,7 +17,51 @@ latency, dither spectrum).
 
 ---
 
-## 0. Before anything else
+## 0. STOP — complementary operation and dead time do not work
+
+**Confirmed by source inspection 2026-07-29. This affects the existing firmware,
+not just future plans.**
+
+The Teensy core writes `FLEXPWM_SMCTRL2_INDEP` to every FlexPWM submodule
+(`cores/teensy4/pwm.c:309`) during startup, before `setup()`. Clearing `INDEP` is
+what enables complementary output *and* the dead-time insertion logic
+(RM rev.4 p.3110–3111). Nothing in this firmware ever clears it:
+`SubModule::configure()` / `setPairOperation()` / `PWM_Init()` have **no callers
+in `src/`**.
+
+Consequences, all of which the host test suite is structurally unable to see
+because the ISR pipeline is pure maths:
+
+- **Channel B is not the complement of channel A.** The modulation ISR updates
+  channel A only. Channel B outputs its *static configured duty*
+  (`Sm2x.ChannelB.DutyCycle`, default `32768` = **50%**), centre-aligned on the
+  same instant as A.
+- **The configured dead time does nothing.** `setupSubmodule()` programs
+  `DTCNT0`/`DTCNT1` and the hardware ignores them.
+- **Cold-boot dead time is 0, not 50 ns.** `SubmoduleConfig::DeadTime` is
+  zero-initialised, `loadConfiguration()` has early-return paths that skip
+  `configFromJson`/`validateConfig` entirely (no SD card, fresh card, truncated
+  settings), `validateConfig()` has no dead-time floor, and the web UI accepts
+  `min="0"`.
+
+**Do not drive any complementary half-bridge or H-bridge from this firmware
+until `INDEP` is cleared and dead time is verified on a scope.** Both switches of
+a leg would be commanded on simultaneously every carrier cycle.
+
+Before changing it, note that clearing `INDEP` *changes what the pins do*: a
+channel B that is currently parked at a static level starts switching inverted.
+Verify on a scope with the power stage disconnected.
+
+Two further defects are currently masked by `INDEP=1` and go live the moment it
+is fixed — both only affect the polarity-inverting schemes (2, 5, and 4 with
+POD/APOD), not scheme 1:
+
+- Polarity inversion flips **both** `POLA` and `POLB`, which turns dead time into
+  overlap time.
+- `MASK` and the fault state force outputs to logic 0 *before* polarity, so
+  inverted cells go **HIGH** on fault, during OTA, and at boot-mask.
+
+## 0b. Before anything else
 
 - [ ] **Build reproducibility.** `platformio.ini` pins the platform, framework
       and toolchain (`teensy@5.0.0`, `framework-arduinoteensy@1.159.0`,

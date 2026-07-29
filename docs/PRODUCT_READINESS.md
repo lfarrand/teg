@@ -76,6 +76,45 @@ Recorded because these were counter-intuitive and cost real time to establish:
   a *second, different* board: a real half-bridge with two isolated gate domains
   and 100–200 V silicon or GaN. The 2 kV board then plugs in unchanged as the DC
   interrupter, which preserves its certification work.
+
+  **Verified 2026-07-29 (5-agent adversarial pass, 4 of 5 verdicts
+  "unsafe-as-described").** The specific proposal of populating one MOSFET per
+  board and strapping the vacant footprint to make four bridge switches is
+  *electrically* sound — the strap bypasses nothing, the Kelvin gate loop is
+  untouched, body-diode orientation is correct for a leg, and the single-switch
+  role is thermally kinder than the board's intended one. It fails on five
+  independent counts, any one of which destroys devices:
+
+  1. **Firmware `INDEP` defect** (above) — leg shoot-through on the first
+     carrier cycle. This is the most likely first-power-up device killer.
+  2. **The strap is an air-bridge, not a pad link.** A 1.97 mm routed slot (the
+     drain–source creepage cut) sits between Q2's drain and source holes. It
+     needs a formed wire through both plated holes, restrained and insulated.
+  3. **No DC-link capacitance, snubber or clamp anywhere on the power nets**
+     (only Q1, Q2, H1, H2 touch them), and the commutation loop now spans two
+     PCBs: ~108 nH from the boards alone, 250–510 nH realistically, against
+     gate resistors built at 1.00 Ω. That is 810–1600 V of turn-off overshoot,
+     and the IMYH200R family publishes **no avalanche rating**, so V_DSS is a
+     destruction limit. Infineon's own eval ceiling for this device+driver is
+     1600 V, not 2000 V.
+  4. **No current sensing in the power path at all.** The INA226 and its 10 mΩ
+     shunt are on the 14–26 V *auxiliary* input, and the 1ED3124MU12H in
+     PG-DSO-8 has no desat, no fault pin and no enable. The only interlock in
+     the entire system is one MCU register.
+  5. **The boards cannot currently be built**: 43 DNP flags cover the whole
+     gate-drive subsystem. Worse, the obvious depopulation plan (keep Q1/IC3,
+     drop Q2/IC5) keeps the channel whose `GND1` island has none of the 293
+     ground vias, and discards the one with via-in-pad.
+
+  Also corrected: there is **one** Murata MGJ6D122005SC and **one** LT3085
+  shared by both channels, not one per channel; both gate drivers are
+  hard-paralleled on the same PWM pair, so the board is one logical channel; and
+  the 1ED3124MU12H datasheet carries **no V_IORM** (UL 1577 recognition only) —
+  the binding figure is the 2300 V `V_OFFSET` destruction limit.
+
+  As a firmware/control test rig at ≤100 V, single-pulse, one leg, the concept is
+  usable once `INDEP` and dead time are fixed. As a route to an inverter product
+  it is not.
 - **Speed is the wrong headline for the arc product.** Sandia's ignition data
   shows 750 J already sits below the ignition threshold of PV materials, so extra
   speed buys little additional fire safety — and a competent assessor will say so

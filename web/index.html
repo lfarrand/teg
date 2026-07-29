@@ -399,7 +399,14 @@ function buildSubmoduleCards() {
     const art = document.createElement("article");
     let html = `<header>${title}</header><div class="grid-fields">
       <label>Frequency Hz <input type="number" min="1" data-path="Pwm.${path}.PwmFrequency"></label>
-      <label>Dead time ns <input type="number" min="0" max="65535" data-path="Pwm.${path}.DeadTime"></label>`;
+      <label>Pair mode
+      <select data-path="Pwm.${path}.Pair">
+        <option value="0">Independent (A and B unrelated)</option>
+        <option value="1">Half-bridge (B = !A, dead time inserted)</option>
+        <option value="2">Differential (B = !A, no dead time)</option>
+      </select>
+    </label>
+    <label>Dead time ns <input type="number" min="0" max="13646" data-path="Pwm.${path}.DeadTime"></label>`;
     for (const ch of channels) {
       html += `<label>Duty ${ch} /65535 <input type="number" min="0" max="65535" data-path="Pwm.${path}.Channel${ch}.DutyCycle"></label>`;
     }

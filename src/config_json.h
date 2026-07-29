@@ -3,12 +3,24 @@
 
 #include <stdint.h>
 
+#include "pwm_pair.h"
+
 struct ChannelConfig {
   uint16_t DutyCycle{};
 };
 
 struct SubmoduleConfig {
-  uint16_t DeadTime{};
+  // What this submodule's A/B pins physically drive. PairIndependent is what the
+  // firmware has always done, so it stays the default - an update must not change
+  // what the pins do on a board already wired. validateConfig() reduces a mode the
+  // submodule cannot run (no B pin, or Sm42's independent start/stop timing) back
+  // to Independent. See pwm_pair.h.
+  uint8_t Pair = PairIndependent;
+  // Nanoseconds, consumed only in PairHalfBridge - pairDeadTimeNs() forces zero for
+  // the other modes. Defaults to the half-bridge floor rather than zero so that
+  // switching a submodule to HalfBridge without touching this field cannot ask for
+  // a zero gap, and so the compiled default matches the JSON fallback exactly.
+  uint16_t DeadTime = MinHalfBridgeDeadTimeNs;
   uint32_t PwmFrequency{};
   ChannelConfig ChannelA;
   ChannelConfig ChannelB;

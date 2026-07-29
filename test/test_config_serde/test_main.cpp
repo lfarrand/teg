@@ -91,10 +91,12 @@ void test_defaults_from_empty_document() {
   TEST_ASSERT_EQUAL_UINT16(10000, cfg.Meter.CurrentMilliampPerVolt);
   TEST_ASSERT_EQUAL_UINT16(1000, cfg.Meter.VoltageRatioMilli);
   TEST_ASSERT_EQUAL_STRING("", cfg.Security.WritePin);
-  TEST_ASSERT_EQUAL_UINT16(50, cfg.Pwm.Tm1.Sm13.DeadTime);
+  TEST_ASSERT_EQUAL_UINT16(MinHalfBridgeDeadTimeNs, cfg.Pwm.Tm1.Sm13.DeadTime);
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm1.Sm13.Pair);
   TEST_ASSERT_EQUAL_UINT32(1000, cfg.Pwm.Tm1.Sm13.PwmFrequency);
   TEST_ASSERT_EQUAL_UINT16(32768, cfg.Pwm.Tm1.Sm13.ChannelA.DutyCycle);
-  TEST_ASSERT_EQUAL_UINT16(50, cfg.Pwm.Tm4.Sm42.DeadTime);
+  TEST_ASSERT_EQUAL_UINT16(MinHalfBridgeDeadTimeNs, cfg.Pwm.Tm4.Sm42.DeadTime);
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm4.Sm42.Pair);
   TEST_ASSERT_EQUAL_UINT16(32768, cfg.Pwm.Tm4.Sm42.ChannelB.DutyCycle);
 }
 
@@ -224,7 +226,7 @@ void test_partial_document_keeps_defaults_elsewhere() {
   configFromJson(doc, cfg);
 
   TEST_ASSERT_EQUAL_UINT32(12345, cfg.Pwm.Tm2.Sm20.PwmFrequency);
-  TEST_ASSERT_EQUAL_UINT16(50, cfg.Pwm.Tm2.Sm20.DeadTime);       // default
+  TEST_ASSERT_EQUAL_UINT16(MinHalfBridgeDeadTimeNs, cfg.Pwm.Tm2.Sm20.DeadTime); // default
   TEST_ASSERT_EQUAL_UINT32(1000, cfg.Pwm.Tm1.Sm13.PwmFrequency); // default
 }
 
@@ -316,6 +318,128 @@ void test_doc_completeness_gate() {
     partial["Config"].as<JsonObject>().remove(sections[i]);
     TEST_ASSERT_FALSE(configDocComplete(partial));
   }
+}
+
+void test_pair_mode_roundtrips_per_submodule() {
+  // Each submodule carries its own mode, so a save/load cycle must not smear one
+  // submodule's setting onto another.
+  MainConfig cfg;
+  cfg.Pwm.Tm2.Sm20.Pair = PairHalfBridge;
+  cfg.Pwm.Tm2.Sm22.Pair = PairDifferential;
+  cfg.Pwm.Tm3.Sm31.Pair = PairHalfBridge;
+  cfg.Pwm.Tm2.Sm20.DeadTime = 300;
+
+  JsonDocument doc;
+  configToJson(cfg, doc);
+  MainConfig restored;
+  configFromJson(doc, restored);
+
+  TEST_ASSERT_EQUAL_UINT8(PairHalfBridge, restored.Pwm.Tm2.Sm20.Pair);
+  TEST_ASSERT_EQUAL_UINT8(PairDifferential, restored.Pwm.Tm2.Sm22.Pair);
+  TEST_ASSERT_EQUAL_UINT8(PairHalfBridge, restored.Pwm.Tm3.Sm31.Pair);
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, restored.Pwm.Tm2.Sm23.Pair);
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, restored.Pwm.Tm1.Sm13.Pair);
+  TEST_ASSERT_EQUAL_UINT16(300, restored.Pwm.Tm2.Sm20.DeadTime);
+}
+
+void test_absent_pair_key_defaults_to_independent() {
+  // A settings file written before this field existed, or one hand-edited, must
+  // land on the mode that is always valid rather than inherit whatever was in the
+  // struct - the config is reused across loads.
+  JsonDocument doc;
+  doc["Config"]["Pwm"]["Tm2"]["Sm20"]["DeadTime"] = 400;
+  MainConfig cfg;
+  cfg.Pwm.Tm2.Sm20.Pair = PairHalfBridge; // stale value from a previous load
+  configFromJson(doc, cfg);
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm2.Sm20.Pair);
+  TEST_ASSERT_EQUAL_UINT16(400, cfg.Pwm.Tm2.Sm20.DeadTime);
+}
+
+void test_validate_refuses_pairing_submodules_without_a_b_pin() {
+  // Sm21/Sm40/Sm41 have no channel-B pin; pairing one would run DTCNT1 at its
+  // 0x07FF reset value as the falling-edge dead time.
+  MainConfig cfg;
+  cfg.Pwm.Tm2.Sm21.Pair = PairHalfBridge;
+  cfg.Pwm.Tm4.Sm40.Pair = PairDifferential;
+  cfg.Pwm.Tm4.Sm41.Pair = PairHalfBridge;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm2.Sm21.Pair);
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm4.Sm40.Pair);
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm4.Sm41.Pair);
+
+  // Sm42 has a B pin but drives it from independent start/stop values.
+  MainConfig sm42;
+  sm42.Pwm.Tm4.Sm42.Pair = PairHalfBridge;
+  TEST_ASSERT_TRUE(validateConfig(sm42));
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, sm42.Pwm.Tm4.Sm42.Pair);
+
+  // The submodules that CAN be a leg are left alone.
+  MainConfig legs;
+  legs.Pwm.Tm2.Sm20.Pair = PairHalfBridge;
+  legs.Pwm.Tm2.Sm22.Pair = PairDifferential;
+  validateConfig(legs);
+  TEST_ASSERT_EQUAL_UINT8(PairHalfBridge, legs.Pwm.Tm2.Sm20.Pair);
+  TEST_ASSERT_EQUAL_UINT8(PairDifferential, legs.Pwm.Tm2.Sm22.Pair);
+}
+
+void test_validate_clamps_dead_time_to_a_representable_value() {
+  // Above ~13.6us DTCNT wraps, programming a SHORTER gap than requested.
+  MainConfig cfg;
+  cfg.Pwm.Tm2.Sm20.DeadTime = 65535;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT16(pairMaxDeadTimeNs(), cfg.Pwm.Tm2.Sm20.DeadTime);
+  TEST_ASSERT_TRUE(pairDeadTimeCycles(cfg.Pwm.Tm2.Sm20.DeadTime) <= MaxDeadTimeCycles);
+
+  // A representable value is untouched.
+  cfg.Pwm.Tm2.Sm20.DeadTime = 500;
+  validateConfig(cfg);
+  TEST_ASSERT_EQUAL_UINT16(500, cfg.Pwm.Tm2.Sm20.DeadTime);
+}
+
+void test_validate_is_idempotent_over_pair_modes() {
+  // Running validation twice must not move anything again, or a config could drift
+  // every time it is saved.
+  for (uint8_t mode = 0; mode < PairModeCount + 2; mode++) {
+    MainConfig cfg;
+    cfg.Pwm.Tm2.Sm20.Pair = mode;
+    cfg.Pwm.Tm2.Sm21.Pair = mode;
+    cfg.Pwm.Tm4.Sm42.Pair = mode;
+    validateConfig(cfg);
+    const uint8_t a = cfg.Pwm.Tm2.Sm20.Pair, b = cfg.Pwm.Tm2.Sm21.Pair, c = cfg.Pwm.Tm4.Sm42.Pair;
+    TEST_ASSERT_FALSE(validateConfig(cfg)); // nothing left to correct
+    TEST_ASSERT_EQUAL_UINT8(a, cfg.Pwm.Tm2.Sm20.Pair);
+    TEST_ASSERT_EQUAL_UINT8(b, cfg.Pwm.Tm2.Sm21.Pair);
+    TEST_ASSERT_EQUAL_UINT8(c, cfg.Pwm.Tm4.Sm42.Pair);
+  }
+}
+
+void test_pair_change_is_visible_to_the_reconfigure_gates() {
+  // applyPwmConfig() only reconfigures a timer when
+  // memcmp(&previous.Pwm.TmN, &config.Pwm.TmN, sizeof(...)) differs. A previous
+  // attempt put the pair setting at Pwm. level, outside all four gates, so
+  // changing it reconfigured nothing while the UI reported success. This test
+  // replicates the comparison so that moving the field out again fails here
+  // rather than silently going inert on hardware.
+  MainConfig before, after;
+  after.Pwm.Tm2.Sm20.Pair = PairHalfBridge;
+  TEST_ASSERT_TRUE(memcmp(&before.Pwm.Tm2, &after.Pwm.Tm2, sizeof(after.Pwm.Tm2)) != 0);
+
+  MainConfig b1, a1;
+  a1.Pwm.Tm1.Sm13.Pair = PairDifferential;
+  TEST_ASSERT_TRUE(memcmp(&b1.Pwm.Tm1, &a1.Pwm.Tm1, sizeof(a1.Pwm.Tm1)) != 0);
+
+  MainConfig b3, a3;
+  a3.Pwm.Tm3.Sm31.Pair = PairHalfBridge;
+  TEST_ASSERT_TRUE(memcmp(&b3.Pwm.Tm3, &a3.Pwm.Tm3, sizeof(a3.Pwm.Tm3)) != 0);
+
+  MainConfig b4, a4;
+  a4.Pwm.Tm4.Sm42.Pair = PairDifferential;
+  TEST_ASSERT_TRUE(memcmp(&b4.Pwm.Tm4, &a4.Pwm.Tm4, sizeof(a4.Pwm.Tm4)) != 0);
+
+  // And an identical pair of configs must compare equal, so the gate does not fire
+  // on every apply for no reason.
+  MainConfig same1, same2;
+  TEST_ASSERT_EQUAL_INT(0, memcmp(&same1.Pwm.Tm2, &same2.Pwm.Tm2, sizeof(same2.Pwm.Tm2)));
 }
 
 void test_validate_clamps_out_of_range_frequency() {
@@ -479,6 +603,12 @@ int main() {
   RUN_TEST(test_preserve_secrets_keeps_stored_values_on_empty_post);
   RUN_TEST(test_restore_secrets_is_unconditional);
   RUN_TEST(test_doc_completeness_gate);
+  RUN_TEST(test_pair_mode_roundtrips_per_submodule);
+  RUN_TEST(test_absent_pair_key_defaults_to_independent);
+  RUN_TEST(test_validate_refuses_pairing_submodules_without_a_b_pin);
+  RUN_TEST(test_validate_clamps_dead_time_to_a_representable_value);
+  RUN_TEST(test_validate_is_idempotent_over_pair_modes);
+  RUN_TEST(test_pair_change_is_visible_to_the_reconfigure_gates);
   RUN_TEST(test_validate_clamps_out_of_range_frequency);
   RUN_TEST(test_validate_current_limit);
   RUN_TEST(test_validate_pll);

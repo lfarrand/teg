@@ -29,7 +29,8 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Pwm.Verbose = Config_Pwm["Verbose"] | false;
 
   JsonObjectConst Config_Pwm_Tm1_Sm13 = Config_Pwm["Tm1"]["Sm13"];
-  config.Pwm.Tm1.Sm13.DeadTime = Config_Pwm_Tm1_Sm13["DeadTime"] | 50;
+  config.Pwm.Tm1.Sm13.Pair = Config_Pwm_Tm1_Sm13["Pair"] | PairIndependent;
+  config.Pwm.Tm1.Sm13.DeadTime = Config_Pwm_Tm1_Sm13["DeadTime"] | MinHalfBridgeDeadTimeNs;
   config.Pwm.Tm1.Sm13.PwmFrequency = Config_Pwm_Tm1_Sm13["PwmFrequency"] | 1000;
   config.Pwm.Tm1.Sm13.ChannelA.DutyCycle = Config_Pwm_Tm1_Sm13["ChannelA"]["DutyCycle"] | 32768;
   config.Pwm.Tm1.Sm13.ChannelB.DutyCycle = Config_Pwm_Tm1_Sm13["ChannelB"]["DutyCycle"] | 32768;
@@ -53,46 +54,54 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Pwm.Tm2.WaveformSampleStep = Config_Pwm_Tm2["WaveformSampleStep"] | false;
 
   JsonObjectConst Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2["Sm20"];
-  config.Pwm.Tm2.Sm20.DeadTime = Config_Pwm_Tm2_Sm20["DeadTime"] | 50;
+  config.Pwm.Tm2.Sm20.Pair = Config_Pwm_Tm2_Sm20["Pair"] | PairIndependent;
+  config.Pwm.Tm2.Sm20.DeadTime = Config_Pwm_Tm2_Sm20["DeadTime"] | MinHalfBridgeDeadTimeNs;
   config.Pwm.Tm2.Sm20.PwmFrequency = Config_Pwm_Tm2_Sm20["PwmFrequency"] | 1000;
   config.Pwm.Tm2.Sm20.ChannelA.DutyCycle = Config_Pwm_Tm2_Sm20["ChannelA"]["DutyCycle"] | 32768;
   config.Pwm.Tm2.Sm20.ChannelB.DutyCycle = Config_Pwm_Tm2_Sm20["ChannelB"]["DutyCycle"] | 32768;
 
   JsonObjectConst Config_Pwm_Tm2_Sm21 = Config_Pwm_Tm2["Sm21"];
-  config.Pwm.Tm2.Sm21.DeadTime = Config_Pwm_Tm2_Sm21["DeadTime"] | 50;
+  config.Pwm.Tm2.Sm21.Pair = Config_Pwm_Tm2_Sm21["Pair"] | PairIndependent;
+  config.Pwm.Tm2.Sm21.DeadTime = Config_Pwm_Tm2_Sm21["DeadTime"] | MinHalfBridgeDeadTimeNs;
   config.Pwm.Tm2.Sm21.PwmFrequency = Config_Pwm_Tm2_Sm21["PwmFrequency"] | 1000;
   config.Pwm.Tm2.Sm21.ChannelA.DutyCycle = Config_Pwm_Tm2_Sm21["ChannelA"]["DutyCycle"] | 32768;
 
   JsonObjectConst Config_Pwm_Tm2_Sm22 = Config_Pwm_Tm2["Sm22"];
-  config.Pwm.Tm2.Sm22.DeadTime = Config_Pwm_Tm2_Sm22["DeadTime"] | 50;
+  config.Pwm.Tm2.Sm22.Pair = Config_Pwm_Tm2_Sm22["Pair"] | PairIndependent;
+  config.Pwm.Tm2.Sm22.DeadTime = Config_Pwm_Tm2_Sm22["DeadTime"] | MinHalfBridgeDeadTimeNs;
   config.Pwm.Tm2.Sm22.PwmFrequency = Config_Pwm_Tm2_Sm22["PwmFrequency"] | 1000;
   config.Pwm.Tm2.Sm22.ChannelA.DutyCycle = Config_Pwm_Tm2_Sm22["ChannelA"]["DutyCycle"] | 32768;
   config.Pwm.Tm2.Sm22.ChannelB.DutyCycle = Config_Pwm_Tm2_Sm22["ChannelB"]["DutyCycle"] | 32768;
 
   JsonObjectConst Config_Pwm_Tm2_Sm23 = Config_Pwm_Tm2["Sm23"];
-  config.Pwm.Tm2.Sm23.DeadTime = Config_Pwm_Tm2_Sm23["DeadTime"] | 50;
+  config.Pwm.Tm2.Sm23.Pair = Config_Pwm_Tm2_Sm23["Pair"] | PairIndependent;
+  config.Pwm.Tm2.Sm23.DeadTime = Config_Pwm_Tm2_Sm23["DeadTime"] | MinHalfBridgeDeadTimeNs;
   config.Pwm.Tm2.Sm23.PwmFrequency = Config_Pwm_Tm2_Sm23["PwmFrequency"] | 1000;
   config.Pwm.Tm2.Sm23.ChannelA.DutyCycle = Config_Pwm_Tm2_Sm23["ChannelA"]["DutyCycle"] | 32768;
   config.Pwm.Tm2.Sm23.ChannelB.DutyCycle = Config_Pwm_Tm2_Sm23["ChannelB"]["DutyCycle"] | 32768;
 
   JsonObjectConst Config_Pwm_Tm3_Sm31 = Config_Pwm["Tm3"]["Sm31"];
-  config.Pwm.Tm3.Sm31.DeadTime = Config_Pwm_Tm3_Sm31["DeadTime"] | 50;
+  config.Pwm.Tm3.Sm31.Pair = Config_Pwm_Tm3_Sm31["Pair"] | PairIndependent;
+  config.Pwm.Tm3.Sm31.DeadTime = Config_Pwm_Tm3_Sm31["DeadTime"] | MinHalfBridgeDeadTimeNs;
   config.Pwm.Tm3.Sm31.PwmFrequency = Config_Pwm_Tm3_Sm31["PwmFrequency"] | 1000;
   config.Pwm.Tm3.Sm31.ChannelA.DutyCycle = Config_Pwm_Tm3_Sm31["ChannelA"]["DutyCycle"] | 32768;
   config.Pwm.Tm3.Sm31.ChannelB.DutyCycle = Config_Pwm_Tm3_Sm31["ChannelB"]["DutyCycle"] | 32768;
 
   JsonObjectConst Config_Pwm_Tm4_Sm40 = Config_Pwm["Tm4"]["Sm40"];
-  config.Pwm.Tm4.Sm40.DeadTime = Config_Pwm_Tm4_Sm40["DeadTime"] | 50;
+  config.Pwm.Tm4.Sm40.Pair = Config_Pwm_Tm4_Sm40["Pair"] | PairIndependent;
+  config.Pwm.Tm4.Sm40.DeadTime = Config_Pwm_Tm4_Sm40["DeadTime"] | MinHalfBridgeDeadTimeNs;
   config.Pwm.Tm4.Sm40.PwmFrequency = Config_Pwm_Tm4_Sm40["PwmFrequency"] | 1000;
   config.Pwm.Tm4.Sm40.ChannelA.DutyCycle = Config_Pwm_Tm4_Sm40["ChannelA"]["DutyCycle"] | 32768;
 
   JsonObjectConst Config_Pwm_Tm4_Sm41 = Config_Pwm["Tm4"]["Sm41"];
-  config.Pwm.Tm4.Sm41.DeadTime = Config_Pwm_Tm4_Sm41["DeadTime"] | 50;
+  config.Pwm.Tm4.Sm41.Pair = Config_Pwm_Tm4_Sm41["Pair"] | PairIndependent;
+  config.Pwm.Tm4.Sm41.DeadTime = Config_Pwm_Tm4_Sm41["DeadTime"] | MinHalfBridgeDeadTimeNs;
   config.Pwm.Tm4.Sm41.PwmFrequency = Config_Pwm_Tm4_Sm41["PwmFrequency"] | 1000;
   config.Pwm.Tm4.Sm41.ChannelA.DutyCycle = Config_Pwm_Tm4_Sm41["ChannelA"]["DutyCycle"] | 32768;
 
   JsonObjectConst Config_Pwm_Tm4_Sm42 = Config_Pwm["Tm4"]["Sm42"];
-  config.Pwm.Tm4.Sm42.DeadTime = Config_Pwm_Tm4_Sm42["DeadTime"] | 50;
+  config.Pwm.Tm4.Sm42.Pair = Config_Pwm_Tm4_Sm42["Pair"] | PairIndependent;
+  config.Pwm.Tm4.Sm42.DeadTime = Config_Pwm_Tm4_Sm42["DeadTime"] | MinHalfBridgeDeadTimeNs;
   config.Pwm.Tm4.Sm42.PwmFrequency = Config_Pwm_Tm4_Sm42["PwmFrequency"] | 1000;
   config.Pwm.Tm4.Sm42.ChannelA.DutyCycle = Config_Pwm_Tm4_Sm42["ChannelA"]["DutyCycle"] | 32768;
   config.Pwm.Tm4.Sm42.ChannelB.DutyCycle = Config_Pwm_Tm4_Sm42["ChannelB"]["DutyCycle"] | 32768;
@@ -231,6 +240,47 @@ inline bool configDocComplete(const JsonDocument &doc) {
 // Clamps out-of-range values; returns true if anything was corrected.
 inline bool validateConfig(MainConfig &config) {
   bool corrected = false;
+
+  // Pair modes: reduce anything the submodule cannot physically run back to
+  // Independent. Sm21/Sm40/Sm41 have no channel-B pin on a Teensy 4.1, and pairing
+  // one would run DTCNT1 at its 0x07FF reset value (~13.6us) as the falling-edge
+  // dead time because the core never writes that register. Sm42 has a B pin but
+  // drives it from independent start/stop values. See pwm_pair.h.
+  const auto sanitisePair = [&corrected](uint8_t &mode, uint8_t submodule) {
+    const uint8_t safe = pairModeSanitised(mode, submodule);
+    if (safe != mode) {
+      mode = safe;
+      corrected = true;
+    }
+  };
+  sanitisePair(config.Pwm.Tm1.Sm13.Pair, PairSm13);
+  sanitisePair(config.Pwm.Tm2.Sm20.Pair, PairSm20);
+  sanitisePair(config.Pwm.Tm2.Sm21.Pair, PairSm21);
+  sanitisePair(config.Pwm.Tm2.Sm22.Pair, PairSm22);
+  sanitisePair(config.Pwm.Tm2.Sm23.Pair, PairSm23);
+  sanitisePair(config.Pwm.Tm3.Sm31.Pair, PairSm31);
+  sanitisePair(config.Pwm.Tm4.Sm40.Pair, PairSm40);
+  sanitisePair(config.Pwm.Tm4.Sm41.Pair, PairSm41);
+  sanitisePair(config.Pwm.Tm4.Sm42.Pair, PairSm42);
+
+  // Dead time is clamped to what DTCNT can represent, for every submodule and every
+  // mode. A value above ~13.6us would otherwise wrap - programming a SHORTER gap
+  // than asked for, which is the worst direction for this particular field.
+  const auto clampDeadTime = [&corrected](uint16_t &deadTime) {
+    if (deadTime > pairMaxDeadTimeNs()) {
+      deadTime = static_cast<uint16_t>(pairMaxDeadTimeNs());
+      corrected = true;
+    }
+  };
+  clampDeadTime(config.Pwm.Tm1.Sm13.DeadTime);
+  clampDeadTime(config.Pwm.Tm2.Sm20.DeadTime);
+  clampDeadTime(config.Pwm.Tm2.Sm21.DeadTime);
+  clampDeadTime(config.Pwm.Tm2.Sm22.DeadTime);
+  clampDeadTime(config.Pwm.Tm2.Sm23.DeadTime);
+  clampDeadTime(config.Pwm.Tm3.Sm31.DeadTime);
+  clampDeadTime(config.Pwm.Tm4.Sm40.DeadTime);
+  clampDeadTime(config.Pwm.Tm4.Sm41.DeadTime);
+  clampDeadTime(config.Pwm.Tm4.Sm42.DeadTime);
   if (config.Pwm.Tm1.Sm13.PwmFrequency < 1 || config.Pwm.Tm1.Sm13.PwmFrequency > 1000000) {
     config.Pwm.Tm1.Sm13.PwmFrequency = 1000;
     corrected = true;
@@ -373,6 +423,7 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm["Verbose"] = config.Pwm.Verbose;
 
   JsonObject Config_Pwm_Tm1_Sm13 = Config_Pwm["Tm1"]["Sm13"].to<JsonObject>();
+  Config_Pwm_Tm1_Sm13["Pair"] = config.Pwm.Tm1.Sm13.Pair;
   Config_Pwm_Tm1_Sm13["DeadTime"] = config.Pwm.Tm1.Sm13.DeadTime;
   Config_Pwm_Tm1_Sm13["PwmFrequency"] = config.Pwm.Tm1.Sm13.PwmFrequency;
 
@@ -401,6 +452,7 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm_Tm2["WaveformSampleStep"] = config.Pwm.Tm2.WaveformSampleStep;
 
   JsonObject Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2["Sm20"].to<JsonObject>();
+  Config_Pwm_Tm2_Sm20["Pair"] = config.Pwm.Tm2.Sm20.Pair;
   Config_Pwm_Tm2_Sm20["DeadTime"] = config.Pwm.Tm2.Sm20.DeadTime;
   Config_Pwm_Tm2_Sm20["PwmFrequency"] = config.Pwm.Tm2.Sm20.PwmFrequency;
 
@@ -411,6 +463,7 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm_Tm2_Sm20_ChannelB["DutyCycle"] = config.Pwm.Tm2.Sm20.ChannelB.DutyCycle;
 
   JsonObject Config_Pwm_Tm2_Sm21 = Config_Pwm_Tm2["Sm21"].to<JsonObject>();
+  Config_Pwm_Tm2_Sm21["Pair"] = config.Pwm.Tm2.Sm21.Pair;
   Config_Pwm_Tm2_Sm21["DeadTime"] = config.Pwm.Tm2.Sm21.DeadTime;
   Config_Pwm_Tm2_Sm21["PwmFrequency"] = config.Pwm.Tm2.Sm21.PwmFrequency;
 
@@ -418,6 +471,7 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm_Tm2_Sm21_ChannelA["DutyCycle"] = config.Pwm.Tm2.Sm21.ChannelA.DutyCycle;
 
   JsonObject Config_Pwm_Tm2_Sm22 = Config_Pwm_Tm2["Sm22"].to<JsonObject>();
+  Config_Pwm_Tm2_Sm22["Pair"] = config.Pwm.Tm2.Sm22.Pair;
   Config_Pwm_Tm2_Sm22["DeadTime"] = config.Pwm.Tm2.Sm22.DeadTime;
   Config_Pwm_Tm2_Sm22["PwmFrequency"] = config.Pwm.Tm2.Sm22.PwmFrequency;
 
@@ -428,6 +482,7 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm_Tm2_Sm22_ChannelB["DutyCycle"] = config.Pwm.Tm2.Sm22.ChannelB.DutyCycle;
 
   JsonObject Config_Pwm_Tm2_Sm23 = Config_Pwm_Tm2["Sm23"].to<JsonObject>();
+  Config_Pwm_Tm2_Sm23["Pair"] = config.Pwm.Tm2.Sm23.Pair;
   Config_Pwm_Tm2_Sm23["DeadTime"] = config.Pwm.Tm2.Sm23.DeadTime;
   Config_Pwm_Tm2_Sm23["PwmFrequency"] = config.Pwm.Tm2.Sm23.PwmFrequency;
 
@@ -438,6 +493,7 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm_Tm2_Sm23_ChannelB["DutyCycle"] = config.Pwm.Tm2.Sm23.ChannelB.DutyCycle;
 
   JsonObject Config_Pwm_Tm3_Sm31 = Config_Pwm["Tm3"]["Sm31"].to<JsonObject>();
+  Config_Pwm_Tm3_Sm31["Pair"] = config.Pwm.Tm3.Sm31.Pair;
   Config_Pwm_Tm3_Sm31["DeadTime"] = config.Pwm.Tm3.Sm31.DeadTime;
   Config_Pwm_Tm3_Sm31["PwmFrequency"] = config.Pwm.Tm3.Sm31.PwmFrequency;
 
@@ -450,6 +506,7 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   JsonObject Config_Pwm_Tm4 = Config_Pwm["Tm4"].to<JsonObject>();
 
   JsonObject Config_Pwm_Tm4_Sm40 = Config_Pwm_Tm4["Sm40"].to<JsonObject>();
+  Config_Pwm_Tm4_Sm40["Pair"] = config.Pwm.Tm4.Sm40.Pair;
   Config_Pwm_Tm4_Sm40["DeadTime"] = config.Pwm.Tm4.Sm40.DeadTime;
   Config_Pwm_Tm4_Sm40["PwmFrequency"] = config.Pwm.Tm4.Sm40.PwmFrequency;
 
@@ -457,6 +514,7 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm_Tm4_Sm40_ChannelA["DutyCycle"] = config.Pwm.Tm4.Sm40.ChannelA.DutyCycle;
 
   JsonObject Config_Pwm_Tm4_Sm41 = Config_Pwm_Tm4["Sm41"].to<JsonObject>();
+  Config_Pwm_Tm4_Sm41["Pair"] = config.Pwm.Tm4.Sm41.Pair;
   Config_Pwm_Tm4_Sm41["DeadTime"] = config.Pwm.Tm4.Sm41.DeadTime;
   Config_Pwm_Tm4_Sm41["PwmFrequency"] = config.Pwm.Tm4.Sm41.PwmFrequency;
 
@@ -464,6 +522,7 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm_Tm4_Sm41_ChannelA["DutyCycle"] = config.Pwm.Tm4.Sm41.ChannelA.DutyCycle;
 
   JsonObject Config_Pwm_Tm4_Sm42 = Config_Pwm_Tm4["Sm42"].to<JsonObject>();
+  Config_Pwm_Tm4_Sm42["Pair"] = config.Pwm.Tm4.Sm42.Pair;
   Config_Pwm_Tm4_Sm42["DeadTime"] = config.Pwm.Tm4.Sm42.DeadTime;
   Config_Pwm_Tm4_Sm42["PwmFrequency"] = config.Pwm.Tm4.Sm42.PwmFrequency;
 

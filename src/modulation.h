@@ -75,6 +75,41 @@ struct CellPlan {
   bool dutyComplement;   // applied per carrier cycle in the ISR
 };
 
+// Minimum dead time programmed for any complementary pair, whatever the config
+// says. Enforced at the point of programming, so no configuration path - including
+// a missing/truncated settings file that skips validation entirely - can put a
+// half-bridge on the bench with zero dead time. Raise it in config for slower
+// devices; this is a floor, not a recommendation. A real SiC leg wants more:
+// worst-case (slowest turn-off at temperature) minus (fastest turn-on) plus the
+// driver's propagation-delay mismatch, which is 130ns+ for common 1200V parts.
+constexpr uint32_t MinComplementaryDeadTimeNs = 100;
+
+// Carrier geometry for a cell, adjusted for how the submodule pair is wired up.
+//
+// In INDEPENDENT mode a 180deg-opposed cell is realised by inverting the output
+// polarity of its single channel.
+//
+// In COMPLEMENTARY mode that is unsafe, twice over. The hardware derives channel
+// B from A and inserts dead time on both edges, so both pins sit at their
+// inactive level during the gap - but inverting the polarity of the pair makes
+// the gap a period where both pins are ACTIVE, which is a shoot-through on every
+// carrier edge. Separately, MASK and the fault state force the pins to logic 0
+// *before* polarity is applied, so an inverted pair would drive both switches
+// HIGH on fault, during OTA, and at boot-mask - the exact opposite of a safe
+// state.
+//
+// Complementing the duty produces an identical channel-A waveform to inverting
+// the polarity while leaving B a true dead-time-separated complement, so in
+// complementary mode the geometry moves entirely into the duty and the polarity
+// stays HighTrue. The XOR matters: a cell that already complements its duty and
+// is also polarity-inverted cancels back to plain.
+inline CellPlan modulationCellPlanForPairMode(const CellPlan &plan, bool complementary) {
+  if (!complementary) {
+    return plan;
+  }
+  return CellPlan{false, plan.dutyComplement != plan.polarityInverted};
+}
+
 constexpr uint32_t indexMilliToQ15(uint16_t indexMilli) {
   return (static_cast<uint32_t>(indexMilli) << 15) / 1000U;
 }

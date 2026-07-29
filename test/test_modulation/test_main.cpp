@@ -350,6 +350,69 @@ void test_ls_band_split_and_final_duty() {
   TEST_ASSERT_EQUAL_UINT16(0, modulationFinalDuty(65535, comp));
 }
 
+// ---------------------------------------------------------------------------
+// Complementary-pair carrier geometry
+//
+// A complementary pair must never invert its polarity. The hardware inserts dead
+// time by holding both pins at their INACTIVE level, so inverting turns every
+// dead-time gap into a window where both switches conduct. Mask and the fault
+// state also force the pins to logic 0 *before* polarity is applied, so an
+// inverted pair would drive both switches high on fault, during OTA and at
+// boot-mask.
+// ---------------------------------------------------------------------------
+
+void test_pair_mode_independent_is_identity() {
+  for (int pol = 0; pol < 2; pol++) {
+    for (int dc = 0; dc < 2; dc++) {
+      const CellPlan in{pol != 0, dc != 0};
+      const CellPlan out = modulationCellPlanForPairMode(in, false);
+      TEST_ASSERT_EQUAL(in.polarityInverted, out.polarityInverted);
+      TEST_ASSERT_EQUAL(in.dutyComplement, out.dutyComplement);
+    }
+  }
+}
+
+void test_pair_mode_moves_geometry_into_duty() {
+  const CellPlan inverted = modulationCellPlanForPairMode(CellPlan{true, false}, true);
+  TEST_ASSERT_FALSE(inverted.polarityInverted);
+  TEST_ASSERT_TRUE(inverted.dutyComplement);
+
+  // Inverted polarity AND complemented duty cancel back to plain rather than
+  // double-inverting.
+  const CellPlan both = modulationCellPlanForPairMode(CellPlan{true, true}, true);
+  TEST_ASSERT_FALSE(both.polarityInverted);
+  TEST_ASSERT_FALSE(both.dutyComplement);
+
+  TEST_ASSERT_FALSE(modulationCellPlanForPairMode(CellPlan{false, false}, true).dutyComplement);
+  TEST_ASSERT_TRUE(modulationCellPlanForPairMode(CellPlan{false, true}, true).dutyComplement);
+}
+
+void test_pair_mode_never_inverts_polarity() {
+  // The safety property, over every plan any scheme/displacement can produce.
+  const uint8_t disps[] = {CarrierPd, CarrierPod, CarrierApod};
+  for (uint8_t scheme = 0; scheme <= ModSchemeLevelShifted; scheme++) {
+    for (uint8_t d = 0; d < 3; d++) {
+      for (uint8_t cells = 1; cells <= MaxModulationCells; cells++) {
+        for (uint8_t cell = 0; cell < cells; cell++) {
+          const CellPlan plan = modulationCellPlan(scheme, disps[d], cell, cells);
+          TEST_ASSERT_FALSE(modulationCellPlanForPairMode(plan, true).polarityInverted);
+        }
+      }
+    }
+  }
+}
+
+void test_pair_mode_preserves_channel_a_waveform() {
+  // Translating geometry from polarity into duty must not change what channel A
+  // does: LowTrue with duty d is high for 65535-d, and so is HighTrue with the
+  // complemented duty.
+  const uint16_t duties[] = {0, 1, 16384, 32768, 49152, 65535};
+  for (uint16_t d : duties) {
+    const CellPlan pair = modulationCellPlanForPairMode(CellPlan{true, false}, true);
+    TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>(65535U - d), modulationFinalDuty(d, pair));
+  }
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_sine_unit_lut_key_points_and_antisymmetry);
@@ -375,5 +438,9 @@ int main() {
   RUN_TEST(test_triangle_index_sweeps);
   RUN_TEST(test_plans_all_schemes);
   RUN_TEST(test_ls_band_split_and_final_duty);
+  RUN_TEST(test_pair_mode_independent_is_identity);
+  RUN_TEST(test_pair_mode_moves_geometry_into_duty);
+  RUN_TEST(test_pair_mode_never_inverts_polarity);
+  RUN_TEST(test_pair_mode_preserves_channel_a_waveform);
   return UNITY_END();
 }

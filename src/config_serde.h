@@ -231,6 +231,25 @@ inline bool configDocComplete(const JsonDocument &doc) {
 // Clamps out-of-range values; returns true if anything was corrected.
 inline bool validateConfig(MainConfig &config) {
   bool corrected = false;
+
+  // Dead-time floor for every submodule that drives a complementary pair. The
+  // hardware now generates B as A's dead-time-separated complement, so a zero or
+  // near-zero value is a shoot-through on every carrier edge rather than merely a
+  // distorted waveform. setupSubmodule() clamps again at the point of programming
+  // - loadConfiguration() can return early and skip this function entirely - but
+  // correcting here is what lets the operator see the change through the API.
+  const auto floorDeadTime = [&corrected](uint16_t &deadTime) {
+    if (deadTime < MinComplementaryDeadTimeNs) {
+      deadTime = MinComplementaryDeadTimeNs;
+      corrected = true;
+    }
+  };
+  floorDeadTime(config.Pwm.Tm1.Sm13.DeadTime);
+  floorDeadTime(config.Pwm.Tm2.Sm20.DeadTime);
+  floorDeadTime(config.Pwm.Tm2.Sm22.DeadTime);
+  floorDeadTime(config.Pwm.Tm2.Sm23.DeadTime);
+  floorDeadTime(config.Pwm.Tm3.Sm31.DeadTime);
+
   if (config.Pwm.Tm1.Sm13.PwmFrequency < 1 || config.Pwm.Tm1.Sm13.PwmFrequency > 1000000) {
     config.Pwm.Tm1.Sm13.PwmFrequency = 1000;
     corrected = true;

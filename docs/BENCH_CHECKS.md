@@ -17,9 +17,33 @@ latency, dither spectrum).
 
 ---
 
-## 0. STOP — complementary operation and dead time do not work
+## 0. Complementary operation and dead time — FIXED, verify on a scope first
 
-**Confirmed by source inspection 2026-07-29. This affects the existing firmware,
+**The defect below was found and fixed on 2026-07-29. The fix changes what the
+pins physically do and has never run on hardware — verify it with the power stage
+disconnected before driving anything.**
+
+What to confirm, in this order:
+
+- [ ] **Channel B is now the inverse of channel A**, not a static 50% square wave.
+      Probe pins 4 and 33 (and 6/9) together.
+- [ ] **Measure the dead time on both edges** and check it against the configured
+      `DeadTime`. This is the number that was previously ignored entirely.
+- [ ] **Confirm the floor works**: set `DeadTime` to 0, save, and check the log
+      says it was raised to 100 ns and that the scope agrees.
+- [ ] **Boot with no SD card** and confirm dead time is still present — that path
+      skips config validation entirely, which is why the clamp is also applied at
+      the point of programming.
+- [ ] **Check the inverting schemes** (2, 5, and 4 with POD/APOD) if you use them.
+      Their opposition is now realised by complementing the duty rather than
+      inverting the polarity; the A output should look identical to before, and
+      both pins must go *low* — never high — when you trip a fault.
+- [ ] **Sm42 (asymmetric induction mode) is deliberately still independent**, so
+      its A/B start/stop timing is unchanged. Confirm if you use that mode.
+
+### What was wrong (kept for context)
+
+**Confirmed by source inspection 2026-07-29. This affected the shipping firmware,
 not just future plans.**
 
 The Teensy core writes `FLEXPWM_SMCTRL2_INDEP` to every FlexPWM submodule
@@ -44,22 +68,39 @@ because the ISR pipeline is pure maths:
   settings), `validateConfig()` has no dead-time floor, and the web UI accepts
   `min="0"`.
 
-**Do not drive any complementary half-bridge or H-bridge from this firmware
-until `INDEP` is cleared and dead time is verified on a scope.** Both switches of
-a leg would be commanded on simultaneously every carrier cycle.
+Both switches of a leg were commanded on simultaneously every carrier cycle.
 
-Before changing it, note that clearing `INDEP` *changes what the pins do*: a
-channel B that is currently parked at a static level starts switching inverted.
-Verify on a scope with the power stage disconnected.
-
-Two further defects are currently masked by `INDEP=1` and go live the moment it
-is fixed — both only affect the polarity-inverting schemes (2, 5, and 4 with
-POD/APOD), not scheme 1:
+Two further defects were masked by `INDEP=1` and would have gone live the moment
+it was cleared — both affecting only the polarity-inverting schemes (2, 5, and 4
+with POD/APOD), not scheme 1:
 
 - Polarity inversion flips **both** `POLA` and `POLB`, which turns dead time into
   overlap time.
 - `MASK` and the fault state force outputs to logic 0 *before* polarity, so
   inverted cells go **HIGH** on fault, during OTA, and at boot-mask.
+
+### How it was fixed
+
+`setupSubmodule()` now calls `configure()` with `kPWM_ComplementaryPwmA` for the
+submodules that drive a half-bridge pair (Sm13, Sm20, Sm22, Sm23, Sm31), guarded
+on the current mode so it does not re-run the pin mux on every settings apply.
+Sm21/Sm40/Sm41 have no B pin and stay independent; **Sm42 stays independent by
+design** because asymmetric induction mode drives A and B with independent
+start/stop values.
+
+Both latent defects are avoided rather than patched: for a complementary pair the
+carrier geometry now lives entirely in the **duty**, never the polarity
+(`modulationCellPlanForPairMode()`), so `POLA`/`POLB` stay `HighTrue`. Inverting
+the duty gives an identical channel-A waveform while leaving B a true complement,
+and because nothing is ever inverted, masking to logic 0 remains a genuine safe
+state. Four unit tests pin this, including the safety property over every plan
+any scheme can produce.
+
+The dead-time floor (`MinComplementaryDeadTimeNs`, 100 ns) is applied in
+`validateConfig()` so the operator sees the correction through the API, **and**
+again in `setupSubmodule()` because `loadConfiguration()` has early-return paths
+(no SD card, unreadable or truncated settings) that skip validation entirely.
+100 ns is a floor, not a recommendation — a real SiC leg wants more.
 
 ## 0b. Before anything else
 

@@ -41,6 +41,10 @@ volatile bool vFaultTripped = false;
 // Modulation cells map onto FlexPWM2 submodules in this order; cells=2 drives
 // Sm20+Sm22 (the original SPWM pair), 3-4 add Sm21/Sm23.
 static SubModule *const CellSm[MaxModulationCells] = {&Sm20, &Sm22, &Sm21, &Sm23};
+// Which of those drive a dead-time-separated complementary pair. Sm21 is the odd
+// one out: it was constructed with channel A only, so it has no B pin to
+// complement and stays independent.
+static constexpr bool CellComplementary[MaxModulationCells] = {true, true, false, true};
 static const uint8_t CellLdokMasks[MaxModulationCells + 1] = {0, 0b0001, 0b0101, 0b0111, 0b1111};
 
 static CellPlan cellPlan[MaxModulationCells]; // written only with the SPWM IRQ disabled
@@ -110,17 +114,50 @@ struct SubmoduleSettings {
   uint16_t dutyA;
   uint16_t dutyB; // UINT16_MAX if no ChanB
   bool hasChanB;
+  bool complementary; // true = A/B are a dead-time-separated half-bridge pair
   // Add phaseShift, etc., for special cases
 };
 
 void setupSubmodule(SubModule &sm, const SubmoduleSettings &settings, bool printRegs) {
   constexpr uint32_t NanosecondsUnit = 1000000000;
 
+  // The Teensy core sets SMCTRL2[INDEP] on every submodule in pwm_init() before
+  // setup() runs (cores/teensy4/pwm.c). INDEP disables both complementary output
+  // generation AND the dead-time insertion logic (RM rev.4 p.3110), so while it
+  // is set, channel B is not a complement, it carries its own static configured
+  // duty, and the DTCNT registers written below are ignored by the hardware -
+  // both switches of a leg conduct together every carrier cycle.
+  //
+  // PWM_Init() is the only code that touches that bit, and configure() is its
+  // only caller. Guarded on the current mode because configure() re-runs the pin
+  // mux and would glitch the outputs if it ran on every settings apply.
+  const pwm_chnl_pair_operation_t wanted =
+      settings.complementary ? kPWM_ComplementaryPwmA : kPWM_Independent;
+  if (sm.config().pairOperation() != wanted) {
+    eFlex::Config pairCfg = sm.config();
+    pairCfg.setPairOperation(wanted);
+    if (!sm.configure(pairCfg)) {
+      writeLogLevel(EventError, "Failed to set PWM pair operation");
+    }
+  }
+
   sm.setPwmLdok(false); // clear any pending LDOK so the buffered register writes below take
+
+  // Hard floor, applied here rather than only in validation: loadConfiguration()
+  // has early-return paths (no SD card, unreadable or truncated settings) that
+  // skip validateConfig entirely, and DeadTime is zero-initialised, so a board
+  // that boots without a good settings file would otherwise run a half-bridge
+  // with DTCNT = 0.
+  uint32_t deadtimeNs = settings.deadtimeNs;
+  if (settings.complementary && deadtimeNs < MinComplementaryDeadTimeNs) {
+    writeLogLevel(EventWarn, String("Dead time ") + deadtimeNs + "ns below floor, using " +
+                                 MinComplementaryDeadTimeNs + "ns");
+    deadtimeNs = MinComplementaryDeadTimeNs;
+  }
 
   // unit must be passed explicitly: setupDeadtime(value, ChanA) resolves to the
   // all-channels overload with unit=0 and silently divides by zero
-  sm.setupDeadtime(settings.deadtimeNs, NanosecondsUnit);
+  sm.setupDeadtime(deadtimeNs, NanosecondsUnit);
 
   sm.setupDutyCycle(ChanA, settings.dutyA);
   if (settings.hasChanB && settings.dutyB != UINT16_MAX) {
@@ -399,7 +436,8 @@ void configureModule1() {
     .deadtimeNs = config.Pwm.Tm1.Sm13.DeadTime,
     .dutyA = config.Pwm.Tm1.Sm13.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm1.Sm13.ChannelB.DutyCycle,
-    .hasChanB = true
+    .hasChanB = true,
+    .complementary = true
   };
   setupSubmodule(Sm13, settings, config.Pwm.PrintRegs);
   writeLog("Started TM1");
@@ -411,9 +449,18 @@ void configureModule2() {
     buildSpwmLut();
   }
 
-  // Carrier geometry: 180deg-shifted cells run with inverted output polarity
-  // (the ISR complements their duty). Everything else is explicitly restored
-  // to normal polarity so scheme changes never leave a leg inverted.
+  // Carrier geometry: a 180deg-opposed cell inverts either its output polarity
+  // or its duty, depending on how its submodule pair is wired. A complementary
+  // pair MUST keep HighTrue on both channels - inverting them turns every
+  // dead-time gap into an overlap, and mask/fault force the pins low before
+  // polarity, so an inverted pair would go high on fault. Rewrite the plans in
+  // place first, so the ISR's duty complement and the polarity below agree.
+  for (uint8_t k = 0; k < MaxModulationCells; k++) {
+    cellPlan[k] = modulationCellPlanForPairMode(cellPlan[k], CellComplementary[k]);
+  }
+
+  // Everything else is explicitly restored to normal polarity so scheme changes
+  // never leave a leg inverted.
   for (uint8_t k = 0; k < MaxModulationCells; k++) {
     const bool inverted = spwmActive() && k < vModCells && cellPlan[k].polarityInverted;
     CellSm[k]->setupLevel(inverted ? kPWM_LowTrue : kPWM_HighTrue);
@@ -425,7 +472,8 @@ void configureModule2() {
     .deadtimeNs = config.Pwm.Tm2.Sm20.DeadTime,
     .dutyA = config.Pwm.Tm2.Sm20.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm2.Sm20.ChannelB.DutyCycle,
-    .hasChanB = true
+    .hasChanB = true,
+    .complementary = true
   };
   setupSubmodule(Sm20, sm20Settings, config.Pwm.PrintRegs);
 
@@ -435,7 +483,8 @@ void configureModule2() {
     .deadtimeNs = config.Pwm.Tm2.Sm21.DeadTime,
     .dutyA = config.Pwm.Tm2.Sm21.ChannelA.DutyCycle,
     .dutyB = UINT16_MAX, // No Channel B
-    .hasChanB = false
+    .hasChanB = false,
+    .complementary = false // channel A only - no B pin to complement
   };
   setupSubmodule(Sm21, sm21Settings, config.Pwm.PrintRegs);
 
@@ -445,7 +494,8 @@ void configureModule2() {
     .deadtimeNs = config.Pwm.Tm2.Sm22.DeadTime,
     .dutyA = config.Pwm.Tm2.Sm22.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm2.Sm22.ChannelB.DutyCycle,
-    .hasChanB = true
+    .hasChanB = true,
+    .complementary = true
   };
   setupSubmodule(Sm22, sm22Settings, config.Pwm.PrintRegs);
 
@@ -455,7 +505,8 @@ void configureModule2() {
     .deadtimeNs = config.Pwm.Tm2.Sm23.DeadTime,
     .dutyA = config.Pwm.Tm2.Sm23.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm2.Sm23.ChannelB.DutyCycle,
-    .hasChanB = true
+    .hasChanB = true,
+    .complementary = true
   };
   setupSubmodule(Sm23, sm23Settings, config.Pwm.PrintRegs);
 
@@ -490,7 +541,8 @@ void configureModule3() {
     .deadtimeNs = config.Pwm.Tm3.Sm31.DeadTime,
     .dutyA = config.Pwm.Tm3.Sm31.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm3.Sm31.ChannelB.DutyCycle,
-    .hasChanB = true
+    .hasChanB = true,
+    .complementary = true
   };
   setupSubmodule(Sm31, settings, config.Pwm.PrintRegs);
   writeLog("Started TM3");
@@ -503,7 +555,8 @@ void configureModule4() {
     .deadtimeNs = config.Pwm.Tm4.Sm40.DeadTime,
     .dutyA = config.Pwm.Tm4.Sm40.ChannelA.DutyCycle,
     .dutyB = UINT16_MAX, // No Channel B
-    .hasChanB = false
+    .hasChanB = false,
+    .complementary = false // channel A only
   };
   setupSubmodule(Sm40, sm40Settings, config.Pwm.PrintRegs);
 
@@ -513,7 +566,8 @@ void configureModule4() {
     .deadtimeNs = config.Pwm.Tm4.Sm41.DeadTime,
     .dutyA = config.Pwm.Tm4.Sm41.ChannelA.DutyCycle,
     .dutyB = UINT16_MAX, // No Channel B
-    .hasChanB = false
+    .hasChanB = false,
+    .complementary = false // channel A only
   };
   setupSubmodule(Sm41, sm41Settings, config.Pwm.PrintRegs);
 
@@ -566,7 +620,11 @@ void configureModule4() {
       .deadtimeNs = config.Pwm.Tm4.Sm42.DeadTime,
       .dutyA = config.Pwm.Tm4.Sm42.ChannelA.DutyCycle,
       .dutyB = config.Pwm.Tm4.Sm42.ChannelB.DutyCycle,
-      .hasChanB = true
+      .hasChanB = true,
+      // Asymmetric induction mode drives A and B with independent start/stop
+      // values (VAL2..VAL5 above); complementary generation would overwrite that
+      // relationship, so this pair stays independent by design.
+      .complementary = false
     };
     setupSubmodule(Sm42, sm42Settings, config.Pwm.PrintRegs);
   }

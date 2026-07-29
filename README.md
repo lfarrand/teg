@@ -645,14 +645,17 @@ per-feature checklist, ordered by what goes wrong if you skip it.
 
 ### Known defects
 
-> **Complementary operation and dead time do not work.** The Teensy core sets
-> `SMCTRL2[INDEP]` on every FlexPWM submodule and this firmware never clears it,
-> so channel B is not the complement of channel A and the configured dead time is
-> ignored by the hardware. Channel B outputs its static configured duty (default
-> 50%). **Do not drive a half-bridge or H-bridge from this firmware** until it is
-> fixed and verified on a scope — both switches of a leg would conduct together
-> every carrier cycle. Cold-boot dead time is also 0, not 50 ns. Details and the
-> knock-on effects are in [docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md) §0.
+> **Complementary operation and dead time were broken until 2026-07-29, and the
+> fix is not yet bench-verified.** The Teensy core sets `SMCTRL2[INDEP]` on every
+> FlexPWM submodule; this firmware never cleared it, so channel B was not the
+> complement of channel A, the configured dead time was ignored by the hardware,
+> and channel B carried a static 50% duty — both switches of a leg conducting
+> together every carrier cycle. `setupSubmodule()` now selects complementary
+> operation for the half-bridge submodules and enforces a 100 ns dead-time floor
+> that no configuration path can bypass. **The fix changes what the pins do and
+> has never run on hardware** — verify on a scope with the power stage
+> disconnected before driving anything. See
+> [docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md) §0.
 
 Found by audit, not yet fixed — they matter because they affect what you can
 trust while bench testing:

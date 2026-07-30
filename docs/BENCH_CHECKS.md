@@ -17,49 +17,60 @@ latency, dither spectrum).
 
 ---
 
-## 0. STOP — complementary operation and dead time do not work
+## 0. Complementary pairs — implemented, never bench-verified. Do this first.
 
-**Confirmed by source inspection 2026-07-29. This affects the existing firmware,
-not just future plans.**
+**`INDEP` is now cleared** for any submodule configured as a complementary pair, so
+channel B *is* the dead-time-separated complement of channel A and the configured dead
+time reaches the hardware. That was not true before 2026-07-30; if you have read an
+older copy of this file saying complementary operation "does not work", it is stale.
 
-The Teensy core writes `FLEXPWM_SMCTRL2_INDEP` to every FlexPWM submodule
-(`cores/teensy4/pwm.c:309`) during startup, before `setup()`. Clearing `INDEP` is
-what enables complementary output *and* the dead-time insertion logic
-(RM rev.4 p.3110–3111). Nothing in this firmware ever clears it:
-`SubModule::configure()` / `setPairOperation()` / `PWM_Init()` have **no callers
-in `src/`**.
+**Nothing in this path has run on hardware.** It writes FlexPWM registers directly on
+every settings apply, and the 278 host tests are structurally unable to see registers.
 
-Consequences, all of which the host test suite is structurally unable to see
-because the ISR pipeline is pure maths:
+### The one that would have damaged hardware
 
-- **Channel B is not the complement of channel A.** The modulation ISR updates
-  channel A only. Channel B outputs its *static configured duty*
-  (`Sm2x.ChannelB.DutyCycle`, default `32768` = **50%**), centre-aligned on the
-  same instant as A.
-- **The configured dead time does nothing.** `setupSubmodule()` programs
-  `DTCNT0`/`DTCNT1` and the hardware ignores them.
-- **Cold-boot dead time is 0, not 50 ns.** `SubmoduleConfig::DeadTime` is
-  zero-initialised, `loadConfiguration()` has early-return paths that skip
-  `configFromJson`/`validateConfig` entirely (no SD card, fresh card, truncated
-  settings), `validateConfig()` has no dead-time floor, and the web UI accepts
-  `min="0"`.
+A multi-agent adversarial review on 2026-07-30 found this after the code was merged. A
+leg configured as `HalfBridge` but **refused at apply time** — because the modulation
+scheme needs polarity inversion, or because `CTRL[COMPMODE]` is set — used to fall back
+to independent channels **carrying their static configured duties**. Channel B defaults
+to `32768`, and both channels are centre-aligned on the same instant, so the two pulses
+are concentric: **both switches of a wired half-bridge commanded on together for up to
+half of every carrier period.**
 
-**Do not drive any complementary half-bridge or H-bridge from this firmware
-until `INDEP` is cleared and dead time is verified on a scope.** Both switches of
-a leg would be commanded on simultaneously every carrier cycle.
+A refused pair now holds both duties at zero and logs an error. Masking would *not*
+have been safe — `MASKA`/`MASKB` force the output to logic 0 *before* polarity
+(RM 55.8.45.4), so masking a cell that `configureModule2()` set `LowTrue` would drive
+both its pins **high** and hold them there.
 
-Before changing it, note that clearing `INDEP` *changes what the pins do*: a
-channel B that is currently parked at a static level starts switching inverted.
-Verify on a scope with the power stage disconnected.
+### Confirm on a scope, power stage disconnected
 
-Two further defects are currently masked by `INDEP=1` and go live the moment it
-is fixed — both only affect the polarity-inverting schemes (2, 5, and 4 with
-POD/APOD), not scheme 1:
+- [ ] **Channel B is the inverse of channel A**, not a static square wave. Probe pins
+      4 and 33 together (and 6/9).
+- [ ] **Measure dead time on both edges** against the configured `DeadTime`. This is
+      the number the hardware previously ignored entirely.
+- [ ] **A refused pair must be dark.** Set a submodule to `HalfBridge`, then select an
+      inverting scheme (2 bipolar, 5 phase-shifted, or 4 with POD/APOD). Both pins must
+      sit **inactive**, and the event log must show *"Pair mode refused for a
+      submodule: outputs held off"*. **If either pin carries a pulse, stop** — that is
+      the hardware-damaging case above.
+- [ ] **Both pins go low on a fault trip**, not high.
+- [ ] **Sm21, Sm40 and Sm41 have no channel-B pin** on a Teensy 4.1 and are forced
+      independent. **Sm42 stays independent by design** — asymmetric induction mode
+      drives A and B from independent start/stop values.
+- [ ] The dead-time floor works: set `DeadTime` to 0, save, and confirm the log reports
+      it was raised and the scope agrees.
+- [ ] Boot with **no SD card** and confirm dead time is still present — that path skips
+      config validation entirely.
 
-- Polarity inversion flips **both** `POLA` and `POLB`, which turns dead time into
-  overlap time.
-- `MASK` and the fault state force outputs to logic 0 *before* polarity, so
-  inverted cells go **HIGH** on fault, during OTA, and at boot-mask.
+### Still open in this path
+
+The review confirmed two further issues that are **not** fixed:
+
+- A **prescaler change is applied to live outputs** through an `LDMOD=1` + `LDOK` pulse
+  with a stale `VAL1`, and nothing masks the pins across the reconfigure.
+- `PwmBusClockHz` in `pwm_pair.h` is hard-coded at 150 MHz, while the value that
+  actually reaches the register derives from `F_BUS_ACTUAL`. If those differ, the
+  dead-time nanosecond conversion is wrong by that ratio.
 
 ## 0b. Before anything else
 

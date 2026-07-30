@@ -51,7 +51,9 @@ both software and hardware fault protection.
   plus named configuration presets with export/import
 - **Modern web UI** — single-page app with automatic dark mode, live telemetry,
   and scheme-aware forms, served gzip-compressed from flash
-- **Tested** — 231 native unit tests cover the hardware-independent logic
+- **Tested** — 278 native unit tests cover the hardware-independent logic. They
+  cannot see registers, ISRs, boot order or the network path, which is where every
+  defect found by the 2026-07-30 adversarial review lived
   (modulation, metering, PLL, MPPT, OTA image verification, config mapping) and
   run in CI, gated at 80% line coverage
 
@@ -83,6 +85,14 @@ both software and hardware fault protection.
 | PWM4 SM0 (`Sm40`) | 22 | General single output |
 | PWM4 SM1 (`Sm41`) | 23 | General single output |
 | PWM4 SM2 (`Sm42`) | 2, 3 | Asymmetric induction mode (custom edge timing) |
+
+Each submodule declares what its A/B pins physically drive — `Independent`,
+`HalfBridge` (complement plus hardware dead time), or `Differential` (complement, no
+dead time, for a driver board expecting a differential command). A pair that cannot be
+honoured — an inverting modulation scheme, or `COMPMODE` set — **holds both outputs
+off** rather than reverting to independent channels, because reverting would command
+both switches of a wired leg on together. **Not bench-verified**; see
+[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md) §0.
 
 Every complementary pair supports hardware dead-time insertion, configured in
 **nanoseconds** per submodule.
@@ -150,11 +160,15 @@ secret in a POST keeps the stored value.
 > **A PIN is generated on first boot** if none is set — 8 characters from the
 > hardware TRNG, shown on the OLED for two minutes and printed to the serial log.
 > Note it down: it is required for every API write, including firmware updates.
-> Without an SD card it cannot be persisted, so a new one is issued each boot and
-> the message says so. Change it in the Security settings.
+> Change it in the Security settings.
 >
-> There is still no TLS, no rate limiting and no Origin checking, and every GET is
-> unauthenticated. See [docs/SECURITY.md](docs/SECURITY.md).
+> **Unproven.** Adversarial review found two defects in this after it was merged —
+> the PIN was published through the unauthenticated `/api/log`, and the TRNG was
+> driven with its clock gate off. Both are fixed, neither is bench-verified, and a
+> board that ran the pre-fix build must be treated as having disclosed its PIN.
+>
+> There is still no TLS, no rate limiting and no Origin checking, and **every GET is
+> unauthenticated**. See [docs/SECURITY.md](docs/SECURITY.md).
 
 The device also announces itself via mDNS as **`http://teg.local`**.
 

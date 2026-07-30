@@ -104,23 +104,70 @@ eFlex::Timer &Tm4 = Sm40.timer();
 
 extern MainConfig config;
 
+// eFlex hides its PWM_Type pointer (both SubModule::ptr() and Timer::ptr() are
+// protected), so the few register bits this file must own are reached through the
+// Teensy core's map instead. Timer::index() is 0-3 for FlexPWM1-4.
+static IMXRT_FLEXPWM_t *flexpwmBase(uint8_t timerIndex) {
+  switch (timerIndex) {
+    case 0: return &IMXRT_FLEXPWM1;
+    case 1: return &IMXRT_FLEXPWM2;
+    case 2: return &IMXRT_FLEXPWM3;
+    default: return &IMXRT_FLEXPWM4;
+  }
+}
+
 struct SubmoduleSettings {
   uint32_t frequency;
   uint32_t deadtimeNs;
   uint16_t dutyA;
   uint16_t dutyB; // UINT16_MAX if no ChanB
   bool hasChanB;
+  uint8_t pairMode; // PairIndependent / PairHalfBridge / PairDifferential (pwm_pair.h)
   // Add phaseShift, etc., for special cases
 };
 
 void setupSubmodule(SubModule &sm, const SubmoduleSettings &settings, bool printRegs) {
   constexpr uint32_t NanosecondsUnit = 1000000000;
 
+  // Registers are touched directly rather than through SubModule::configure(), which
+  // calls PWM_Init(): that rewrites SMCTRL/SMCTRL2 wholesale from a default-built
+  // Config (turning on LDMOD), W1C-clears every fault flag on the module - releasing
+  // the latched ACMP over-current disable acmp.cpp preserves - wipes DTSRCSEL
+  // module-wide, fires an unrequested FORCE_OUT, and resets the staged output level.
+  //
+  // Both SubModule::ptr() and Timer::ptr() are protected, so the route is the core's
+  // own register map, as acmp.cpp already does for the fault registers.
+  IMXRT_FLEXPWM_t *base = flexpwmBase(sm.timer().index());
+  const uint8_t smIdx = sm.index();
+
+  // CTRL[COMPMODE] is write-once until reset (RM 55.8.5.3). With it set, "a PWMA
+  // output that is high at the end of a period could go low at the start of the
+  // next", which breaks the edge geometry a complementary pair relies on. The reset
+  // value is 0, but refuse rather than assume - a bench experiment or a library
+  // revision could have set it.
+  const bool compModeClear = (base->SM[smIdx].CTRL & FLEXPWM_SMCTRL_COMPMODE) == 0;
+  const bool complementary = pairIsComplementary(settings.pairMode) && compModeClear;
+  if (pairIsComplementary(settings.pairMode) && !compModeClear) {
+    writeLogLevel(EventError, "COMPMODE set: refusing complementary pair, staying independent");
+  }
+
   sm.setPwmLdok(false); // clear any pending LDOK so the buffered register writes below take
 
+  // Full-cycle reload, never immediate. eFlex's Config defaults reloadLogic to
+  // kPWM_ReloadImmediate (LDMOD=1); with immediate load the ISR's LDOK write can
+  // land mid-pulse, and if the new VAL3 is already below the counter the "equal to"
+  // comparator never matches, so RM 55.8.5.3 says the output "will maintain this
+  // state until a match with VAL3 clears the output in the following period" - a
+  // high side latched on across periods. The Teensy core leaves LDMOD clear; assert
+  // it so nothing silently changes that underneath us.
+  base->SM[smIdx].CTRL = (base->SM[smIdx].CTRL & ~FLEXPWM_SMCTRL_LDMOD) | FLEXPWM_SMCTRL_FULL;
+
+  // Dead time comes from the pure decision: floored for a half-bridge, forced to
+  // zero for a differential pair, zero when independent (the hardware ignores it).
   // unit must be passed explicitly: setupDeadtime(value, ChanA) resolves to the
   // all-channels overload with unit=0 and silently divides by zero
-  sm.setupDeadtime(settings.deadtimeNs, NanosecondsUnit);
+  const uint32_t deadtimeNs = pairDeadTimeNs(settings.pairMode, settings.deadtimeNs);
+  sm.setupDeadtime(deadtimeNs, NanosecondsUnit);
 
   sm.setupDutyCycle(ChanA, settings.dutyA);
   if (settings.hasChanB && settings.dutyB != UINT16_MAX) {
@@ -140,6 +187,30 @@ void setupSubmodule(SubModule &sm, const SubmoduleSettings &settings, bool print
   // begin() skips this on reconfiguration, so it must be called explicitly every time.
   if (!sm.updateSetting(false)) {
     writeLog("Failed to apply submodule settings");
+  }
+
+  // DTCNT1 belt-and-braces. PWM_SetupPwm writes DTCNT0 on the channel-A pass and
+  // DTCNT1 on the channel-B pass, and the Teensy core's flexpwm_init() writes only
+  // DTCNT0 - so DTCNT1 can still hold its 0x07FF reset value (~13.6us) on any
+  // submodule whose B pass never ran. Asserting it here means a pair can never take
+  // a garbage falling-edge dead time.
+  if (complementary) {
+    base->SM[smIdx].DTCNT1 = base->SM[smIdx].DTCNT0;
+  }
+
+  // INDEP last, and only when it actually needs to change. Clearing it enables
+  // complementary generation AND the dead-time insertion logic together (RM
+  // 55.3.2.7), so the gap must already be in DTCNT0/DTCNT1 before this line - the
+  // reverse order would run a pair with whatever dead time happened to be there.
+  // Guarded so a routine settings apply never touches the bit, which keeps the
+  // transition to boot and to an explicit mode change.
+  const bool isIndependent = (base->SM[smIdx].CTRL2 & FLEXPWM_SMCTRL2_INDEP) != 0;
+  if (isIndependent == complementary) {
+    if (complementary) {
+      base->SM[smIdx].CTRL2 &= ~FLEXPWM_SMCTRL2_INDEP;
+    } else {
+      base->SM[smIdx].CTRL2 |= FLEXPWM_SMCTRL2_INDEP;
+    }
   }
 
   sm.timer().enable();
@@ -399,7 +470,8 @@ void configureModule1() {
     .deadtimeNs = config.Pwm.Tm1.Sm13.DeadTime,
     .dutyA = config.Pwm.Tm1.Sm13.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm1.Sm13.ChannelB.DutyCycle,
-    .hasChanB = true
+    .hasChanB = true,
+    .pairMode = config.Pwm.Tm1.Sm13.Pair
   };
   setupSubmodule(Sm13, settings, config.Pwm.PrintRegs);
   writeLog("Started TM1");
@@ -425,7 +497,8 @@ void configureModule2() {
     .deadtimeNs = config.Pwm.Tm2.Sm20.DeadTime,
     .dutyA = config.Pwm.Tm2.Sm20.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm2.Sm20.ChannelB.DutyCycle,
-    .hasChanB = true
+    .hasChanB = true,
+    .pairMode = config.Pwm.Tm2.Sm20.Pair
   };
   setupSubmodule(Sm20, sm20Settings, config.Pwm.PrintRegs);
 
@@ -435,7 +508,8 @@ void configureModule2() {
     .deadtimeNs = config.Pwm.Tm2.Sm21.DeadTime,
     .dutyA = config.Pwm.Tm2.Sm21.ChannelA.DutyCycle,
     .dutyB = UINT16_MAX, // No Channel B
-    .hasChanB = false
+    .hasChanB = false,
+    .pairMode = config.Pwm.Tm2.Sm21.Pair // validation forces Independent: no B pin
   };
   setupSubmodule(Sm21, sm21Settings, config.Pwm.PrintRegs);
 
@@ -445,7 +519,8 @@ void configureModule2() {
     .deadtimeNs = config.Pwm.Tm2.Sm22.DeadTime,
     .dutyA = config.Pwm.Tm2.Sm22.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm2.Sm22.ChannelB.DutyCycle,
-    .hasChanB = true
+    .hasChanB = true,
+    .pairMode = config.Pwm.Tm2.Sm22.Pair
   };
   setupSubmodule(Sm22, sm22Settings, config.Pwm.PrintRegs);
 
@@ -455,7 +530,8 @@ void configureModule2() {
     .deadtimeNs = config.Pwm.Tm2.Sm23.DeadTime,
     .dutyA = config.Pwm.Tm2.Sm23.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm2.Sm23.ChannelB.DutyCycle,
-    .hasChanB = true
+    .hasChanB = true,
+    .pairMode = config.Pwm.Tm2.Sm23.Pair
   };
   setupSubmodule(Sm23, sm23Settings, config.Pwm.PrintRegs);
 
@@ -490,7 +566,8 @@ void configureModule3() {
     .deadtimeNs = config.Pwm.Tm3.Sm31.DeadTime,
     .dutyA = config.Pwm.Tm3.Sm31.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm3.Sm31.ChannelB.DutyCycle,
-    .hasChanB = true
+    .hasChanB = true,
+    .pairMode = config.Pwm.Tm3.Sm31.Pair
   };
   setupSubmodule(Sm31, settings, config.Pwm.PrintRegs);
   writeLog("Started TM3");
@@ -503,7 +580,8 @@ void configureModule4() {
     .deadtimeNs = config.Pwm.Tm4.Sm40.DeadTime,
     .dutyA = config.Pwm.Tm4.Sm40.ChannelA.DutyCycle,
     .dutyB = UINT16_MAX, // No Channel B
-    .hasChanB = false
+    .hasChanB = false,
+    .pairMode = config.Pwm.Tm4.Sm40.Pair // validation forces Independent: no B pin
   };
   setupSubmodule(Sm40, sm40Settings, config.Pwm.PrintRegs);
 
@@ -513,7 +591,8 @@ void configureModule4() {
     .deadtimeNs = config.Pwm.Tm4.Sm41.DeadTime,
     .dutyA = config.Pwm.Tm4.Sm41.ChannelA.DutyCycle,
     .dutyB = UINT16_MAX, // No Channel B
-    .hasChanB = false
+    .hasChanB = false,
+    .pairMode = config.Pwm.Tm4.Sm41.Pair // validation forces Independent: no B pin
   };
   setupSubmodule(Sm41, sm41Settings, config.Pwm.PrintRegs);
 
@@ -566,7 +645,11 @@ void configureModule4() {
       .deadtimeNs = config.Pwm.Tm4.Sm42.DeadTime,
       .dutyA = config.Pwm.Tm4.Sm42.ChannelA.DutyCycle,
       .dutyB = config.Pwm.Tm4.Sm42.ChannelB.DutyCycle,
-      .hasChanB = true
+      .hasChanB = true,
+      // Asymmetric induction mode drives A and B from independent VAL2..VAL5
+      // start/stop values, which complementary generation would overwrite.
+      // Validation forces Independent for Sm42 regardless of what is configured.
+      .pairMode = config.Pwm.Tm4.Sm42.Pair
     };
     setupSubmodule(Sm42, sm42Settings, config.Pwm.PrintRegs);
   }

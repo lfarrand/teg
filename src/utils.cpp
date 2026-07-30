@@ -1,4 +1,5 @@
 #include "utils.h"
+#include <stdint.h>
 #include "event_log_api.h"
 #include "main.h" // kickWatchdog
 #include "ntp_utils.h"
@@ -91,9 +92,39 @@ void flushDisplay() {
   lastDisplayFlush = millis();
 }
 
+// Stack headroom in DTCM, in bytes: the gap between the current stack pointer and
+// the top of the DTCM statics that the stack is growing down towards.
+//
+// This previously subtracted sbrk(0) - the heap break, which on a Teensy 4 lives in
+// OCRAM at 0x20200000 - from the address of a stack local in DTCM at 0x20000000.
+// Two different regions, so the result was a fixed ~2MB address-space gap rather
+// than any measure of free memory: the one field that would reveal a stack overflow
+// could never move. freeram() below is the OCRAM heap figure and was always correct.
+//
+// _ebss is the end of the .bss placed in DTCM (see imxrt1062_mm.ld), so this needs
+// no knowledge of where the stack starts - only how far it can grow before it
+// collides with the statics, which is the failure that matters. At shallow call
+// depth it should read close to the "free for local variables" figure that
+// `pio run` reports; docs/BENCH_CHECKS.md leans on that agreement.
+extern char _ebss;
+
 int getFreeMemory() {
   char top;
-  return &top - static_cast<char *>(sbrk(0));
+  return &top - &_ebss;
+}
+
+// Smallest headroom seen since boot. An instantaneous reading is nearly useless for
+// catching an overflow - the stack is deepest inside the call that overflows it, not
+// when a 1Hz task happens to look - so every sampler feeds this low-water mark and
+// the API reports both.
+static int stackLowWater = INT32_MAX;
+
+int getStackLowWater() {
+  const int now = getFreeMemory();
+  if (now < stackLowWater) {
+    stackLowWater = now;
+  }
+  return stackLowWater;
 }
 
 int freeram() {

@@ -662,8 +662,12 @@ trust while bench testing:
   (default **20000**) which the ISR uses for its maths. Set inconsistently, the
   modulation maths silently disagrees with the switching.
 
-- `getFreeMemory()` subtracts an OCRAM pointer from a DTCM pointer, so the one
-  telemetry field that would reveal a stack overflow is meaningless.
+- ~~`getFreeMemory()` subtracts an OCRAM pointer from a DTCM pointer~~ — **fixed
+  2026-07-30.** It now measures the gap between the stack pointer and `_ebss`, the
+  top of the DTCM statics, and `/api/status` also reports `stackLowWater`: the
+  smallest headroom seen since boot, which is the figure that actually reveals an
+  overflow. Not bench-verified — compare it against the `free for local variables`
+  figure from `pio run`, which should agree at shallow call depth.
 - There is **no missed-carrier-cycle counter**: if the modulation ISR is starved,
   nothing reports it.
 - The OneWire temperature harvest masks interrupts for 65–70 µs at a time, long

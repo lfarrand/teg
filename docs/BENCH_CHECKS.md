@@ -79,6 +79,12 @@ stack, and it is the single most likely way this build bites you.
 
 - [ ] Confirm the figure on your build: `pio run -e teensy41`, read
       `free for local variables`.
+- [ ] **Cross-check it against the device.** `GET /api/status` now reports
+      `dtcmFree` (headroom now) and `stackLowWater` (the smallest seen since boot).
+      At idle `dtcmFree` should sit close to the build figure; if it does not, the
+      measurement is wrong and nothing below it can be trusted. Watch
+      `stackLowWater` rather than `dtcmFree` while exercising the deep paths — an
+      overflow happens at peak call depth, not when a 1 Hz task happens to sample.
 - [ ] Exercise the deepest call paths **with MTP mounted and browsing**, and
       watch for a crash/reboot: load the stats page (FFT + spectrum), download
       a raw capture, upload a large waveform, and save settings — ideally at

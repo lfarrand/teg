@@ -335,10 +335,17 @@ counts, chunk-streamed with the watchdog serviced throughout.
 samples and returns normalised magnitudes, the detected fundamental, and **total
 harmonic distortion**. The stats page renders it as a dBc plot.
 
-Two engines are selectable from the UI: a **portable radix-2** implementation
-(the default — it is the one carrying the unit tests, so the exact code that
-runs on the device is verified on the host) and **CMSIS `arm_rfft_fast_f32`**
-for speed. The measured compute time is reported either way.
+Two engines exist: a **portable radix-2** implementation (the default — it is the
+one carrying the unit tests, so the exact code that runs on the device is verified
+on the host) and **CMSIS `arm_rfft_fast_f32`** for speed. The measured compute time
+is reported either way, along with which engine actually ran.
+
+The CMSIS engine is **compiled out by default**. Linking it drags ~77 KB of CMSIS
+tables into DTCM — on a Teensy 4, plain `const` data is copied there rather than
+left in flash — which is a poor trade for a fast path reachable only by adding
+`?engine=cmsis` to one diagnostic endpoint. Build with `-DTEG_ENABLE_CMSIS_FFT` to
+put it back, at that cost. Without it, `?engine=cmsis` falls back and the response
+says `"portable"`.
 
 The modulation schemes' spectral claims are themselves unit-tested: the suite
 synthesises the switched output by driving the *same* per-cycle pipeline the ISR
@@ -678,5 +685,10 @@ trust while bench testing:
   per-submodule `PwmFrequency` actually programmed into the hardware are
   independent config fields with no cross-validation — set them inconsistently
   and the modulation maths silently disagrees with the switching.
-- Most of the DTCM shortfall is **CMSIS-DSP FFT tables**, pulled in by an opt-in
-  spectrum query, not by MTP as previously assumed.
+- ~~Most of the DTCM shortfall is **CMSIS-DSP FFT tables**~~ — **fixed 2026-07-30.**
+  The CMSIS engine is now compiled out unless `TEG_ENABLE_CMSIS_FFT` is defined.
+  Referencing it pulled ~77 KB of CMSIS tables into DTCM (plain `const` data is
+  copied there on a Teensy 4) for a fast path reachable only via `?engine=cmsis`.
+  Free-for-locals went from **18,432 to 97,280 bytes**. `?engine=cmsis` now falls
+  back to the portable engine and the response reports `"portable"`, the same
+  contract already used for an unsupported point count.

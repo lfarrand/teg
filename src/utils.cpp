@@ -59,7 +59,30 @@ void writeLogLevel(uint8_t level, const String &msg) {
   displayDirty = true;
 }
 
+// A boot notice holds the status line for its duration. Without this the 1Hz memory
+// report overwrites it within a second, which is useless for something an operator
+// has to read and write down - like a generated write PIN.
+static bool statusNoticeHeld = false;
+static uint32_t statusNoticeUntil = 0;
+
+void setStatusNotice(const String &line, uint32_t holdMs) {
+  statusNoticeHeld = true;
+  statusNoticeUntil = millis() + holdMs;
+  if (statusLine != line) {
+    statusLine = line;
+    displayDirty = true;
+  }
+}
+
 void setStatusLine(const String &line) {
+  if (statusNoticeHeld) {
+    // Signed comparison so the millis() rollover at ~49 days cannot extend the hold
+    // indefinitely.
+    if (static_cast<int32_t>(millis() - statusNoticeUntil) < 0) {
+      return; // notice still showing; drop this update rather than queue it
+    }
+    statusNoticeHeld = false;
+  }
   if (statusLine != line) {
     statusLine = line;
     displayDirty = true;

@@ -26,6 +26,7 @@
 #include "event_log_api.h"
 #include "mtp_service.h"
 #include "utils.h"
+#include "write_pin.h"
 
 const char* filename = "/settings.cfg";
 
@@ -247,6 +248,11 @@ void setup() {
   waveformLoadFromSd();
 
   initMemory();
+
+  // Before the network comes up: an unconfigured board would otherwise accept
+  // unauthenticated writes - including a firmware upload - for the window between
+  // the interface appearing and this running.
+  writePinEnsure(filename);
 
   configureEthernet();
 

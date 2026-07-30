@@ -75,9 +75,14 @@ POD/APOD), not scheme 1:
       Anything else means something is blocking or preempting the ISR, and the
       modulation, capture, metering and current-limit polling all live there.
       A known candidate is the OneWire temperature harvest, which masks interrupts
-      for 65–70 µs — longer than a whole period at a 20 kHz carrier. Check it with
-      temperature sensors enabled *and* disabled to attribute the cause. The count
+      for 65–70 µs — longer than a whole period at a 20 kHz carrier. The count
       resets whenever the carrier is reconfigured.
+- [ ] **Attribute the OneWire share.** `thermalMissedCycles` reports what the last
+      harvest alone cost. Probe addresses are cached rather than re-searched, so
+      this should now be a small fraction of what it was — but "should" is the
+      word doing the work, and this is the number that settles it. If it is large
+      enough to matter for your output quality, the next lever is lengthening the
+      2 s harvest interval, since the cost is per-harvest.
 
 ## 1. USB MTP — stack headroom (do this one first if MTP is enabled)
 

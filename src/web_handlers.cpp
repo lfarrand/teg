@@ -47,6 +47,13 @@ static char authPinHeader[sizeof(SecurityConfig{}.WritePin) + 4];
 
 FLASHMEM void configureWebServer() {
   app.header("X-Auth-Pin", authPinHeader, sizeof(authPinHeader));
+  // Bound the header phase and feed the watchdog while waiting on a slow client.
+  // Without this a byte dribbled just inside the per-byte timeout keeps the header
+  // loop alive indefinitely while nothing services the watchdog - an unauthenticated
+  // reset of a generating inverter. See lib/aWOT/PATCHES.md.
+  Request::setServiceCallback(&kickWatchdog);
+  Request::setHeaderBudget(4000);
+
   app.get("/", &index);
   app.get("/index.html", &index);
   app.get("/stats.html", &serve_stats);

@@ -269,9 +269,23 @@ DMAMEM static float fftRe[SpectrumMaxPoints];
 DMAMEM static float fftIm[SpectrumMaxPoints];
 DMAMEM static int16_t fftSamples[SpectrumMaxPoints];
 
-// CMSIS real-FFT instance, re-initialised when the point count changes
+// CMSIS real-FFT instance, re-initialised when the point count changes.
+//
+// Compiled out by default. Referencing arm_rfft_fast_f32 pulls twiddleCoef_2048 and
+// twiddleCoef_rfft_4096 out of the CMSIS archive, and on a Teensy 4 plain const data
+// is copied into DTCM rather than left in flash - 32KB of it, for a fast path that is
+// only reachable by adding ?engine=cmsis to one diagnostic endpoint. That is 1.8x the
+// entire remaining stack (18432 bytes with USB MTP compiled in), so the default trade
+// is wrong: it spends the scarcest resource on the least-used feature.
+//
+// The portable radix-2 engine stays available, is the natively-tested one, and already
+// serves every request. Define TEG_ENABLE_CMSIS_FFT to link the fast path back in;
+// with it undefined, ?engine=cmsis falls back and the response reports "portable", the
+// same contract already used for an unsupported point count.
+#ifdef TEG_ENABLE_CMSIS_FFT
 static arm_rfft_fast_instance_f32 rfftInstance;
 static uint32_t rfftInstancePoints = 0;
+#endif
 
 FLASHMEM void api_spectrum(Request &req, Response &res) {
   char qbuf[12];
@@ -283,11 +297,15 @@ FLASHMEM void api_spectrum(Request &req, Response &res) {
     points = SpectrumMaxPoints;
   }
   // Engine: "portable" (the natively-tested radix-2, default) or "cmsis"
-  // (ARM's mixed-radix real FFT, ~5x faster)
+  // (ARM's mixed-radix real FFT, ~5x faster). The CMSIS path is compiled out unless
+  // TEG_ENABLE_CMSIS_FFT is defined - see rfftInstance above for why - and the
+  // request then falls back rather than failing.
   bool useCmsis = false;
+#ifdef TEG_ENABLE_CMSIS_FFT
   if (req.query("engine", qbuf, sizeof(qbuf))) {
     useCmsis = strcmp(qbuf, "cmsis") == 0;
   }
+#endif
 
   res.set("Content-Type", "application/json");
   JsonDocument doc;
@@ -304,6 +322,7 @@ FLASHMEM void api_spectrum(Request &req, Response &res) {
   const uint32_t computeStart = ARM_DWT_CYCCNT;
   const uint32_t halfN = points / 2;
   float *mag;
+#ifdef TEG_ENABLE_CMSIS_FFT
   if (useCmsis) {
     if (rfftInstancePoints != points) {
       if (arm_rfft_fast_init_f32(&rfftInstance, points) != ARM_MATH_SUCCESS) {
@@ -318,7 +337,9 @@ FLASHMEM void api_spectrum(Request &req, Response &res) {
     arm_rfft_fast_f32(&rfftInstance, fftRe, fftIm, 0); // consumes fftRe
     mag = fftRe;
     spectrumMagnitudesPacked(fftIm, mag, halfN);
-  } else {
+  } else
+#endif
+  {
     prepareSpectrumInput(fftSamples, points, fftRe, fftIm);
     fftRadix2(fftRe, fftIm, points);
     // In-place: mag[i] depends only on re[i]/im[i], so re[] can hold the result

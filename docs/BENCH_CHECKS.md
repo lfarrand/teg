@@ -81,9 +81,16 @@ POD/APOD), not scheme 1:
 
 ## 1. USB MTP — stack headroom (do this one first if MTP is enabled)
 
+> **Largely resolved 2026-07-30.** Compiling out the opt-in CMSIS FFT engine
+> returned **~77 KB of DTCM**, taking free-for-locals from **18,432 to 97,280
+> bytes**. The stack is no longer the tightest constraint in this build, and this
+> section drops well down the priority order. It is kept because the checks are
+> still worth running once, and because defining `TEG_ENABLE_CMSIS_FFT` puts the
+> whole 77 KB back.
+
 Enabling USB MTP dropped RAM1 free-for-locals from **~55 KB to ~18.4 KB**,
 because the library's code lands in ITCM. That number *is* the available
-stack, and it is the single most likely way this build bites you.
+stack, and it was the single most likely way this build bites you.
 
 - [ ] Confirm the figure on your build: `pio run -e teensy41`, read
       `free for local variables`.

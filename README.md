@@ -147,10 +147,14 @@ When a **write PIN** is configured (Security section), POSTs require a matching
 MQTT password and the PIN itself) are redacted from GET responses; an empty
 secret in a POST keeps the stored value.
 
-> **Set a PIN.** It defaults to empty, and an empty PIN means *every* write
-> endpoint — including firmware update — is unauthenticated. There is no TLS, no
-> rate limiting and no Origin checking, and every GET is unauthenticated. See
-> [docs/SECURITY.md](docs/SECURITY.md).
+> **A PIN is generated on first boot** if none is set — 8 characters from the
+> hardware TRNG, shown on the OLED for two minutes and printed to the serial log.
+> Note it down: it is required for every API write, including firmware updates.
+> Without an SD card it cannot be persisted, so a new one is issued each boot and
+> the message says so. Change it in the Security settings.
+>
+> There is still no TLS, no rate limiting and no Origin checking, and every GET is
+> unauthenticated. See [docs/SECURITY.md](docs/SECURITY.md).
 
 The device also announces itself via mDNS as **`http://teg.local`**.
 

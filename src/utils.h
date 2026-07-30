@@ -10,6 +10,9 @@ extern String logs[];
 void writeLog(const String &msg); // records at info level
 void writeLogLevel(uint8_t level, const String &msg); // EventLevel from event_log.h
 void setStatusLine(const String &line);
+// Hold a message on the status line for holdMs, ignoring setStatusLine() meanwhile.
+// For things an operator must have time to read.
+void setStatusNotice(const String &line, uint32_t holdMs);
 void flushDisplay();
 int getFreeMemory();     // DTCM stack headroom now, bytes
 int getStackLowWater();  // smallest headroom seen since boot, bytes

@@ -49,9 +49,22 @@ Do not describe this as "secure boot".
 
 ### 2. No TLS, and authentication defaults to none
 
+> **The default is fixed as of 2026-07-30.** `writePinEnsure()` generates a random
+> 8-symbol PIN from the hardware TRNG on first boot, persists it to
+> `/settings.cfg`, and shows it on the OLED for two minutes as well as printing it
+> to serial and the event log. It runs *before* the network comes up, so there is
+> no window where an unconfigured board is reachable and unauthenticated. Without
+> an SD card the save is lost and a new PIN is issued each boot — the messages say
+> so explicitly. **The rest of this section still stands: there is no TLS, no rate
+> limiting, and no Origin checking.**
+>
+> This was worth more than the rest of the list combined, because that one default
+> was the gate behind the unsigned-OTA remote code execution *and* the OTA
+> safe-state denial of service. Neither was reachable without it.
+
 `writeAuthorized()` returns `true` unconditionally when the write PIN is empty,
-which is the compiled default. Out of the box every mutating endpoint —
-including OTA — is unauthenticated to anyone who can reach the device.
+which was the compiled default. Out of the box every mutating endpoint —
+including OTA — was unauthenticated to anyone who could reach the device.
 
 With a PIN set it is a single shared ≤15-character bearer secret, sent in
 cleartext on every write, with no rate limiting, no lockout, and no logging of
@@ -72,13 +85,17 @@ Three independent one-request kills, all pre-auth:
 - A slow-loris header dribble deterministically trips the 8 s watchdog.
 - `GET /api/capture/raw` freezes every control loop for seconds *while kicking
   the watchdog*, so nothing detects the stall.
-- `POST /api/ota` with a single junk byte latches `enterOtaSafeState()` — outputs
-  off until a manual reboot.
+- ~~`POST /api/ota` with a single junk byte latches `enterOtaSafeState()`~~ —
+  **this was wrong.** `api_ota_post()` calls `writeAuthorized()` first, drains the
+  body and returns 401 before `otaIngestStream()` (and therefore
+  `enterOtaSafeState()`) is reached. The ordering was already correct; the path
+  was only reachable because authentication defaulted to none, which §2 now fixes.
+  Corrected 2026-07-30 after checking the code rather than the finding.
 
-**Fix:** a total-request deadline with watchdog service in the header loop; chunk
-the raw download with control-task service between chunks (the OTA path already
-demonstrates the pattern); require authentication *before* entering the OTA safe
-state.
+**Fix for the remaining two:** a total-request deadline with watchdog service in
+the header loop (this lives in the vendored `lib/aWOT`, which has its own timeout
+machinery worth reading first); chunk the raw download with control-task service
+between chunks — the OTA path already demonstrates the pattern.
 
 ## Everything else found
 
@@ -130,10 +147,14 @@ intend to keep**, because the obligation attaches to whatever is in the binary.
 
 1. ~~Pin library versions~~ (done 2026-07-29); **decide the QNEthernet licence
    question** — this is the one that gets harder with time, because the AGPL
-   obligation attaches to whatever ends up in the binary.
-2. Ed25519-signed OTA with anti-rollback.
-3. Close the pre-auth DoS trio; require auth before the OTA safe state.
-4. Non-empty PIN enforced, rate limiting, failed-auth logging, Origin checks.
+   obligation attaches to whatever ends up in the binary. Enquiry sent
+   2026-07-29, awaiting a reply.
+2. ~~Non-empty PIN enforced~~ (done 2026-07-30 — generated at first boot). Rate
+   limiting, failed-auth logging and Origin checks are still outstanding.
+3. Ed25519-signed OTA with anti-rollback. **Needs a decision first:** where the
+   signing key lives and whether CI signs automatically.
+4. Close the two remaining pre-auth DoS paths (slow-loris deadline, chunked raw
+   capture download).
 5. Encrypt secrets at rest, or move them off the removable card.
 6. For a product: custom RT1062 board with HAB, and safety functions on their
    own MCU (see [PRODUCT_READINESS.md](PRODUCT_READINESS.md)).

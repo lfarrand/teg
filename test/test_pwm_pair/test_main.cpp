@@ -1,4 +1,5 @@
 #include <unity.h>
+#include <initializer_list>
 #include "pwm_pair.h"
 
 void setUp() {}
@@ -185,8 +186,72 @@ void test_no_sanitised_mode_ever_pairs_a_b_less_submodule() {
   }
 }
 
+// --- scheme gate ------------------------------------------------------------
+// A complementary pair cannot invert a cell's output polarity: it would turn every
+// dead-time gap into an overlap, and mask/fault force the pins low BEFORE polarity,
+// so an inverted pair goes HIGH on fault. Until the two real mechanisms land
+// (DTSRCSEL + FORCE_OUT for an inverted output, VAL2/VAL3 edge bias for a displaced
+// carrier), a pair refuses any modulation that needs inversion.
+
+void test_scheme_gate_refuses_complementary_when_inversion_needed() {
+  for (uint8_t sm : {PairSm20, PairSm22, PairSm23}) {
+    TEST_ASSERT_EQUAL_UINT8(PairIndependent,
+                            pairModeSanitisedForScheme(PairHalfBridge, sm, true));
+    TEST_ASSERT_EQUAL_UINT8(PairIndependent,
+                            pairModeSanitisedForScheme(PairDifferential, sm, true));
+  }
+}
+
+void test_scheme_gate_admits_complementary_when_no_inversion_needed() {
+  for (uint8_t sm : {PairSm20, PairSm22, PairSm23}) {
+    TEST_ASSERT_EQUAL_UINT8(PairHalfBridge,
+                            pairModeSanitisedForScheme(PairHalfBridge, sm, false));
+    TEST_ASSERT_EQUAL_UINT8(PairDifferential,
+                            pairModeSanitisedForScheme(PairDifferential, sm, false));
+  }
+}
+
+void test_scheme_gate_still_applies_the_hardware_facts() {
+  // The gate composes with, rather than replaces, the B-pin and Sm42 rules.
+  for (uint8_t sm : {PairSm21, PairSm40, PairSm41, PairSm42}) {
+    TEST_ASSERT_EQUAL_UINT8(PairIndependent,
+                            pairModeSanitisedForScheme(PairHalfBridge, sm, false));
+  }
+  // Independent is always fine, inversion or not.
+  for (uint8_t sm = 0; sm < PairSubmoduleCount; sm++) {
+    TEST_ASSERT_EQUAL_UINT8(PairIndependent, pairModeSanitisedForScheme(PairIndependent, sm, true));
+    TEST_ASSERT_EQUAL_UINT8(PairIndependent, pairModeSanitisedForScheme(PairIndependent, sm, false));
+  }
+}
+
+void test_scheme_gate_never_yields_a_complementary_pair_needing_inversion() {
+  // The safety property, over the whole input space.
+  for (uint8_t sm = 0; sm < PairSubmoduleCount; sm++) {
+    for (uint16_t mode = 0; mode < 260; mode++) {
+      const uint8_t out = pairModeSanitisedForScheme(static_cast<uint8_t>(mode), sm, true);
+      TEST_ASSERT_FALSE(pairIsComplementary(out));
+    }
+  }
+}
+
+void test_scheme_gate_is_idempotent() {
+  for (uint8_t sm = 0; sm < PairSubmoduleCount; sm++) {
+    for (uint16_t mode = 0; mode < 260; mode++) {
+      for (int inv = 0; inv < 2; inv++) {
+        const uint8_t once = pairModeSanitisedForScheme(static_cast<uint8_t>(mode), sm, inv != 0);
+        TEST_ASSERT_EQUAL_UINT8(once, pairModeSanitisedForScheme(once, sm, inv != 0));
+      }
+    }
+  }
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_scheme_gate_refuses_complementary_when_inversion_needed);
+  RUN_TEST(test_scheme_gate_admits_complementary_when_no_inversion_needed);
+  RUN_TEST(test_scheme_gate_still_applies_the_hardware_facts);
+  RUN_TEST(test_scheme_gate_never_yields_a_complementary_pair_needing_inversion);
+  RUN_TEST(test_scheme_gate_is_idempotent);
   RUN_TEST(test_dead_time_cycles_converts_at_bus_clock);
   RUN_TEST(test_dead_time_cycles_saturates_instead_of_wrapping);
   RUN_TEST(test_max_dead_time_ns_matches_the_register_width);

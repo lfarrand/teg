@@ -149,3 +149,15 @@ constexpr uint8_t pairModeSanitised(uint8_t requested, uint8_t submodule) {
 constexpr bool pairModeValid(uint8_t requested, uint8_t submodule) {
   return pairModeSanitised(requested, submodule) == requested;
 }
+
+// As above, but also refuses a complementary mode when the active modulation would
+// need a cell's output polarity inverted - which a complementary pair cannot do
+// safely. The caller supplies that as a plain bool (see
+// schemeRequiresPolarityInversion() in modulation.h) so this header stays free of
+// modulation concerns and both halves stay independently testable.
+constexpr uint8_t pairModeSanitisedForScheme(uint8_t requested, uint8_t submodule,
+                                             bool schemeNeedsInversion) {
+  return (schemeNeedsInversion && pairIsComplementary(pairModeSanitised(requested, submodule)))
+             ? PairIndependent
+             : pairModeSanitised(requested, submodule);
+}

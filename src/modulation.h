@@ -352,6 +352,31 @@ inline CellPlan modulationCellPlan(uint8_t scheme, uint8_t disposition, uint8_t 
   return p;
 }
 
+// Whether any active cell would need its output polarity inverted.
+//
+// A complementary pair cannot do that. Inverting POLA/POLB turns every dead-time
+// gap into an overlap - both switches conducting - and MASK and the fault state
+// force the pins to logic 0 BEFORE polarity is applied (RM 55.8.45.4, 55.8.18.3),
+// so an inverted pair would drive both switches HIGH on fault, during OTA and at
+// boot-mask.
+//
+// Derived from the plans rather than from an allow-list of scheme numbers: that
+// correctly admits level-shifted PD, which never inverts, refuses POD/APOD, and
+// cannot drift out of sync when a scheme is added or a plan changes.
+//
+// The hardware CAN do this, just not through polarity - scheme 2 needs an inverted
+// output (DTSRCSEL + one FORCE_OUT) and schemes 5 and 4-POD/APOD need a displaced
+// carrier (VAL2/VAL3 edge bias). Both are documented in docs/BENCH_CHECKS.md and
+// deliberately deferred; until then a complementary pair refuses these schemes.
+inline bool schemeRequiresPolarityInversion(uint8_t scheme, uint8_t disposition, uint8_t cells) {
+  for (uint8_t cell = 0; cell < cells; cell++) {
+    if (modulationCellPlan(scheme, disposition, cell, cells).polarityInverted) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // The duty a cell's comparator produces, before carrier geometry
 inline uint16_t modulationCellDuty(uint8_t scheme, uint16_t ref, uint8_t cell, uint8_t numCells,
                                    bool nearestLevel = false) {

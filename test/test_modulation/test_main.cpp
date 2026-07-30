@@ -350,8 +350,45 @@ void test_ls_band_split_and_final_duty() {
   TEST_ASSERT_EQUAL_UINT16(0, modulationFinalDuty(65535, comp));
 }
 
+void test_scheme_requires_polarity_inversion_matches_the_plans() {
+  // Derived from the plans, not an allow-list - so it must agree with them exactly.
+  TEST_ASSERT_FALSE(schemeRequiresPolarityInversion(ModSchemeSpwmUnipolar, CarrierPd, 2));
+  TEST_ASSERT_FALSE(schemeRequiresPolarityInversion(ModSchemeThipwm, CarrierPd, 2));
+  TEST_ASSERT_FALSE(schemeRequiresPolarityInversion(ModSchemeFixed, CarrierPd, 2));
+  TEST_ASSERT_FALSE(schemeRequiresPolarityInversion(ModSchemeSvpwm, CarrierPd, 3));
+  TEST_ASSERT_FALSE(schemeRequiresPolarityInversion(ModSchemeDpwm, CarrierPd, 3));
+
+  TEST_ASSERT_TRUE(schemeRequiresPolarityInversion(ModSchemeSpwmBipolar, CarrierPd, 2));
+  TEST_ASSERT_TRUE(schemeRequiresPolarityInversion(ModSchemePhaseShifted, CarrierPd, 4));
+
+  // Level-shifted: PD never inverts, POD and APOD do. This is exactly why the gate
+  // is derived rather than a scheme allow-list - the same scheme number differs by
+  // carrier disposition.
+  TEST_ASSERT_FALSE(schemeRequiresPolarityInversion(ModSchemeLevelShifted, CarrierPd, 4));
+  TEST_ASSERT_TRUE(schemeRequiresPolarityInversion(ModSchemeLevelShifted, CarrierPod, 4));
+  TEST_ASSERT_TRUE(schemeRequiresPolarityInversion(ModSchemeLevelShifted, CarrierApod, 4));
+}
+
+void test_scheme_inversion_agrees_with_every_plan() {
+  // Exhaustive cross-check: the helper is true iff some cell's plan says so.
+  const uint8_t disps[] = {CarrierPd, CarrierPod, CarrierApod};
+  for (uint8_t scheme = 0; scheme <= ModSchemeLevelShifted; scheme++) {
+    for (uint8_t d = 0; d < 3; d++) {
+      for (uint8_t cells = 1; cells <= MaxModulationCells; cells++) {
+        bool any = false;
+        for (uint8_t c = 0; c < cells; c++) {
+          if (modulationCellPlan(scheme, disps[d], c, cells).polarityInverted) any = true;
+        }
+        TEST_ASSERT_EQUAL(any, schemeRequiresPolarityInversion(scheme, disps[d], cells));
+      }
+    }
+  }
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_scheme_requires_polarity_inversion_matches_the_plans);
+  RUN_TEST(test_scheme_inversion_agrees_with_every_plan);
   RUN_TEST(test_sine_unit_lut_key_points_and_antisymmetry);
   RUN_TEST(test_thipwm_unit_lut_flattened_crest);
   RUN_TEST(test_square_unit_lut);

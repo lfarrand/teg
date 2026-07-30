@@ -16,5 +16,9 @@ uint16_t thermalDerateMilliNow(); // 1000 = no derating
 int16_t thermalHotDeciC();
 int16_t thermalColdDeciC();
 int16_t thermalChipDeciC();
+// Carrier cycles the modulation ISR lost to the last OneWire harvest. OneWire masks
+// interrupts around each bit slot, so probe reads and carrier cycles compete; this
+// makes the cost measurable rather than inferred.
+uint32_t thermalHarvestMissedCycles();
 
 #endif

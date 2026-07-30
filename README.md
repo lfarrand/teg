@@ -680,7 +680,11 @@ trust while bench testing:
   too late to serve. Non-zero means something blocked or preempted it. Resets when
   the carrier is reconfigured, since the baseline moves. Not bench-verified.
 - The OneWire temperature harvest masks interrupts for 65–70 µs at a time, long
-  enough to drop carrier cycles silently.
+  enough to drop carrier cycles silently. **Reduced 2026-07-30** — probe ROM
+  addresses are now cached instead of re-searched on every read, removing roughly
+  78% of the bus traffic per harvest. The remaining cost is real and is now
+  measurable: `/api/status` reports `thermalMissedCycles`, the carrier cycles the
+  last harvest actually cost.
 - `Pwm.Tm2.SpwmCarrierFrequency` (used by the ISR for its maths) and the
   per-submodule `PwmFrequency` actually programmed into the hardware are
   independent config fields with no cross-validation — set them inconsistently

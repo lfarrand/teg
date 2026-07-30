@@ -30,17 +30,21 @@ void initMemory() {
 }
 
 void reportMemoryUsage() {
+  // Sampling the low-water mark also refreshes it, so call it before reading the
+  // instantaneous figure - the two then agree about this moment.
+  int stackMin = getStackLowWater();
   int dtcmFree = getFreeMemory();
   int ocramFree = freeram();
 
   extern volatile uint32_t vIsrCycles; // last SPWM ISR duration, 600MHz DWT cycles
 
-  char buf[80];
-  snprintf(buf, sizeof(buf), "DTCM Free: %d | OCRAM Free: %d | SPWM ISR: %lu cycles",
-           dtcmFree, ocramFree, vIsrCycles);
+  char buf[96];
+  snprintf(buf, sizeof(buf), "Stack: %d now / %d min | OCRAM Free: %d | SPWM ISR: %lu cycles",
+           dtcmFree, stackMin, ocramFree, vIsrCycles);
   Serial.println(buf);
 
-  // Compact form for the dedicated OLED status line (21 chars max at size-1 font)
-  snprintf(buf, sizeof(buf), "DTCM %dk OCRAM %dk", dtcmFree / 1024, ocramFree / 1024);
+  // Compact form for the dedicated OLED status line (21 chars max at size-1 font).
+  // The minimum is the number worth watching, so that is what gets the space.
+  snprintf(buf, sizeof(buf), "Stk%dk OCRAM %dk", stackMin / 1024, ocramFree / 1024);
   setStatusLine(buf);
 }

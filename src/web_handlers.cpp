@@ -805,6 +805,7 @@ void api_status(Request &req, Response &res) {
   doc["indexMilli"] = modulationIndexNowMilli();
   doc["targetMilli"] = modulationIndexTargetMilli();
   doc["dtcmFree"] = getFreeMemory();
+  doc["stackLowWater"] = getStackLowWater(); // the figure that reveals an overflow
   doc["ocramFree"] = freeram();
   doc["captureActive"] = captureActive();
   doc["captureFrozen"] = captureIsFrozen();

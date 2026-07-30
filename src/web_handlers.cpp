@@ -800,6 +800,7 @@ void api_status(Request &req, Response &res) {
     doc["ocTripsPerSec"] = acmpCbcTripsPerSec();
   }
   doc["isrCycles"] = vIsrCycles;
+  doc["missedIsrCycles"] = vMissedIsrCycles; // carrier cycles the ISR failed to serve
   doc["applyMicros"] = lastApplyMicros;
   doc["modMilliHz"] = modulationActualMilliHz();
   doc["indexMilli"] = modulationIndexNowMilli();

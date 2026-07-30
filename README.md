@@ -668,8 +668,10 @@ trust while bench testing:
   smallest headroom seen since boot, which is the figure that actually reveals an
   overflow. Not bench-verified — compare it against the `free for local variables`
   figure from `pio run`, which should agree at shallow call depth.
-- There is **no missed-carrier-cycle counter**: if the modulation ISR is starved,
-  nothing reports it.
+- ~~There is **no missed-carrier-cycle counter**~~ — **added 2026-07-30.**
+  `/api/status` reports `missedIsrCycles`: carrier cycles the modulation ISR was
+  too late to serve. Non-zero means something blocked or preempted it. Resets when
+  the carrier is reconfigured, since the baseline moves. Not bench-verified.
 - The OneWire temperature harvest masks interrupts for 65–70 µs at a time, long
   enough to drop carrier cycles silently.
 - `Pwm.Tm2.SpwmCarrierFrequency` (used by the ISR for its maths) and the

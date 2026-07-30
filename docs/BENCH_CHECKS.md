@@ -70,6 +70,14 @@ POD/APOD), not scheme 1:
 - [ ] **Free RAM.** `pio run -e teensy41` reports
       `RAM1: … free for local variables: N`. **That figure is the stack.**
       Note it before and after any change that adds code.
+- [ ] **ISR starvation.** `GET /api/status` reports `missedIsrCycles` — carrier
+      cycles the modulation ISR was too late to serve. It should stay at **0**.
+      Anything else means something is blocking or preempting the ISR, and the
+      modulation, capture, metering and current-limit polling all live there.
+      A known candidate is the OneWire temperature harvest, which masks interrupts
+      for 65–70 µs — longer than a whole period at a 20 kHz carrier. Check it with
+      temperature sensors enabled *and* disabled to attribute the cause. The count
+      resets whenever the carrier is reconfigured.
 
 ## 1. USB MTP — stack headroom (do this one first if MTP is enabled)
 

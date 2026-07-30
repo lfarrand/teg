@@ -19,6 +19,21 @@ extern qindesign::network::EthernetServer server;
 volatile uint32_t vPhase = 0;
 volatile uint32_t vIsrCycles = 0;
 
+// Starvation detector. The reload interrupt should arrive once per carrier period;
+// a longer gap means carrier cycles went by unserved, which until now nothing
+// reported. The ISR is where the modulation, capture, metering and current-limit
+// polling all live, so a stall there is silent but not harmless - and the firmware
+// has at least one known interrupt-masked region long enough to cause it (the
+// OneWire temperature harvest masks for 65-70us, more than a full period at 20kHz).
+//
+// Cost on the common path is one subtract and one compare. The divide runs only
+// once a miss has already been detected.
+volatile uint32_t vMissedIsrCycles = 0;
+static volatile uint32_t vIsrGapExpected = 0; // CPU cycles per carrier period
+static volatile uint32_t vIsrGapLimit = 0;    // gap above which cycles are counted lost
+static uint32_t isrLastEntry = 0;             // ISR-owned
+static volatile bool vIsrGapPrimed = false;   // cleared on reconfigure: the baseline moved
+
 // The reference generator is a fixed-point DDS (see spwm_math.h): a 32-bit
 // phase accumulator advances by vPhaseIncrement every carrier cycle and wraps
 // naturally on overflow — any modulation frequency, no drift, no wrap glitch.
@@ -394,6 +409,17 @@ void buildSpwmLut() {
 
   const uint32_t carrier = tm2.SpwmCarrierFrequency;
   vPhaseIncrement = spwmPhaseIncrement(carrier, tm2.SpwmModulationFrequency);
+
+  // Starvation threshold, 1.5x the nominal period. Carrier dither shortens and
+  // lengthens individual periods by up to MaxDitherPercent (30%), so the longest
+  // dithered period is 1.3x nominal - comfortably under the threshold, and no
+  // source of false positives. Under dither the missed-cycle ARITHMETIC is
+  // approximate for the same reason; the count stays a starvation indicator rather
+  // than an exact tally. Priming is cleared here because the baseline just moved.
+  vIsrGapExpected = carrier ? (F_CPU_ACTUAL / carrier) : 0;
+  vIsrGapLimit = vIsrGapExpected + (vIsrGapExpected >> 1);
+  vIsrGapPrimed = false;
+  vMissedIsrCycles = 0;
   // While PLL-locked, keep the accumulator: zeroing it would inject a phase
   // discontinuity into an output that is aligned to an external reference.
   // pllConfigure() (end of applyPwmConfig) re-steers the increment.
@@ -721,6 +747,17 @@ void disableModule2PwmInterrupts() {
 // FPU context stacking (~17 extra cycles and a 26-word exception frame).
 FASTRUN void IsrOverflowSm20() {
   const uint32_t t0 = ARM_DWT_CYCCNT;
+
+  // Count carrier cycles that went by unserved. Unsigned subtraction handles the
+  // DWT counter's ~7.2s wrap correctly, since the gap is microseconds.
+  if (vIsrGapPrimed) {
+    const uint32_t gap = t0 - isrLastEntry;
+    if (gap > vIsrGapLimit) {
+      vMissedIsrCycles += (gap / vIsrGapExpected) - 1;
+    }
+  }
+  isrLastEntry = t0;
+  vIsrGapPrimed = vIsrGapLimit != 0;
 
   digitalToggleFast(TriggerPin);
 

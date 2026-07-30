@@ -12,6 +12,9 @@ constexpr uint16_t MAX_COUNTER_VALUE = 0xFFFF;
 
 extern volatile uint32_t vPhase;
 extern volatile uint32_t vIsrCycles;
+// Carrier cycles the modulation ISR was too late to serve. Non-zero means something
+// blocked or preempted it; resets when the carrier is reconfigured.
+extern volatile uint32_t vMissedIsrCycles;
 
 extern const char *prescaleStr[];
 

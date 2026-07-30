@@ -256,27 +256,22 @@ inline bool validateConfig(MainConfig &config) {
   sanitisePair(config.Pwm.Tm1.Sm13.Pair, PairSm13);
   sanitisePair(config.Pwm.Tm3.Sm31.Pair, PairSm31);
 
-  // Tm2's submodules are the modulation cells, so their pair mode also has to agree
-  // with the active scheme: a complementary pair cannot realise a cell that needs
-  // its polarity inverted. Gated on the derived condition rather than a scheme
-  // allow-list, and only while modulation is actually driving them - with UseSpwm
-  // off the cell plans are not applied and polarity stays HighTrue.
-  const bool needsInversion =
-      config.Pwm.Tm2.UseSpwm &&
-      schemeRequiresPolarityInversion(config.Pwm.Tm2.ModulationScheme,
-                                      config.Pwm.Tm2.CarrierDisposition,
-                                      config.Pwm.Tm2.ModulationCells);
-  const auto sanitiseCell = [&corrected, needsInversion](uint8_t &mode, uint8_t submodule) {
-    const uint8_t safe = pairModeSanitisedForScheme(mode, submodule, needsInversion);
-    if (safe != mode) {
-      mode = safe;
-      corrected = true;
-    }
-  };
-  sanitiseCell(config.Pwm.Tm2.Sm20.Pair, PairSm20);
-  sanitiseCell(config.Pwm.Tm2.Sm21.Pair, PairSm21);
-  sanitiseCell(config.Pwm.Tm2.Sm22.Pair, PairSm22);
-  sanitiseCell(config.Pwm.Tm2.Sm23.Pair, PairSm23);
+  // Only the permanent hardware facts are corrected here - no channel-B pin, and
+  // Sm42's independent start/stop timing. Those never change, so persisting the
+  // correction is right.
+  sanitisePair(config.Pwm.Tm2.Sm20.Pair, PairSm20);
+  sanitisePair(config.Pwm.Tm2.Sm21.Pair, PairSm21);
+  sanitisePair(config.Pwm.Tm2.Sm22.Pair, PairSm22);
+  sanitisePair(config.Pwm.Tm2.Sm23.Pair, PairSm23);
+
+  // The SCHEME gate is deliberately NOT applied here. It depends on the modulation
+  // scheme, which changes, so rewriting Pair would silently and permanently discard
+  // the operator's intent: they wired a half-bridge, selected an inverting scheme
+  // once, and the leg is un-paired for good with nothing in the config left to say it
+  // was ever meant to be a leg. configureModule2() applies the gate at the point of
+  // use instead, so setupSubmodule() can tell "not a pair" from "a pair we are
+  // refusing to drive" - and hold that leg's outputs off rather than fall back to
+  // independent channels carrying their static duties.
   sanitisePair(config.Pwm.Tm4.Sm40.Pair, PairSm40);
   sanitisePair(config.Pwm.Tm4.Sm41.Pair, PairSm41);
   sanitisePair(config.Pwm.Tm4.Sm42.Pair, PairSm42);

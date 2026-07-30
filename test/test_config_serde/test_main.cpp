@@ -442,19 +442,25 @@ void test_pair_change_is_visible_to_the_reconfigure_gates() {
   TEST_ASSERT_EQUAL_INT(0, memcmp(&same1.Pwm.Tm2, &same2.Pwm.Tm2, sizeof(same2.Pwm.Tm2)));
 }
 
-void test_validate_refuses_complementary_cells_for_inverting_schemes() {
-  // Scheme 2 needs an inverted output; a complementary pair cannot provide it.
+void test_validate_preserves_pair_intent_under_an_inverting_scheme() {
+  // validateConfig must NOT rewrite Pair because of the modulation scheme. The scheme
+  // changes; the wiring does not. Rewriting it would permanently discard the fact
+  // that the operator built a half-bridge there, and the config would no longer hold
+  // the information needed to refuse to drive that leg later.
+  //
+  // The gate itself lives in configureModule2() and is tested as a pure function in
+  // test_pwm_pair (pairModeSanitisedForScheme).
   MainConfig cfg;
   cfg.Pwm.Tm2.UseSpwm = true;
-  cfg.Pwm.Tm2.ModulationScheme = ModSchemeSpwmBipolar;
+  cfg.Pwm.Tm2.ModulationScheme = ModSchemeSpwmBipolar; // needs inversion
   cfg.Pwm.Tm2.ModulationCells = 2;
   cfg.Pwm.Tm2.Sm20.Pair = PairHalfBridge;
   cfg.Pwm.Tm2.Sm22.Pair = PairHalfBridge;
-  TEST_ASSERT_TRUE(validateConfig(cfg));
-  TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm2.Sm20.Pair);
-  TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm2.Sm22.Pair);
+  validateConfig(cfg);
+  TEST_ASSERT_EQUAL_UINT8(PairHalfBridge, cfg.Pwm.Tm2.Sm20.Pair);
+  TEST_ASSERT_EQUAL_UINT8(PairHalfBridge, cfg.Pwm.Tm2.Sm22.Pair);
 
-  // Scheme 1 needs no inversion, so a pair is allowed.
+  // Same under a non-inverting scheme, for the obvious reason.
   MainConfig ok;
   ok.Pwm.Tm2.UseSpwm = true;
   ok.Pwm.Tm2.ModulationScheme = ModSchemeSpwmUnipolar;
@@ -466,26 +472,19 @@ void test_validate_refuses_complementary_cells_for_inverting_schemes() {
   TEST_ASSERT_EQUAL_UINT8(PairDifferential, ok.Pwm.Tm2.Sm22.Pair);
 }
 
-void test_validate_gates_level_shifted_on_carrier_disposition() {
-  // Same scheme number, opposite outcome - the reason the gate is derived from the
-  // plans rather than from a list of scheme numbers.
-  MainConfig pd;
-  pd.Pwm.Tm2.UseSpwm = true;
-  pd.Pwm.Tm2.ModulationScheme = ModSchemeLevelShifted;
-  pd.Pwm.Tm2.CarrierDisposition = CarrierPd;
-  pd.Pwm.Tm2.ModulationCells = 4;
-  pd.Pwm.Tm2.Sm20.Pair = PairHalfBridge;
-  validateConfig(pd);
-  TEST_ASSERT_EQUAL_UINT8(PairHalfBridge, pd.Pwm.Tm2.Sm20.Pair);
-
-  MainConfig pod;
-  pod.Pwm.Tm2.UseSpwm = true;
-  pod.Pwm.Tm2.ModulationScheme = ModSchemeLevelShifted;
-  pod.Pwm.Tm2.CarrierDisposition = CarrierPod;
-  pod.Pwm.Tm2.ModulationCells = 4;
-  pod.Pwm.Tm2.Sm20.Pair = PairHalfBridge;
-  TEST_ASSERT_TRUE(validateConfig(pod));
-  TEST_ASSERT_EQUAL_UINT8(PairIndependent, pod.Pwm.Tm2.Sm20.Pair);
+void test_validate_still_enforces_the_permanent_hardware_facts() {
+  // The facts that never change are still corrected and persisted: no channel-B pin,
+  // and Sm42's independent start/stop timing.
+  MainConfig cfg;
+  cfg.Pwm.Tm2.UseSpwm = true;
+  cfg.Pwm.Tm2.ModulationScheme = ModSchemeSpwmUnipolar;
+  cfg.Pwm.Tm2.Sm21.Pair = PairHalfBridge;
+  cfg.Pwm.Tm4.Sm40.Pair = PairDifferential;
+  cfg.Pwm.Tm4.Sm42.Pair = PairHalfBridge;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm2.Sm21.Pair);
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm4.Sm40.Pair);
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm4.Sm42.Pair);
 }
 
 void test_validate_leaves_non_cell_submodules_ungated_by_scheme() {
@@ -681,8 +680,8 @@ int main() {
   RUN_TEST(test_validate_clamps_dead_time_to_a_representable_value);
   RUN_TEST(test_validate_is_idempotent_over_pair_modes);
   RUN_TEST(test_pair_change_is_visible_to_the_reconfigure_gates);
-  RUN_TEST(test_validate_refuses_complementary_cells_for_inverting_schemes);
-  RUN_TEST(test_validate_gates_level_shifted_on_carrier_disposition);
+  RUN_TEST(test_validate_preserves_pair_intent_under_an_inverting_scheme);
+  RUN_TEST(test_validate_still_enforces_the_permanent_hardware_facts);
   RUN_TEST(test_validate_leaves_non_cell_submodules_ungated_by_scheme);
   RUN_TEST(test_validate_gate_is_inactive_when_spwm_is_off);
   RUN_TEST(test_validate_clamps_out_of_range_frequency);

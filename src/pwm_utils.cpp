@@ -137,7 +137,11 @@ struct SubmoduleSettings {
   uint16_t dutyA;
   uint16_t dutyB; // UINT16_MAX if no ChanB
   bool hasChanB;
-  uint8_t pairMode; // PairIndependent / PairHalfBridge / PairDifferential (pwm_pair.h)
+  uint8_t pairMode;      // what we will actually program
+  uint8_t pairRequested; // what the operator configured, before any gate
+  // Both, because "independent" and "a pair we are refusing to drive" need opposite
+  // treatment: the first drives its configured duties, the second must hold its
+  // outputs off. Collapsing them is what makes a denied leg conduct both switches.
   // Add phaseShift, etc., for special cases
 };
 
@@ -184,9 +188,29 @@ void setupSubmodule(SubModule &sm, const SubmoduleSettings &settings, bool print
   const uint32_t deadtimeNs = pairDeadTimeNs(settings.pairMode, settings.deadtimeNs);
   sm.setupDeadtime(deadtimeNs, NanosecondsUnit);
 
-  sm.setupDutyCycle(ChanA, settings.dutyA);
-  if (settings.hasChanB && settings.dutyB != UINT16_MAX) {
-    sm.setupDutyCycle(ChanB, settings.dutyB);
+  // A leg that asked to be complementary but is not going to be must NOT fall back to
+  // independent channels carrying their static configured duties. Channel B's default
+  // is 32768, and both channels are centre-aligned on the same instant, so the two
+  // pulses are concentric: the operator wired a half-bridge and both switches would be
+  // commanded on together for up to half of every carrier period. That is the exact
+  // defect #33 was rejected for, reintroduced through the fallback path.
+  //
+  // Zero both duties instead. With INDEP=1, duty 0 and HighTrue polarity, both pins
+  // sit inactive. Masking would NOT be safe here: MASKA/MASKB force the output to
+  // logic 0 *before* polarity (RM 55.8.45.4), so masking a cell that configureModule2
+  // has set LowTrue would drive both its pins HIGH and hold them there.
+  const bool pairDenied = pairIsComplementary(settings.pairRequested) && !complementary;
+  const uint16_t dutyA = pairDenied ? 0 : settings.dutyA;
+  const uint16_t dutyB = pairDenied ? 0 : settings.dutyB;
+  if (pairDenied) {
+    writeLogLevel(EventError,
+                  "Pair mode refused for a submodule: outputs held off. A configured "
+                  "half-bridge leg is NOT being driven - check the modulation scheme.");
+  }
+
+  sm.setupDutyCycle(ChanA, dutyA);
+  if (settings.hasChanB && dutyB != UINT16_MAX) {
+    sm.setupDutyCycle(ChanB, dutyB);
   }
 
   if (!sm.setPwmFrequency(settings.frequency, false, true)) {
@@ -497,7 +521,8 @@ void configureModule1() {
     .dutyA = config.Pwm.Tm1.Sm13.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm1.Sm13.ChannelB.DutyCycle,
     .hasChanB = true,
-    .pairMode = config.Pwm.Tm1.Sm13.Pair
+    .pairMode = config.Pwm.Tm1.Sm13.Pair,
+    .pairRequested = config.Pwm.Tm1.Sm13.Pair
   };
   setupSubmodule(Sm13, settings, config.Pwm.PrintRegs);
   writeLog("Started TM1");
@@ -517,6 +542,18 @@ void configureModule2() {
     CellSm[k]->setupLevel(inverted ? kPWM_LowTrue : kPWM_HighTrue);
   }
 
+  // The scheme gate, applied here rather than in validateConfig. A complementary pair
+  // cannot realise a cell whose plan inverts polarity, but that depends on the
+  // modulation scheme, which changes - so rewriting the stored Pair would discard the
+  // operator's intent permanently. Deciding it here keeps config truthful and lets
+  // setupSubmodule() tell "independent" from "a pair being refused", which get
+  // opposite treatment.
+  const bool needsInversion =
+      config.Pwm.Tm2.UseSpwm &&
+      schemeRequiresPolarityInversion(config.Pwm.Tm2.ModulationScheme,
+                                      config.Pwm.Tm2.CarrierDisposition,
+                                      config.Pwm.Tm2.ModulationCells);
+
   // Configure Sm20 (Channels A and B)
   SubmoduleSettings sm20Settings = {
     .frequency = config.Pwm.Tm2.Sm20.PwmFrequency,
@@ -524,7 +561,8 @@ void configureModule2() {
     .dutyA = config.Pwm.Tm2.Sm20.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm2.Sm20.ChannelB.DutyCycle,
     .hasChanB = true,
-    .pairMode = config.Pwm.Tm2.Sm20.Pair
+    .pairMode = pairModeSanitisedForScheme(config.Pwm.Tm2.Sm20.Pair, PairSm20, needsInversion),
+    .pairRequested = config.Pwm.Tm2.Sm20.Pair
   };
   setupSubmodule(Sm20, sm20Settings, config.Pwm.PrintRegs);
 
@@ -535,7 +573,8 @@ void configureModule2() {
     .dutyA = config.Pwm.Tm2.Sm21.ChannelA.DutyCycle,
     .dutyB = UINT16_MAX, // No Channel B
     .hasChanB = false,
-    .pairMode = config.Pwm.Tm2.Sm21.Pair // validation forces Independent: no B pin
+    .pairMode = pairModeSanitisedForScheme(config.Pwm.Tm2.Sm21.Pair, PairSm21, needsInversion),
+    .pairRequested = config.Pwm.Tm2.Sm21.Pair // validation forces Independent: no B pin
   };
   setupSubmodule(Sm21, sm21Settings, config.Pwm.PrintRegs);
 
@@ -546,7 +585,8 @@ void configureModule2() {
     .dutyA = config.Pwm.Tm2.Sm22.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm2.Sm22.ChannelB.DutyCycle,
     .hasChanB = true,
-    .pairMode = config.Pwm.Tm2.Sm22.Pair
+    .pairMode = pairModeSanitisedForScheme(config.Pwm.Tm2.Sm22.Pair, PairSm22, needsInversion),
+    .pairRequested = config.Pwm.Tm2.Sm22.Pair
   };
   setupSubmodule(Sm22, sm22Settings, config.Pwm.PrintRegs);
 
@@ -557,7 +597,8 @@ void configureModule2() {
     .dutyA = config.Pwm.Tm2.Sm23.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm2.Sm23.ChannelB.DutyCycle,
     .hasChanB = true,
-    .pairMode = config.Pwm.Tm2.Sm23.Pair
+    .pairMode = pairModeSanitisedForScheme(config.Pwm.Tm2.Sm23.Pair, PairSm23, needsInversion),
+    .pairRequested = config.Pwm.Tm2.Sm23.Pair
   };
   setupSubmodule(Sm23, sm23Settings, config.Pwm.PrintRegs);
 
@@ -593,7 +634,8 @@ void configureModule3() {
     .dutyA = config.Pwm.Tm3.Sm31.ChannelA.DutyCycle,
     .dutyB = config.Pwm.Tm3.Sm31.ChannelB.DutyCycle,
     .hasChanB = true,
-    .pairMode = config.Pwm.Tm3.Sm31.Pair
+    .pairMode = config.Pwm.Tm3.Sm31.Pair,
+    .pairRequested = config.Pwm.Tm3.Sm31.Pair
   };
   setupSubmodule(Sm31, settings, config.Pwm.PrintRegs);
   writeLog("Started TM3");
@@ -607,7 +649,8 @@ void configureModule4() {
     .dutyA = config.Pwm.Tm4.Sm40.ChannelA.DutyCycle,
     .dutyB = UINT16_MAX, // No Channel B
     .hasChanB = false,
-    .pairMode = config.Pwm.Tm4.Sm40.Pair // validation forces Independent: no B pin
+    .pairMode = config.Pwm.Tm4.Sm40.Pair, // validation forces Independent: no B pin
+    .pairRequested = config.Pwm.Tm4.Sm40.Pair
   };
   setupSubmodule(Sm40, sm40Settings, config.Pwm.PrintRegs);
 
@@ -618,7 +661,8 @@ void configureModule4() {
     .dutyA = config.Pwm.Tm4.Sm41.ChannelA.DutyCycle,
     .dutyB = UINT16_MAX, // No Channel B
     .hasChanB = false,
-    .pairMode = config.Pwm.Tm4.Sm41.Pair // validation forces Independent: no B pin
+    .pairMode = config.Pwm.Tm4.Sm41.Pair, // validation forces Independent: no B pin
+    .pairRequested = config.Pwm.Tm4.Sm41.Pair
   };
   setupSubmodule(Sm41, sm41Settings, config.Pwm.PrintRegs);
 
@@ -675,7 +719,8 @@ void configureModule4() {
       // Asymmetric induction mode drives A and B from independent VAL2..VAL5
       // start/stop values, which complementary generation would overwrite.
       // Validation forces Independent for Sm42 regardless of what is configured.
-      .pairMode = config.Pwm.Tm4.Sm42.Pair
+      .pairMode = config.Pwm.Tm4.Sm42.Pair,
+    .pairRequested = config.Pwm.Tm4.Sm42.Pair
     };
     setupSubmodule(Sm42, sm42Settings, config.Pwm.PrintRegs);
   }

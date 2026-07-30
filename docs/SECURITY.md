@@ -49,18 +49,33 @@ Do not describe this as "secure boot".
 
 ### 2. No TLS, and authentication defaults to none
 
-> **The default is fixed as of 2026-07-30.** `writePinEnsure()` generates a random
-> 8-symbol PIN from the hardware TRNG on first boot, persists it to
-> `/settings.cfg`, and shows it on the OLED for two minutes as well as printing it
-> to serial and the event log. It runs *before* the network comes up, so there is
-> no window where an unconfigured board is reachable and unauthenticated. Without
-> an SD card the save is lost and a new PIN is issued each boot — the messages say
-> so explicitly. **The rest of this section still stands: there is no TLS, no rate
-> limiting, and no Origin checking.**
+> **A PIN is generated at first boot (2026-07-30), but treat this as unproven.**
+> `writePinEnsure()` draws 8 symbols from the hardware TRNG, persists them to
+> `/settings.cfg`, and shows the PIN on the OLED and serial console. It runs before
+> the network comes up.
 >
-> This was worth more than the rest of the list combined, because that one default
-> was the gate behind the unsigned-OTA remote code execution *and* the OTA
-> safe-state denial of service. Neither was reachable without it.
+> **Two defects were found in it by adversarial review after it was merged, and both
+> are fixed — but neither the feature nor the fixes have run on hardware:**
+>
+> 1. It **logged the PIN into the event log**, which `GET /api/log` serves *without
+>    authentication*. Any unauthenticated client could read the credential and then
+>    use it to POST an unsigned OTA image. That is a total defeat of the feature, and
+>    it made things worse than before, because this document had already recorded the
+>    hole as closed. The log now records only that a PIN was generated.
+> 2. It drove the **TRNG registers directly with the clock gate off**. The RT1062 boot
+>    ROM leaves `CCM_CCGR6[CG6]` disabled and Teensy's startup never enables it —
+>    QNEthernet does, from `Ethernet.begin()`, *two lines after* `writePinEnsure()`
+>    ran. So the accesses hit an unclocked peripheral, before the watchdog is armed.
+>    Best case no PIN was generated and the device booted fully unauthenticated while
+>    claiming otherwise; worst case the access does not terminate and recovery is the
+>    physical bootloader button. It now calls QNEthernet's own TRNG driver, which owns
+>    the gate, checks `MCTL[ERR]`, and applies the documented ENT0 workaround.
+>
+> **Any board that ran the 2026-07-30 firmware before these fixes must be treated as
+> having disclosed its PIN**, and as possibly never having had one.
+>
+> **The rest of this section still stands: there is no TLS, no rate limiting, no
+> failed-auth logging and no Origin checking, and every GET is unauthenticated.**
 
 `writeAuthorized()` returns `true` unconditionally when the write PIN is empty,
 which was the compiled default. Out of the box every mutating endpoint —
@@ -85,9 +100,11 @@ Three independent one-request kills, all pre-auth:
 - ~~A slow-loris header dribble deterministically trips the 8 s watchdog.~~ —
   **fixed 2026-07-30** (#42): the header phase is bounded at 4 s and the wait
   services the control tasks. See `lib/aWOT/PATCHES.md`.
-- ~~`GET /api/capture/raw` freezes every control loop for seconds *while kicking
-  the watchdog*~~ — **fixed 2026-07-30.** The chunk loop now calls
-  `serviceControlTasks()` instead of a bare `kickWatchdog()`. That helper runs the
+- `GET /api/capture/raw` freezes every control loop for seconds — **partially fixed
+  2026-07-30, and review found the fix incomplete.** The chunk loop now calls
+  `serviceControlTasks()` instead of a bare `kickWatchdog()`, but the **response write
+  itself is still unbounded and unserviced**, so a slow reader can still stall the loop
+  past the 8 s watchdog on an unauthenticated GET. Do not treat this path as closed. That helper runs the
   interval-gated control tasks (feedback, PLL, thermal, waveform stream, meter,
   MPPT, ACMP) and deliberately excludes everything touching the network or USB —
   re-entering the stack mid-response is the one thing it must never do. The same
@@ -118,7 +135,7 @@ between chunks — the OTA path already demonstrates the pattern.
 |---|---|---|
 | High | Secrets (Influx token, MQTT password, write PIN) in plaintext JSON on a removable SD card, also readable over USB MTP | Medium |
 | Medium | No rate limiting or lockout; failed auth never logged | Small |
-| Medium | Every GET unauthenticated — capture waveforms, crash reports, logs, full config topology | Small |
+| **High** | **Every GET unauthenticated** — capture waveforms, crash reports, logs, full config topology and the MQTT username. Upgraded from Medium: this is the channel that leaked the generated write PIN, and it composes with anything that ever logs a secret. `api_log`, `api_crash`, `api_config` and `api_config/export` all need an auth check. | Small |
 | Medium | Physical access unrestricted: bootloader button, open SWD, USB serial, removable card | Redesign |
 | Medium | NTP replies accepted with no source/transaction validation — log timestamps are forgeable | Trivial |
 | Medium | The write API does not distinguish operational settings from safety interlocks (`FaultProtection`, `CurrentLimit` are just config) | Medium |

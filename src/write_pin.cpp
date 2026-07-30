@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 
+#include <qnethernet/entropy/entropy.h>
+
 #include "config_json.h"
 #include "config_serde.h" // copyConfigString
 #include "event_log_api.h"
@@ -9,38 +11,26 @@
 
 extern MainConfig config;
 
-// Hardware TRNG (RT1062 §44). A credential must not come from millis(), an ADC noise
-// floor or the chip's unique ID: the first two are guessable by anyone who knows the
-// boot sequence, and the third is not secret - it is readable over USB and derived
-// values are reproducible by anyone with the algorithm.
+// Entropy comes from QNEthernet's TRNG driver, not a hand-rolled one.
 //
-// Bounded everywhere. A boot must not hang because an entropy source is unhappy, so
-// every wait has a spin limit and the caller treats failure as "no PIN generated"
-// rather than retrying forever.
+// The first version of this file drove the TRNG registers directly and was wrong in
+// three ways that only hardware would have revealed. The RT1062 boot ROM leaves the
+// TRNG clock gate OFF (CCM_CCGR6[CG6]); Teensy's startup never enables it, so the
+// register accesses would have hit an unclocked peripheral - returning garbage at
+// best, and at worst not terminating, at a point in boot before the watchdog is armed
+// and with no recovery but the physical bootloader button. It also never tested
+// MCTL[ERR], so a failed statistical self-test would have produced an all-zero
+// entropy buffer that maps to the PIN "00000000" and reports success. And resetting
+// MCTL to silicon defaults would have destroyed the configuration QNEthernet installs
+// before setup() - values it deliberately loosens because the NXP defaults make this
+// part fail its own self-tests - leaving TCP initial sequence numbers weakened too.
+//
+// QNEthernet is already linked, already owns this peripheral, enables the gate,
+// clears ERR, reads all sixteen entropy words and applies the documented ENT0
+// dummy-read workaround. Using two drivers for one peripheral was the mistake; there
+// is no version of the private one worth keeping.
 static bool trngBytes(uint8_t *out, size_t count) {
-  constexpr uint32_t MaxSpins = 2000000; // ~ tens of ms at 600MHz, then give up
-
-  TRNG_MCTL = TRNG_MCTL_PRGM | TRNG_MCTL_RST_DEF; // program mode, default config
-  TRNG_MCTL = TRNG_MCTL_RST_DEF;                  // leaving PRGM starts generation
-
-  volatile uint32_t *ent = &TRNG_ENT0;
-  size_t produced = 0;
-  while (produced < count) {
-    uint32_t spins = 0;
-    while ((TRNG_MCTL & TRNG_MCTL_ENT_VAL) == 0) {
-      if (++spins > MaxSpins) {
-        return false;
-      }
-    }
-    for (int w = 0; w < 16 && produced < count; w++) {
-      const uint32_t v = ent[w];
-      for (int b = 0; b < 4 && produced < count; b++) {
-        out[produced++] = static_cast<uint8_t>(v >> (8 * b));
-      }
-    }
-    (void)TRNG_ENT15; // reading the last entropy word restarts generation
-  }
-  return true;
+  return qindesign::entropy::trng_data(out, count) == count;
 }
 
 void writePinEnsure(const char *settingsFile) {
@@ -83,8 +73,14 @@ void writePinEnsure(const char *settingsFile) {
   Serial.println("========================================");
   Serial.println();
 
-  writeLogLevel(EventWarn, String("Write PIN generated: ") + pin +
-                               " (shown on display; change it via the Security settings)");
+  // NOT the PIN itself. The event log is served by GET /api/log, which is
+  // unauthenticated - logging the value would publish the credential to anyone who
+  // can reach the device, defeating the entire point of generating one. The serial
+  // console and the OLED are physical-access channels, which is the trade this
+  // feature already accepts; the network is not.
+  writeLogLevel(EventWarn,
+                "Write PIN generated (shown on the display and serial console). "
+                "Change it via the Security settings.");
 
   // Hold the display long enough to actually be read - the 1Hz memory report would
   // otherwise overwrite it within a second.

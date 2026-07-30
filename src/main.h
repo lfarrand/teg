@@ -44,6 +44,15 @@ void configureNtp();
 // uploads) must call this periodically
 void kickWatchdog();
 
+// Run the control tasks that must not stall, from inside a long-running request
+// handler. Kicks the watchdog too, so it replaces a bare kickWatchdog() call in any
+// loop that holds the pass for more than a few hundred milliseconds.
+//
+// Deliberately excludes everything that touches the network or USB: calling those
+// from inside a handler would re-enter the stack that is mid-response. See the
+// definition in main.cpp for what is in and out, and why.
+void serviceControlTasks();
+
 // Boot diagnostics for /api/status: why the last reset happened, and the
 // previous CrashReport text ("" if none)
 const char *resetCauseString();

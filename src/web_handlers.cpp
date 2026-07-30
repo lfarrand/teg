@@ -51,7 +51,10 @@ FLASHMEM void configureWebServer() {
   // Without this a byte dribbled just inside the per-byte timeout keeps the header
   // loop alive indefinitely while nothing services the watchdog - an unauthenticated
   // reset of a generating inverter. See lib/aWOT/PATCHES.md.
-  Request::setServiceCallback(&kickWatchdog);
+  // serviceControlTasks rather than a bare kick: the header budget allows up to 4s,
+  // and a 4s stall re-syncs the PLL and freezes the meter just as surely as a long
+  // download does.
+  Request::setServiceCallback(&serviceControlTasks);
   Request::setHeaderBudget(4000);
 
   app.get("/", &index);
@@ -215,7 +218,12 @@ FLASHMEM void api_waveform_post(Request &req, Response &res) {
 
   const char *err = "";
   // Streams text or TEGW binary straight into the PSRAM store; multi-MB
-  // uploads take seconds, so the watchdog is serviced during the transfer
+  // uploads take seconds, so the watchdog is serviced during the transfer.
+  //
+  // Deliberately still a bare kick, not serviceControlTasks(): that would run
+  // waveformStreamTask(), which reads the waveform store for playback, while this
+  // call is rewriting it. Servicing the control loops here needs the upload-versus-
+  // playback interaction settled first - see docs/SECURITY.md.
   if (!waveformApplyStream(req, &err, &kickWatchdog)) {
     res.status(400);
     res.set("Content-Type", "application/json");
@@ -554,7 +562,7 @@ void api_ota_post(Request &req, Response &res) {
     // prompt would never appear
     while (req.available()) {
       req.read();
-      kickWatchdog();
+      serviceControlTasks(); // a rejected upload can still be multi-MB to drain
     }
     res.sendStatus(401);
     return;
@@ -726,7 +734,11 @@ void api_capture_raw(Request &req, Response &res) {
     const uint32_t n = count - offset < ChunkSamples ? count - offset : ChunkSamples;
     captureRawCopy(currentChannel, count, offset, rawChunk, n);
     res.write(reinterpret_cast<uint8_t *>(rawChunk), n * 2);
-    kickWatchdog(); // a full 2MB ring takes seconds to stream
+    // A full 2MB ring takes seconds to stream, during which loop() does not run.
+    // Kicking the watchdog alone would keep the device alive with every control loop
+    // frozen - the PLL re-syncs after 250ms, the meter stops draining, thermal derate
+    // stops updating - and nothing would report it.
+    serviceControlTasks();
   }
 }
 

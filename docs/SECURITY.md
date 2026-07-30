@@ -82,9 +82,24 @@ access is needed.
 
 Three independent one-request kills, all pre-auth:
 
-- A slow-loris header dribble deterministically trips the 8 s watchdog.
-- `GET /api/capture/raw` freezes every control loop for seconds *while kicking
-  the watchdog*, so nothing detects the stall.
+- ~~A slow-loris header dribble deterministically trips the 8 s watchdog.~~ —
+  **fixed 2026-07-30** (#42): the header phase is bounded at 4 s and the wait
+  services the control tasks. See `lib/aWOT/PATCHES.md`.
+- ~~`GET /api/capture/raw` freezes every control loop for seconds *while kicking
+  the watchdog*~~ — **fixed 2026-07-30.** The chunk loop now calls
+  `serviceControlTasks()` instead of a bare `kickWatchdog()`. That helper runs the
+  interval-gated control tasks (feedback, PLL, thermal, waveform stream, meter,
+  MPPT, ACMP) and deliberately excludes everything touching the network or USB —
+  re-entering the stack mid-response is the one thing it must never do. The same
+  upgrade was applied to the aWOT service callback and to the 401 body-drain in
+  `api_ota_post`.
+
+  **Still outstanding here:** the waveform upload (`waveformApplyStream`) keeps a
+  bare watchdog kick. Servicing the control loops there would run
+  `waveformStreamTask()`, which reads the waveform store for playback, while the
+  upload is rewriting it. That upload-versus-playback interaction needs settling
+  before the same change is safe — it is a correctness question about the waveform
+  store, not a security one.
 - ~~`POST /api/ota` with a single junk byte latches `enterOtaSafeState()`~~ —
   **this was wrong.** `api_ota_post()` calls `writeAuthorized()` first, drains the
   body and returns 401 before `otaIngestStream()` (and therefore

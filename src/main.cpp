@@ -294,6 +294,37 @@ void setup() {
   digitalWriteFast(LED_BUILTIN, HIGH);
 }
 
+// Control tasks that a long request handler must keep running. Streaming a full 2MB
+// capture ring takes seconds, and for that whole time loop() is not running: the PLL
+// stops being sampled and re-syncs after 250ms (pll.cpp), the meter accumulators are
+// not drained, thermal derating is not updated and the current-limit counters are not
+// serviced. Kicking the watchdog alone keeps the device alive while every control
+// loop is frozen, which is arguably worse than a reset - nothing reports it.
+//
+// IN: the control tasks, all of which are interval-gated, so calling them here and
+// again from loop() in the same pass is a no-op rather than a double step.
+//
+// OUT, deliberately: processWebServer, networkHousekeeping, ntpTask, metricsTask,
+// mqttTask and mtpTask. Every one of those drives the network or USB stack, and this
+// runs from inside a handler that is part-way through writing a response on that same
+// stack. Re-entering it is the one thing this must never do.
+void serviceControlTasks() {
+  kickWatchdog();
+
+  // Same gate loop() uses: during an OTA the outputs are masked and flash is in flux,
+  // so these would only publish garbage.
+  if (otaInProgress()) {
+    return;
+  }
+  runFeedbackLoop();
+  pllTask();
+  thermalTask();
+  waveformStreamTask(); // SD-backed playback underruns to a held sample without this
+  meterTask();
+  mpptTask();
+  acmpTask();
+}
+
 void loop() {
   kickWatchdog();
 

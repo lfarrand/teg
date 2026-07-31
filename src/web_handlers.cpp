@@ -94,11 +94,73 @@ FLASHMEM void configureWebServer() {
   app.post("/api/ota", &api_ota_post);
 }
 
+// Accepted connections that have not yet said anything.
+//
+// server.available() only ever returns a client that HAS data. A client that opens a
+// socket and then stays silent was therefore never accepted, never serviced and never
+// stopped - it simply held an lwIP TCP PCB indefinitely. lwipopts.h sets
+// MEMP_NUM_TCP_PCB to 8, and MQTT and InfluxDB draw their outbound sockets from that
+// same pool, so eight idle connections permanently disabled the web server, the broker
+// link and metrics together. Opening eight sockets and saying nothing is not an attack
+// that requires any skill.
+//
+// server.accept() takes ownership whether or not the client has spoken, so connections
+// can be held here with an arrival time and reaped when they go quiet for too long.
+constexpr uint8_t MaxPendingClients = 4; // leaves PCBs for MQTT, InfluxDB and the listener
+constexpr uint32_t IdleClientTimeoutMs = 5000;
+
+static EthernetClient pendingClient[MaxPendingClients];
+static uint32_t pendingSince[MaxPendingClients];
+static bool pendingUsed[MaxPendingClients];
+
+static void releasePending(uint8_t i) {
+  pendingClient[i].stop();
+  pendingClient[i] = EthernetClient();
+  pendingUsed[i] = false;
+}
+
 void processWebServer() {
-  EthernetClient client = server.available();
-  if (client) {
-    app.process(&client);
-    client.stop();
+  // Take ownership of anything new, so nothing can sit unaccounted for in the PCB pool.
+  EthernetClient incoming = server.accept();
+  if (incoming) {
+    bool placed = false;
+    for (uint8_t i = 0; i < MaxPendingClients; i++) {
+      if (!pendingUsed[i]) {
+        pendingClient[i] = incoming;
+        pendingSince[i] = millis();
+        pendingUsed[i] = true;
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      // Pool full: refuse this one immediately rather than leak it. Better to drop a
+      // connection than to lose the ability to serve any.
+      incoming.stop();
+    }
+  }
+
+  // Service at most one request per pass - app.process() runs the whole request-response
+  // cycle inline, so taking two would double the worst-case time this holds the loop.
+  bool served = false;
+  for (uint8_t i = 0; i < MaxPendingClients; i++) {
+    if (!pendingUsed[i]) {
+      continue;
+    }
+    if (pendingClient[i].available()) {
+      if (!served) {
+        app.process(&pendingClient[i]);
+        releasePending(i);
+        served = true;
+      }
+      continue;
+    }
+    // Signed comparison so the millis() wrap cannot extend an idle client's welcome.
+    const bool idleTooLong =
+        static_cast<int32_t>(millis() - (pendingSince[i] + IdleClientTimeoutMs)) >= 0;
+    if (!pendingClient[i].connected() || idleTooLong) {
+      releasePending(i);
+    }
   }
 }
 

@@ -197,8 +197,15 @@ inline int32_t dpwmZss(const int16_t *lut, uint32_t phase, uint32_t clampAnglePh
         if (mags[k] > mags[hi]) hi = k;
         if (mags[k] < mags[lo]) lo = k;
       }
-      sel = 3 - hi - lo;
-      if (sel == hi || sel == lo) sel = hi; // degenerate ties
+      // sel = 3 - hi - lo picks the remaining index, but only when hi and lo are
+      // actually different. When every magnitude is equal - which is exactly what
+      // happens at modulation index 0, so during soft-start and whenever the output is
+      // ramped to zero - neither comparison above ever fires, both stay 0, and the
+      // expression yields 3: a read of v[3], one past the end.
+      //
+      // The old guard tested `sel == hi || sel == lo`, which 3 satisfies neither of, so
+      // it let the out-of-range value straight through. Test the range instead.
+      sel = (hi == lo) ? hi : 3 - hi - lo;
       break;
     }
     default: { // DpwmGeneralised: largest |ref| after the clamp-angle advance

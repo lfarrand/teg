@@ -189,6 +189,45 @@ void test_dpwm_min_clamps_low_max_clamps_high() {
   TEST_ASSERT_EQUAL_INT32(32767, mx + zMax);  // highest phase on the positive rail
 }
 
+void test_dpwm3_zero_index_does_not_read_past_the_end() {
+  // At modulation index 0 every scaled reference is 0, so all three magnitudes tie.
+  // Neither comparison in the selector fires, hi and lo both stay 0, and the old
+  // `sel = 3 - hi - lo` yielded 3 - a read of v[3], one past the end. The degenerate
+  // guard tested `sel == hi || sel == lo`, which 3 satisfies neither of, so it let the
+  // out-of-range index straight through.
+  //
+  // This is not an exotic state: it is soft-start, and any time the output is ramped
+  // to zero with the scheme still running.
+  buildUnitReferenceLut(lut, SpwmLutSize, RefWaveSine, false);
+  int32_t v[3];
+  threePhaseScaledRefs(lut, degreesToPhase(20), indexMilliToQ15(0), v);
+  TEST_ASSERT_EQUAL_INT32(0, v[0]);
+  TEST_ASSERT_EQUAL_INT32(0, v[1]);
+  TEST_ASSERT_EQUAL_INT32(0, v[2]);
+
+  // Must return a value derived from a real element, not whatever follows the array.
+  const int32_t zss = dpwmZss(lut, degreesToPhase(20), 0, Dpwm3, v);
+  // v[sel] == 0 takes the `>= 0` branch: 32767 - 0.
+  TEST_ASSERT_EQUAL_INT32(32767, zss);
+}
+
+void test_dpwm3_all_magnitudes_equal_is_in_range_at_every_phase() {
+  // The property, rather than the one input that happened to break: whatever the
+  // phase, a zero index must never select an out-of-range index. Sweeping catches a
+  // selector that is only correct where the magnitudes happen to differ.
+  buildUnitReferenceLut(lut, SpwmLutSize, RefWaveSine, false);
+  for (int deg = 0; deg < 360; deg += 7) {
+    int32_t v[3];
+    threePhaseScaledRefs(lut, degreesToPhase(deg), indexMilliToQ15(0), v);
+    const int32_t zss = dpwmZss(lut, degreesToPhase(deg), 0, Dpwm3, v);
+    // Any in-range selection of an all-zero set gives the same answer, so the result
+    // must not vary with phase. An out-of-range read returns whatever is adjacent on
+    // the stack - which is only *probably* different from 0, so this detects the bug
+    // rather than proving its absence. Sweeping makes an accidental pass unlikely.
+    TEST_ASSERT_EQUAL_INT32(32767, zss);
+  }
+}
+
 void test_dpwm3_clamps_intermediate_phase() {
   buildUnitReferenceLut(lut, SpwmLutSize, RefWaveSine, false);
   const uint32_t q = indexMilliToQ15(1000);
@@ -402,6 +441,8 @@ int main() {
   RUN_TEST(test_svm_linear_at_max_index);
   RUN_TEST(test_dpwm_min_max_gdpwm_variants);
   RUN_TEST(test_dpwm_min_clamps_low_max_clamps_high);
+  RUN_TEST(test_dpwm3_zero_index_does_not_read_past_the_end);
+  RUN_TEST(test_dpwm3_all_magnitudes_equal_is_in_range_at_every_phase);
   RUN_TEST(test_dpwm3_clamps_intermediate_phase);
   RUN_TEST(test_fourleg_phase_to_neutral_is_pure_reference);
   RUN_TEST(test_nlm_snaps_cells_to_rails);

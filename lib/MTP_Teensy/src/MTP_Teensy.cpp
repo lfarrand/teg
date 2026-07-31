@@ -164,6 +164,13 @@ void MTP_class::loop(void) {
         case 0x100F: // FormatStore
         case 0x1019: // moveObject
         case 0x101A: // copyObject
+        case 0x9804: // SetObjectPropValue - renames via storage_.rename()
+          // 0x9804 was missed by the original read-only patch, and it was the only
+          // surviving write path: setObjectPropValue() calls storage_.rename() on
+          // MTP_PROPERTY_OBJECT_FILE_NAME. A host could therefore rename
+          // /settings.cfg or a preset on a device documented as read-only. It was
+          // also still being advertised in the supported-operations list, so hosts
+          // were actively told rename would work.
           return_code = MTP_RESPONSE_OBJECT_WRITE_PROTECTED;
           break;
         default:
@@ -1252,8 +1259,11 @@ uint32_t MTP_class::GetDeviceInfo(struct MTPContainer &cmd) {
     MTP_OPERATION_GET_PARTIAL_OBJECT, // 0x101B
     MTP_OPERATION_GET_OBJECT_PROPS_SUPPORTED, // 0x9801
     MTP_OPERATION_GET_OBJECT_PROP_DESC,       // 0x9802
-    MTP_OPERATION_GET_OBJECT_PROP_VALUE,      // 0x9803
-    MTP_OPERATION_SET_OBJECT_PROP_VALUE       // 0x9804
+    MTP_OPERATION_GET_OBJECT_PROP_VALUE       // 0x9803
+    // MTP_OPERATION_SET_OBJECT_PROP_VALUE               ,//0x9804
+    // Deliberately NOT advertised: the dispatcher refuses it (read-only device), and
+    // advertising an operation that always answers OBJECT_WRITE_PROTECTED just makes
+    // hosts offer a rename that cannot work. See PATCHES.md.
     // MTP_OPERATION_GET_OBJECT_PROP_LIST                   ,//0x9805
     // MTP_OPERATION_GET_OBJECT_REFERENCES                  ,//0x9810
     // MTP_OPERATION_SET_OBJECT_REFERENCES                  ,//0x9811

@@ -135,6 +135,7 @@ between chunks — the OTA path already demonstrates the pattern.
 |---|---|---|
 | High | Secrets (Influx token, MQTT password, write PIN) in plaintext JSON on a removable SD card, also readable over USB MTP | Medium |
 | Medium | No rate limiting or lockout; failed auth never logged | Small |
+| ~~High~~ Fixed | ~~Eight idle TCP connections permanently disable the web server, MQTT and InfluxDB~~ — fixed 2026-07-31. `server.available()` only returned clients that had sent data, so a silent connection was never accepted or stopped and held an lwIP PCB for ever; `MEMP_NUM_TCP_PCB` is 8 and the outbound clients share it. `processWebServer()` now takes ownership with `server.accept()`, holds at most 4 pending connections, and reaps any that go quiet for 5 s. | Done |
 | **High** | **Every GET unauthenticated** — capture waveforms, crash reports, logs, full config topology and the MQTT username. Upgraded from Medium: this is the channel that leaked the generated write PIN, and it composes with anything that ever logs a secret. `api_log`, `api_crash`, `api_config` and `api_config/export` all need an auth check. | Small |
 | Medium | Physical access unrestricted: bootloader button, open SWD, USB serial, removable card | Redesign |
 | Medium | NTP replies accepted with no source/transaction validation — log timestamps are forgeable | Trivial |

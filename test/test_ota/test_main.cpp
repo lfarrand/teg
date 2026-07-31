@@ -256,6 +256,30 @@ void test_boot_data_length_mismatch_rejected() {
   TEST_ASSERT_NOT_NULL(strstr(err, "length"));
 }
 
+void test_boot_data_pointer_near_wraparound_rejected() {
+  // The bound check used to be `bootDataPtr + 12 > OtaFlashBase + imageSize`. For a
+  // pointer near UINT32_MAX that sum WRAPS to a small value and sails past the
+  // comparison - after which bootDataPtr - OtaFlashBase becomes a huge offset and the
+  // boot-data reads run far outside the image. A crafted image could reach it.
+  uint8_t img[ImgSize];
+  buildImage(img);
+  putU32(img, 0x1010, 0xFFFFFFF8u); // + 12 wraps to 4
+  const char *err = runPipeline(img, ImgSize);
+  TEST_ASSERT_NOT_NULL(err);
+  TEST_ASSERT_NOT_NULL(strstr(err, "boot data pointer"));
+}
+
+void test_boot_data_pointer_just_past_the_end_rejected() {
+  // The ordinary in-range failure, to prove the rewritten comparison still catches it
+  // and did not merely stop overflowing.
+  uint8_t img[ImgSize];
+  buildImage(img);
+  putU32(img, 0x1010, 0x60000000u + ImgSize - 4); // 12 bytes will not fit
+  const char *err = runPipeline(img, ImgSize);
+  TEST_ASSERT_NOT_NULL(err);
+  TEST_ASSERT_NOT_NULL(strstr(err, "boot data pointer"));
+}
+
 void test_zero_length_record_cannot_sweep_the_chip() {
   // A legal, correctly-checksummed type-00 record with LL=00 at the flash
   // base once underflowed the erase-loop bound to 0xFFFFFFFF: the erase
@@ -348,6 +372,8 @@ int main() {
   RUN_TEST(test_image_beyond_buffer_rejected);
   RUN_TEST(test_truncated_upload_rejected);
   RUN_TEST(test_boot_data_length_mismatch_rejected);
+  RUN_TEST(test_boot_data_pointer_near_wraparound_rejected);
+  RUN_TEST(test_boot_data_pointer_just_past_the_end_rejected);
   RUN_TEST(test_corrupt_ivt_rejected);
   RUN_TEST(test_entry_outside_image_rejected);
   RUN_TEST(test_verifier_reads_staged_buffer_not_parse_state);

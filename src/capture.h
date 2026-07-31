@@ -9,6 +9,20 @@
 
 #include <stdint.h>
 
+// The ADC count at full scale, for every reader of an analog pin on this board.
+//
+// captureConfigure() programs both ADC modules to 12 bits via the Teensy_ADC library,
+// which writes the peripheral registers directly. Anything calling the core's
+// analogRead() therefore gets 12-bit data whether it expects it or not - and two
+// callers did not: the closed-loop feedback fallback and the /api/status readout both
+// scaled by 1023, reading four times high. In the feedback case that drove the
+// regulator down until the real output sat at a quarter of its setpoint.
+//
+// setup() now calls analogReadResolution(12) so the core agrees with the hardware
+// rather than the two being incidentally consistent, and every scaling site uses this
+// constant instead of a literal.
+constexpr uint32_t AdcCountFullScale = 4095;
+
 void captureConfigure(); // (re)apply config: enable/disable, pin; also unfreezes
 void captureTick();      // called from the modulation ISR each carrier cycle
 bool captureActive();

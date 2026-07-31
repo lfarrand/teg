@@ -247,6 +247,12 @@ void setup() {
 
   waveformLoadFromSd();
 
+  // Make the core's analogRead() agree with the hardware. captureConfigure()
+  // programs both ADC modules to 12 bits directly, so every analogRead() already
+  // returns 12-bit data; saying so explicitly means readers scale by a value that is
+  // guaranteed rather than incidental. See AdcCountFullScale in capture.h.
+  analogReadResolution(12);
+
   initMemory();
 
   // Before the network comes up: an unconfigured board would otherwise accept

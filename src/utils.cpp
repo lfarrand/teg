@@ -245,9 +245,32 @@ void writeInfluxDb(const String &data) {
   }
 
   // Called from loop(): bound every wait so an unreachable server can only
-  // stall the loop briefly, not indefinitely
+  // stall the loop briefly, not indefinitely.
+  //
+  // setConnectionTimeout() does NOT cover the DNS lookup that connect(hostname, port)
+  // performs first - that runs on QNEthernet's own ~5s resolver timeout. With an
+  // unreachable or misspelled host the push therefore cost ~5s of DNS plus the bounded
+  // connect and drain, inside a loop() with an 8s watchdog and nothing else feeding it.
+  //
+  // Resolve once and connect by address after that, the same way ntpTask does. The
+  // blocking resolve is bracketed by watchdog kicks and retried at most every 5
+  // minutes, or immediately after a failed connect in case the server has moved.
+  static IPAddress influxAddr;
+  static bool influxAddrValid = false;
+  static elapsedMillis sinceResolve;
+
+  if (!influxAddrValid || sinceResolve > 300000) {
+    kickWatchdog();
+    influxAddrValid = Ethernet.hostByName(config.Influx.Host, influxAddr);
+    kickWatchdog();
+    sinceResolve = 0;
+    if (!influxAddrValid) {
+      return; // skip this push rather than stalling again on the next one
+    }
+  }
+
   influxDbClient.setConnectionTimeout(500);
-  if (influxDbClient.connect(config.Influx.Host, config.Influx.Port)) {
+  if (influxDbClient.connect(influxAddr, config.Influx.Port)) {
     influxDbClient.printf("POST /api/v2/write?org=%s&bucket=%s&precision=ms HTTP/1.1\r\n",
                           config.Influx.Org, config.Influx.Bucket);
     influxDbClient.print("Host: ");
@@ -269,5 +292,8 @@ void writeInfluxDb(const String &data) {
     influxDbClient.stop();
   } else {
     Serial.println("InfluxDB connect failed");
+    // Drop the cached address so the next push re-resolves. A server that moved to a
+    // new IP would otherwise never be reached again until the 5-minute refresh.
+    influxAddrValid = false;
   }
 }

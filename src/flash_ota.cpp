@@ -84,7 +84,7 @@ FASTRUN static uint32_t flashCrc(uint32_t addr, uint32_t len) {
   return crc ^ 0xFFFFFFFFu;
 }
 
-FASTRUN void otaFlashCommit(uint32_t imageSize, uint32_t expectedCrc) {
+FASTRUN bool otaFlashCommit(uint32_t imageSize, uint32_t expectedCrc) {
   const uint32_t dst = OtaFlashBase;
   const uint32_t src = OtaBufferBase;
   uint8_t page[256];
@@ -105,7 +105,9 @@ FASTRUN void otaFlashCommit(uint32_t imageSize, uint32_t expectedCrc) {
   // Phase 1: erase + program the base image, sector by sector, ascending,
   // then verify by read-back. dst trails src by 4MB so the staged source is
   // never clobbered; that means a failed copy can be retried in full.
-  for (int attempt = 0; attempt < 3; attempt++) {
+  constexpr int MaxAttempts = 3;
+  bool copied = false;
+  for (int attempt = 0; attempt < MaxAttempts; attempt++) {
     for (uint32_t off = 0; off < imageSize; off += OtaSectorSize) {
       wdogKick();
       if (sectorNotErased(dst + off)) {
@@ -123,14 +125,30 @@ FASTRUN void otaFlashCommit(uint32_t imageSize, uint32_t expectedCrc) {
       }
     }
     if (flashCrc(dst, imageSize) == expectedCrc) {
+      copied = true;
       break; // committed image matches what was verified
     }
-    // Mismatch: a program/erase op silently failed (the core primitives
-    // report nothing). The staged source is intact, so wipe and redo.
-    for (uint32_t off = 0; off < imageSize; off += OtaSectorSize) {
-      wdogKick();
-      eepromemu_flash_erase_sector(reinterpret_cast<void *>(dst + off));
+    // Mismatch: a program/erase op silently failed (the core primitives report
+    // nothing). The staged source is intact, so wipe and redo - but NOT after the
+    // final attempt. Wiping there used to fall straight through to the phase-2 wipe
+    // and the reset, so exhausting the retries reset the board into a completely
+    // blank base image: a guaranteed brick, recoverable only over USB, and reached
+    // by the path that exists to make the copy safer.
+    if (attempt + 1 < MaxAttempts) {
+      for (uint32_t off = 0; off < imageSize; off += OtaSectorSize) {
+        wdogKick();
+        eepromemu_flash_erase_sector(reinterpret_cast<void *>(dst + off));
+      }
     }
+  }
+
+  if (!copied) {
+    // Do not wipe, and do not reset. The running firmware executes from ITCM, so the
+    // device stays up on the code it already has; leaving the best-effort image in
+    // flash and staying alive gives the operator a chance to retry the update or
+    // recover over USB while the board is still reachable. Resetting here would boot
+    // whatever the failed copy left behind.
+    return false;
   }
 
   // Phase 2: wipe everything above the new image up to the EEPROM reserve -

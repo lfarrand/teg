@@ -202,6 +202,14 @@ Also for MTP:
       itself is derived from datasheet timings, not measured.
 - [ ] Confirm a deliberately-corrupt upload is rejected (flip a byte in a `.hex`
       and check the error), and that a Teensy 4.0 build is refused.
+- [ ] **Know what a failed commit now does.** If the flash read-back never matches
+      after three attempts, the commit no longer wipes and resets — that used to
+      leave a blank base image and a board recoverable only over USB. It now leaves
+      the best-effort image in place, logs
+      *"OTA COMMIT FAILED … DO NOT REBOOT"*, and keeps running the old firmware from
+      ITCM with the outputs still in the OTA safe state. **If you ever see that
+      message, do not power-cycle** — retry the update, or recover over USB
+      deliberately.
 - [ ] Confirm the outputs really are dead from the moment an upload starts, and
       that only a reboot restores them.
 

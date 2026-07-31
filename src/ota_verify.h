@@ -71,7 +71,13 @@ inline const char *otaVerifyImage(const uint8_t *img, uint32_t minAddr, uint32_t
     return "IVT self-pointer mismatch";
   }
   const uint32_t bootDataPtr = otaReadU32(img, 0x1010);
-  if (bootDataPtr < OtaFlashBase || bootDataPtr + 12 > OtaFlashBase + imageSize) {
+  // Subtract rather than add. `bootDataPtr + 12` wraps for a pointer near UINT32_MAX,
+  // and a wrapped sum passes a > comparison against any plausible bound - so a crafted
+  // image could put the boot-data pointer at the top of the address space, satisfy this
+  // check, and then have `bd` used as a huge offset for the reads below. Both operands
+  // here are safe: bootDataPtr >= OtaFlashBase was just established, and imageSize is
+  // already known to exceed 0x2000, so neither side can underflow.
+  if (bootDataPtr < OtaFlashBase || bootDataPtr - OtaFlashBase > imageSize - 12) {
     return "boot data pointer outside the image";
   }
   const uint32_t bd = bootDataPtr - OtaFlashBase;

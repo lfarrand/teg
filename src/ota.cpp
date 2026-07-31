@@ -162,7 +162,21 @@ void otaLoopTask() {
     writeLogLevel(EventWarn, "OTA: committing new firmware and rebooting");
     delay(50); // let the log/socket drain
     kickWatchdog();
-    otaFlashCommit(verifiedSize, verifiedCrc); // never returns
+    // Returns only on failure: the read-back CRC never matched after every retry.
+    // The board is still running from ITCM, so it stays up on the firmware it already
+    // has - but the base image in flash is now whatever the failed copy left, and a
+    // reset from here would boot that. Say so as loudly as the log allows and leave
+    // the operator a live device to retry the update or recover over USB from.
+    if (!otaFlashCommit(verifiedSize, verifiedCrc)) {
+      writeLogLevel(EventError,
+                    "OTA COMMIT FAILED: flash read-back never matched after 3 attempts. "
+                    "The device is still running the OLD firmware from RAM, but the "
+                    "flash image is now damaged - DO NOT REBOOT. Retry the update, or "
+                    "recover over USB with the bootloader button.");
+      lastError = "commit read-back failed; do not reboot";
+      // Outputs stay in the OTA safe state, which only a reboot leaves. That is the
+      // right place to be: the power stage is off and the device is reachable.
+    }
   }
   if (rebootPending) {
     rebootPending = false;

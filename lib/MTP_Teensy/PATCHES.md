@@ -10,11 +10,24 @@ patches below — the same reason `lib/aWOT` and `lib/eFlexPwm` are forks.
 
 ## Patch 1: the device is read-only
 
-`MTP_class::loop()` refuses `DeleteObject`, `SendObjectInfo`, `SendObject`,
-`FormatStore`, `moveObject` and `copyObject` with
+`MTP_class::loop()` refuses `DeleteObject` (`0x100B`), `SendObjectInfo` (`0x100C`),
+`SendObject` (`0x100D`), `FormatStore` (`0x100F`), `moveObject` (`0x1019`),
+`copyObject` (`0x101A`) and `SetObjectPropValue` (`0x9804`) with
 `MTP_RESPONSE_OBJECT_WRITE_PROTECTED`, at the single point where a host
 request is dispatched. `src/sd_fs_adapter.h` independently refuses every
 mutating filesystem call, so the two layers agree.
+
+**`0x9804` was missed by the first version of this patch and added 2026-07-31**, after
+an adversarial review found it. It was the only surviving write path:
+`setObjectPropValue()` calls `storage_.rename()` for
+`MTP_PROPERTY_OBJECT_FILE_NAME`, so a host could rename `/settings.cfg` or a preset on
+a device this file described as read-only. It was also still listed in the
+supported-operations descriptor, so hosts were actively told rename would work — that
+entry is now commented out as well, since advertising an operation that always answers
+`OBJECT_WRITE_PROTECTED` only makes hosts offer a rename that cannot succeed.
+
+If you add operations to the supported list, check them against this refusal list.
+The two are not derived from one another, and the descriptor is the half a host reads.
 
 This is a safety measure, not a preference. Those operations reach code that
 walks the filesystem or copies bytes **without bound and under host control,

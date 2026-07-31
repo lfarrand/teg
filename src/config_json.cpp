@@ -59,17 +59,24 @@ FLASHMEM void saveConfiguration(const char *filename) {
 
   Serial.println(F("Saving configuration to file"));
 
-  if (sd.exists(filename)) {
-    Serial.println(F("Deleting existing config file"));
-    sd.remove(filename);
-    Serial.println(F("Deleted existing config file"));
-  } else {
-    Serial.println(F("Existing config file did not exist"));
-  }
+  // Write to a temporary file and swap, rather than deleting the live one first.
+  // The old sequence - remove(), then open(), then serialize - left a window in which
+  // a reset, a brownout or a card pull destroyed every setting: the fault-protection
+  // and current-limit configuration, and since 2026-07-30 the generated write PIN too,
+  // which would then be silently reissued on the next boot. presets.cpp already used
+  // temp-file-and-swap for exactly this reason.
+  //
+  // This is not a true atomic rename - FAT offers none, and the remove/rename pair
+  // below still has a small window - but it is bounded by two directory operations
+  // rather than by the whole serialization, and the old file survives until the new
+  // one is completely written and flushed.
+  char tmpName[64];
+  snprintf(tmpName, sizeof(tmpName), "%s.tmp", filename);
+  sd.remove(tmpName); // a leftover from an interrupted save is not interesting
 
-  FsFile file = sd.open(filename, FILE_WRITE);
+  FsFile file = sd.open(tmpName, FILE_WRITE);
   if (!file) {
-    Serial.println(F("Failed to create config file"));
+    Serial.println(F("Failed to create temporary config file"));
     return;
   }
 
@@ -79,15 +86,28 @@ FLASHMEM void saveConfiguration(const char *filename) {
 
   Serial.println(F("Writing config file to disk"));
 
-  if (serializeJson(doc, file) == 0) {
+  const bool written = serializeJson(doc, file) != 0;
+  if (!written) {
     Serial.println(F("Failed to write to file"));
   }
 
   file.flush();
+  file.close();
+
+  if (!written) {
+    // Leave the existing configuration untouched rather than swapping in a partial
+    // file. A stale config is recoverable; a truncated one is not.
+    sd.remove(tmpName);
+    return;
+  }
+
+  sd.remove(filename);
+  if (!sd.rename(tmpName, filename)) {
+    Serial.println(F("Failed to swap in the new config file"));
+    return;
+  }
 
   Serial.println(F("Config saved successfully"));
-
-  file.close();
 }
 
 FLASHMEM void printFile(const char *filename) {

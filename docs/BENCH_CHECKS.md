@@ -17,6 +17,37 @@ latency, dither spectrum).
 
 ---
 
+## 0a. DO NOT USE THE POLARITY-INVERTING SCHEMES ON A REAL POWER STAGE
+
+**Schemes 2 (bipolar), 5 (phase-shifted), and 4 (level-shifted) with POD or APOD
+carrier disposition are unsafe on hardware as this firmware stands.** Found by
+adversarial review 2026-07-31 and independently reported by five separate lenses.
+
+Those schemes realise a 180° opposition by inverting a cell's output polarity
+(`OCTRL[POLA]`/`[POLB]` = 1). Both mechanisms that force outputs off act **before**
+polarity is applied:
+
+- `MASK` — RM 55.8.45.4, p.3191: forces the output "to logic 0 prior to consideration
+  of the output polarity"
+- the fault state `PWMAFS`/`PWMBFS` — RM 55.8.18.3, p.3157: "forced to logic 0 state
+  prior to consideration of output polarity control"
+
+So on an inverted cell, "off" is rendered as a **HIGH pin** — the gate is commanded
+**on** by the very mechanism meant to shut it down.
+
+**Partially fixed.** The *fault* state is now set per cell to match its polarity
+(state 1 on inverted cells), so the FlexPWM fault path and the ACMP hardware
+over-current trip now produce a genuinely low pin.
+
+**Still broken:** `MASK` has no per-cell state — it is always logic 0 pre-polarity.
+`Tm*.disable()` is what the **software fault trip, the OTA safe state and the boot
+mask** use, so all three still drive inverted cells high. Closing this properly means
+not using polarity inversion at all, and realising the 180° displacement with
+`DTSRCSEL` + a FORCE_OUT or with `VAL2`/`VAL3` edge bias — the work deferred earlier
+in `docs/PRODUCT_READINESS.md`.
+
+**Until then: use scheme 1, 3, or level-shifted PD only.** Those never invert a cell.
+
 ## 0. Complementary pairs — implemented, never bench-verified. Do this first.
 
 **`INDEP` is now cleared** for any submodule configured as a complementary pair, so

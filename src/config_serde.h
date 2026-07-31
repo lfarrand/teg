@@ -256,6 +256,15 @@ inline bool validateConfig(MainConfig &config) {
   sanitisePair(config.Pwm.Tm1.Sm13.Pair, PairSm13);
   sanitisePair(config.Pwm.Tm3.Sm31.Pair, PairSm31);
 
+  // ModulationCells was never range-checked: a hand-edited settings file or a POST
+  // could set 0 or 200, and configureModule2 then silently clamps to a different value
+  // than anything else reasons about. Clamp it once, here, so every consumer agrees.
+  if (config.Pwm.Tm2.ModulationCells < 1 || config.Pwm.Tm2.ModulationCells > MaxModulationCells) {
+    config.Pwm.Tm2.ModulationCells =
+        config.Pwm.Tm2.ModulationCells < 1 ? 1 : MaxModulationCells;
+    corrected = true;
+  }
+
   // Only the permanent hardware facts are corrected here - no channel-B pin, and
   // Sm42's independent start/stop timing. Those never change, so persisting the
   // correction is right.

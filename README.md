@@ -668,6 +668,22 @@ limit, the PLL, MPPT, MQTT, OTA, presets, the event log and USB MTP — is
 **bench-unverified**. See **[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md)** for the
 per-feature checklist, ordered by what goes wrong if you skip it.
 
+> **Do not put this on a power stage yet.** A twelve-lens adversarial review on
+> 2026-07-31, with 24 findings independently re-verified, returned **18 confirmed and
+> 6 partially confirmed — none fully refuted**. Six are hardware-damaging and one is an
+> unauthenticated one-request watchdog reset of a running inverter. The full verified
+> list, including what is fixed and what is not, is in
+> **[docs/REVIEW_2026-07-31.md](docs/REVIEW_2026-07-31.md)**.
+
+> **Do not use the polarity-inverting modulation schemes on a real power stage.**
+> Schemes 2 (bipolar), 5 (phase-shifted) and 4 (level-shifted) with POD/APOD invert a
+> cell's output polarity, and both mechanisms that force outputs off — `MASK` and the
+> fault state — act *before* polarity (RM 55.8.45.4, 55.8.18.3). "Off" therefore renders
+> as a **high pin**: the gate is commanded on by the mechanism meant to shut it down.
+> The fault path is now fixed per cell; **`MASK` is not**, so the software fault trip,
+> the OTA safe state and the boot mask still invert. Use scheme 1, 3 or level-shifted PD
+> until this is closed. See [docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md) §0a.
+
 ### Known defects
 
 > **Complementary operation and dead time do not work.** The Teensy core sets

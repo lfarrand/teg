@@ -59,6 +59,12 @@ static SubModule *const CellSm[MaxModulationCells] = {&Sm20, &Sm22, &Sm21, &Sm23
 static const uint8_t CellLdokMasks[MaxModulationCells + 1] = {0, 0b0001, 0b0101, 0b0111, 0b1111};
 
 static CellPlan cellPlan[MaxModulationCells]; // written only with the SPWM IRQ disabled
+
+// Cells whose configured pair mode could not be honoured. Their outputs are held at a
+// driven-low level and the ISR must not write a duty to them - a duty written once
+// from configureModule2() is not a latch, and the ISR would restore the modulated
+// waveform on the very next carrier cycle. Bit k corresponds to CellSm[k].
+static volatile uint8_t vDeniedCellMask = 0;
 static volatile uint8_t vModScheme = ModSchemeSpwmUnipolar;
 static volatile uint8_t vModCells = 2;
 static volatile uint8_t vCellLdokMask = 0b0101;
@@ -354,9 +360,12 @@ void applyPwmConfig(const MainConfig &previous) {
   }
 }
 
-void buildSpwmLut() {
-  const Module2Config &tm2 = config.Pwm.Tm2;
-
+// The cell count actually used, as opposed to the one configured: clamped to the
+// number of submodules, and overridden by the schemes that dictate their own leg
+// count. Shared rather than duplicated, because configureModule2() has to ask the
+// scheme gate about the SAME count the ISR runs - asking about a different one is how
+// a leg ends up driven under a scheme that inverts it.
+uint8_t effectiveModulationCells(const Module2Config &tm2) {
   uint8_t cells = tm2.ModulationCells;
   if (cells < 1) cells = 1;
   if (cells > MaxModulationCells) cells = MaxModulationCells;
@@ -366,6 +375,13 @@ void buildSpwmLut() {
   if (tm2.ModulationScheme == ModSchemeSvpwm3D) {
     cells = 4; // three phase legs + the neutral leg (Sm23, pins 36/37)
   }
+  return cells;
+}
+
+void buildSpwmLut() {
+  const Module2Config &tm2 = config.Pwm.Tm2;
+
+  uint8_t cells = effectiveModulationCells(tm2);
 
   uint16_t indexMilli = tm2.ModulationIndexMilli;
   if (indexMilli > MaxModulationIndexMilli) indexMilli = MaxModulationIndexMilli;
@@ -537,22 +553,65 @@ void configureModule2() {
   // Carrier geometry: 180deg-shifted cells run with inverted output polarity
   // (the ISR complements their duty). Everything else is explicitly restored
   // to normal polarity so scheme changes never leave a leg inverted.
-  for (uint8_t k = 0; k < MaxModulationCells; k++) {
-    const bool inverted = spwmActive() && k < vModCells && cellPlan[k].polarityInverted;
-    CellSm[k]->setupLevel(inverted ? kPWM_LowTrue : kPWM_HighTrue);
-  }
-
   // The scheme gate, applied here rather than in validateConfig. A complementary pair
   // cannot realise a cell whose plan inverts polarity, but that depends on the
   // modulation scheme, which changes - so rewriting the stored Pair would discard the
   // operator's intent permanently. Deciding it here keeps config truthful and lets
   // setupSubmodule() tell "independent" from "a pair being refused", which get
   // opposite treatment.
+  //
+  // effectiveModulationCells(), not tm2.ModulationCells: the gate must ask about the
+  // SAME cell count the ISR runs, or a leg can be driven under a scheme that inverts it.
   const bool needsInversion =
       config.Pwm.Tm2.UseSpwm &&
       schemeRequiresPolarityInversion(config.Pwm.Tm2.ModulationScheme,
                                       config.Pwm.Tm2.CarrierDisposition,
-                                      config.Pwm.Tm2.ModulationCells);
+                                      effectiveModulationCells(config.Pwm.Tm2));
+
+  // Which cells asked to be a pair and are not going to be. Computed here because the
+  // scheme gate lives here, and needed by the polarity loop below.
+  static const uint8_t CellSmIndex[MaxModulationCells] = {PairSm20, PairSm22, PairSm21, PairSm23};
+  const uint8_t cellPairCfg[MaxModulationCells] = {
+      config.Pwm.Tm2.Sm20.Pair, config.Pwm.Tm2.Sm22.Pair,
+      config.Pwm.Tm2.Sm21.Pair, config.Pwm.Tm2.Sm23.Pair};
+  uint8_t deniedMask = 0;
+  for (uint8_t k = 0; k < MaxModulationCells; k++) {
+    const uint8_t eff = pairModeSanitisedForScheme(cellPairCfg[k], CellSmIndex[k], needsInversion);
+    if (pairIsComplementary(cellPairCfg[k]) && !pairIsComplementary(eff)) {
+      deniedMask |= static_cast<uint8_t>(1u << k);
+    }
+  }
+  vDeniedCellMask = deniedMask;
+
+  // Carrier geometry: a 180deg-opposed cell inverts its output polarity.
+  //
+  // A DENIED cell is forced HighTrue regardless of its plan. Its duties are zeroed in
+  // setupSubmodule(), and duty 0 makes VAL2 == VAL3, which the hardware resolves to
+  // logic 0 (RM 55.3.2.4, p.3108: "if both the set and reset of the flip-flop are
+  // asserted, then the flop output goes to 0"). Logic 0 through POLA=1 would be a HIGH
+  // pin (RM 55.8.18.3, p.3157) - so leaving an inverted cell inverted while zeroing its
+  // duty drives BOTH pins of the leg permanently high, which is worse than the overlap
+  // it was meant to prevent. HighTrue + duty 0 is a driven LOW pin, which is the state
+  // a gate driver needs. Clearing OUTEN instead would leave the pin undriven.
+  for (uint8_t k = 0; k < MaxModulationCells; k++) {
+    const bool denied = (deniedMask & (1u << k)) != 0;
+    const bool inverted =
+        !denied && spwmActive() && k < vModCells && cellPlan[k].polarityInverted;
+    CellSm[k]->setupLevel(inverted ? kPWM_LowTrue : kPWM_HighTrue);
+
+    // The fault state must be the level that leaves the PIN inactive, which depends
+    // on that cell's polarity. OCTRL[PWMAFS]/[PWMBFS] select what the output is forced
+    // to during a fault, and RM 55.8.18.3 p.3157 specifies it as applied "prior to
+    // consideration of output polarity control" - so on a LowTrue cell the default
+    // state 0 is driven HIGH at the pin, i.e. the gate is commanded ON by the fault
+    // response. eFlex defaults every channel to kPWM_PwmFaultState0 and nothing in
+    // src/ ever changed it.
+    //
+    // State 1 is logic 1 pre-polarity, which an inverted cell renders as a low pin.
+    const pwm_fault_state_t fs = inverted ? kPWM_PwmFaultState1 : kPWM_PwmFaultState0;
+    CellSm[k]->setupFaultState(ChanA, fs);
+    CellSm[k]->setupFaultState(ChanB, fs);
+  }
 
   // Configure Sm20 (Channels A and B)
   SubmoduleSettings sm20Settings = {
@@ -860,8 +919,15 @@ FASTRUN void IsrOverflowSm20() {
     mc.dtCompQ15 = comp;
     modulationCycleDuties(spwmLut, phase, idx, mc, cellPlan, duties);
     const uint8_t n = modulationCellCount(scheme, cells);
+    const uint8_t denied = vDeniedCellMask;
     for (uint8_t k = 0; k < n; k++) {
-      CellSm[k]->updateDutyCycle(duties[k]);
+      // Skip a cell whose pair mode was refused. Its duty was zeroed at configure
+      // time to hold the leg off, and writing a modulated duty here would restore the
+      // waveform on the next carrier cycle - the protection is only as good as the
+      // ISR's willingness to leave it alone.
+      if ((denied & (1u << k)) == 0) {
+        CellSm[k]->updateDutyCycle(duties[k]);
+      }
     }
   } else {
     int32_t s;
@@ -886,7 +952,11 @@ FASTRUN void IsrOverflowSm20() {
     }
     const uint16_t ref = refToDuty(s, idx, scheme == ModSchemeLevelShifted ? 0 : comp);
     const bool nlm = vNearestLevel;
+    const uint8_t deniedStepped = vDeniedCellMask;
     for (uint8_t k = 0; k < cells; k++) {
+      if ((deniedStepped & (1u << k)) != 0) {
+        continue; // refused pair: leave the zeroed duty alone (see the LUT path above)
+      }
       const uint16_t duty =
         modulationFinalDuty(modulationCellDuty(scheme, ref, k, cells, nlm), cellPlan[k]);
       CellSm[k]->updateDutyCycle(duty);

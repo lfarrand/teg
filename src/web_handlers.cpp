@@ -57,6 +57,13 @@ FLASHMEM void configureWebServer() {
   Request::setServiceCallback(&serviceControlTasks);
   Request::setHeaderBudget(4000);
 
+  // Same treatment for the response side, which was the more dangerous half: a client
+  // that finishes its request and then simply stops reading advertises a zero TCP
+  // window, and the write loop spun on it for ever with nothing feeding the watchdog.
+  // That was an unauthenticated one-request reset of a generating inverter, on any GET.
+  Response::setServiceCallback(&serviceControlTasks);
+  Response::setWriteBudget(3000);
+
   app.get("/", &index);
   app.get("/index.html", &index);
   app.get("/stats.html", &serve_stats);

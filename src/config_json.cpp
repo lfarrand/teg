@@ -39,6 +39,17 @@ FLASHMEM void loadConfiguration(const char *filename) {
 
   Serial.println(F("Config deserialized successfully"));
 
+  // The preset/import path refuses an incomplete document; the boot path did not, so a
+  // settings file missing a safety section silently fell back to compiled defaults -
+  // which have fault protection, the current limit and thermal derating all DISABLED.
+  // Loading it anyway is still the right call at boot (refusing would leave those same
+  // defaults, just with no operator settings either), but it must not be silent.
+  if (!configDocComplete(doc)) {
+    Serial.println(F("WARNING: config file is missing sections; defaults will apply "
+                     "to them, and defaults DISABLE fault protection, the current "
+                     "limit and thermal derating"));
+  }
+
   configFromJson(doc, config);
 
   if (validateConfig(config)) {

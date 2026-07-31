@@ -94,10 +94,15 @@ void test_defaults_from_empty_document() {
   TEST_ASSERT_EQUAL_UINT16(MinHalfBridgeDeadTimeNs, cfg.Pwm.Tm1.Sm13.DeadTime);
   TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm1.Sm13.Pair);
   TEST_ASSERT_EQUAL_UINT32(1000, cfg.Pwm.Tm1.Sm13.PwmFrequency);
-  TEST_ASSERT_EQUAL_UINT16(32768, cfg.Pwm.Tm1.Sm13.ChannelA.DutyCycle);
+  // Zero, not 32768. A missing DutyCycle key used to fall back to 50%, which on a
+  // submodule wired to a half-bridge commands both switches on together for half of
+  // every carrier period. The safe fallback is "output off", and it now matches the
+  // compiled struct default so the no-settings-file path and the missing-key path
+  // cannot disagree.
+  TEST_ASSERT_EQUAL_UINT16(0, cfg.Pwm.Tm1.Sm13.ChannelA.DutyCycle);
   TEST_ASSERT_EQUAL_UINT16(MinHalfBridgeDeadTimeNs, cfg.Pwm.Tm4.Sm42.DeadTime);
   TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm4.Sm42.Pair);
-  TEST_ASSERT_EQUAL_UINT16(32768, cfg.Pwm.Tm4.Sm42.ChannelB.DutyCycle);
+  TEST_ASSERT_EQUAL_UINT16(0, cfg.Pwm.Tm4.Sm42.ChannelB.DutyCycle);
 }
 
 void test_roundtrip_preserves_every_field() {
@@ -513,6 +518,61 @@ void test_validate_gate_is_inactive_when_spwm_is_off() {
   TEST_ASSERT_EQUAL_UINT8(PairHalfBridge, cfg.Pwm.Tm2.Sm20.Pair);
 }
 
+void test_compiled_defaults_are_safe_with_no_settings_file() {
+  // This is the exact state a board reaches with no SD card: loadConfiguration()
+  // returns early and nothing overwrites the struct defaults. Every one of these was
+  // wrong at some point, and each wrong value reached the power stage.
+  MainConfig cfg;
+
+  // Zero frequency divided by zero in computeAsymmetricTimings, produced garbage edge
+  // timings, and the outputs were enabled anyway.
+  TEST_ASSERT_TRUE(cfg.Pwm.Tm2.Sm20.PwmFrequency >= 1);
+  TEST_ASSERT_TRUE(cfg.Pwm.Tm4.Sm42.PwmFrequency >= 1);
+  TEST_ASSERT_TRUE(cfg.Pwm.Tm1.Sm13.PwmFrequency >= 1);
+
+  // Outputs off, not half on.
+  TEST_ASSERT_EQUAL_UINT16(0, cfg.Pwm.Tm2.Sm20.ChannelA.DutyCycle);
+  TEST_ASSERT_EQUAL_UINT16(0, cfg.Pwm.Tm2.Sm20.ChannelB.DutyCycle);
+  TEST_ASSERT_EQUAL_UINT16(0, cfg.Pwm.Tm4.Sm42.ChannelB.DutyCycle);
+
+  // Every pair independent until an operator says otherwise.
+  TEST_ASSERT_EQUAL_UINT8(PairIndependent, cfg.Pwm.Tm2.Sm20.Pair);
+
+  // And a dead time that is at least the floor, in case a pair is enabled later.
+  TEST_ASSERT_TRUE(cfg.Pwm.Tm2.Sm20.DeadTime >= MinHalfBridgeDeadTimeNs);
+}
+
+void test_json_fallbacks_match_the_compiled_defaults() {
+  // The two paths a board can arrive by - no settings file at all, and a settings file
+  // missing keys - must land on the SAME values. They disagreed for DeadTime,
+  // PwmFrequency and DutyCycle, and in every case the JSON side was the unsafe one.
+  MainConfig compiled;
+  MainConfig fromEmpty;
+  JsonDocument empty;
+  configFromJson(empty, fromEmpty);
+
+  TEST_ASSERT_EQUAL_UINT32(compiled.Pwm.Tm2.Sm20.PwmFrequency, fromEmpty.Pwm.Tm2.Sm20.PwmFrequency);
+  TEST_ASSERT_EQUAL_UINT16(compiled.Pwm.Tm2.Sm20.DeadTime, fromEmpty.Pwm.Tm2.Sm20.DeadTime);
+  TEST_ASSERT_EQUAL_UINT16(compiled.Pwm.Tm2.Sm20.ChannelA.DutyCycle,
+                           fromEmpty.Pwm.Tm2.Sm20.ChannelA.DutyCycle);
+  TEST_ASSERT_EQUAL_UINT16(compiled.Pwm.Tm2.Sm20.ChannelB.DutyCycle,
+                           fromEmpty.Pwm.Tm2.Sm20.ChannelB.DutyCycle);
+  TEST_ASSERT_EQUAL_UINT8(compiled.Pwm.Tm2.Sm20.Pair, fromEmpty.Pwm.Tm2.Sm20.Pair);
+}
+
+void test_validate_clamps_pwm_frequency_on_every_submodule() {
+  MainConfig cfg;
+  cfg.Pwm.Tm2.Sm20.PwmFrequency = 0;       // divide-by-zero downstream
+  cfg.Pwm.Tm4.Sm42.PwmFrequency = 5000000; // no usable duty resolution
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT32(1000, cfg.Pwm.Tm2.Sm20.PwmFrequency);
+  TEST_ASSERT_EQUAL_UINT32(1000, cfg.Pwm.Tm4.Sm42.PwmFrequency);
+
+  cfg.Pwm.Tm2.Sm20.PwmFrequency = 20000; // in range, left alone
+  validateConfig(cfg);
+  TEST_ASSERT_EQUAL_UINT32(20000, cfg.Pwm.Tm2.Sm20.PwmFrequency);
+}
+
 void test_validate_clamps_out_of_range_frequency() {
   MainConfig cfg;
   cfg.Pwm.Tm1.Sm13.PwmFrequency = 0;
@@ -684,6 +744,9 @@ int main() {
   RUN_TEST(test_validate_still_enforces_the_permanent_hardware_facts);
   RUN_TEST(test_validate_leaves_non_cell_submodules_ungated_by_scheme);
   RUN_TEST(test_validate_gate_is_inactive_when_spwm_is_off);
+  RUN_TEST(test_compiled_defaults_are_safe_with_no_settings_file);
+  RUN_TEST(test_json_fallbacks_match_the_compiled_defaults);
+  RUN_TEST(test_validate_clamps_pwm_frequency_on_every_submodule);
   RUN_TEST(test_validate_clamps_out_of_range_frequency);
   RUN_TEST(test_validate_current_limit);
   RUN_TEST(test_validate_pll);

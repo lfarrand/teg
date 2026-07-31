@@ -21,7 +21,11 @@ struct SubmoduleConfig {
   // switching a submodule to HalfBridge without touching this field cannot ask for
   // a zero gap, and so the compiled default matches the JSON fallback exactly.
   uint16_t DeadTime = MinHalfBridgeDeadTimeNs;
-  uint32_t PwmFrequency{};
+  // Not zero-initialised. This is the value a board falls back to when there is no
+  // readable settings file, and 0 reaches computeAsymmetricTimings() as a divisor -
+  // inf, an undefined cast, garbage edge timings, and then enabled outputs. Matches
+  // the JSON fallback so the two paths cannot disagree.
+  uint32_t PwmFrequency = 1000;
   ChannelConfig ChannelA;
   ChannelConfig ChannelB;
 };

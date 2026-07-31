@@ -26,6 +26,16 @@ inline AsymmetricTimings computeAsymmetricTimings(uint32_t busClockHz, uint32_t 
                                                   int32_t postShiftNanos, uint32_t maxCounterValue) {
   AsymmetricTimings t{};
 
+  // A zero frequency is reachable: SubmoduleConfig::PwmFrequency used to be
+  // zero-initialised, so a board booting with no settings file arrived here with 0 and
+  // divided by it below - producing inf, an undefined narrowing cast, garbage VALx
+  // values, and then enabled outputs. The struct default is fixed, but this is the
+  // function that actually divides, so it refuses here too rather than trusting every
+  // caller for ever. Returning a zeroed result leaves the outputs off.
+  if (pwmFrequencyHz == 0 || busClockHz == 0) {
+    return t;
+  }
+
   t.prescalerIndex = bestPrescalerIndex(busClockHz, pwmFrequencyHz, maxCounterValue);
   const uint32_t effectiveClockHz = busClockHz / (1U << t.prescalerIndex);
 

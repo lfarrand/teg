@@ -675,14 +675,15 @@ per-feature checklist, ordered by what goes wrong if you skip it.
 > list, including what is fixed and what is not, is in
 > **[docs/REVIEW_2026-07-31.md](docs/REVIEW_2026-07-31.md)**.
 
-> **Do not use the polarity-inverting modulation schemes on a real power stage.**
-> Schemes 2 (bipolar), 5 (phase-shifted) and 4 (level-shifted) with POD/APOD invert a
-> cell's output polarity, and both mechanisms that force outputs off — `MASK` and the
-> fault state — act *before* polarity (RM 55.8.45.4, 55.8.18.3). "Off" therefore renders
-> as a **high pin**: the gate is commanded on by the mechanism meant to shut it down.
-> The fault path is now fixed per cell; **`MASK` is not**, so the software fault trip,
-> the OTA safe state and the boot mask still invert. Use scheme 1, 3 or level-shifted PD
-> until this is closed. See [docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md) §0a.
+> **The polarity-inverting schemes had unsafe protective states, now fixed and not yet
+> bench-verified.** Schemes 2 (bipolar), 5 (phase-shifted) and 4 (level-shifted) with
+> POD/APOD invert a cell's output polarity, and both mechanisms that force outputs off —
+> `MASK` and the fault state — act *before* polarity (RM 55.8.45.4, 55.8.18.3). "Off"
+> therefore rendered as a **high pin**: the gate commanded on by the mechanism meant to
+> shut it down. The fault state is now set per cell, and every masking path un-inverts
+> polarity before masking. **Verify it on a scope before trusting it** —
+> [docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md) §0a. Schemes 1, 3 and level-shifted PD
+> never invert a cell and are unaffected.
 
 ### Known defects
 

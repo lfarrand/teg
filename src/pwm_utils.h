@@ -40,6 +40,12 @@ extern Timer &Tm4;
 
 void configurePwm();
 
+// Mask every PWM output, un-inverting any polarity-inverted cell first. MASK forces
+// outputs to logic 0 BEFORE polarity is applied (RM 55.8.45.4), so masking a LowTrue
+// cell drives its pins HIGH - the gate commanded ON by the shutdown. Use this instead
+// of Tm*.disable() on any path that exists to make the outputs safe.
+void maskAllOutputsSafely();
+
 struct MainConfig;
 void applyPwmConfig(const MainConfig &previous);
 

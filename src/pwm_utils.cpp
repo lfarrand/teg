@@ -65,6 +65,67 @@ static CellPlan cellPlan[MaxModulationCells]; // written only with the SPWM IRQ 
 // from configureModule2() is not a latch, and the ISR would restore the modulated
 // waveform on the very next carrier cycle. Bit k corresponds to CellSm[k].
 static volatile uint8_t vDeniedCellMask = 0;
+
+// Cells currently running inverted output polarity (OCTRL[POLA]/[POLB] = 1), which is
+// how schemes 2, 5 and 4-POD/APOD realise a 180deg opposition. Tracked because MASK
+// forces outputs to logic 0 BEFORE polarity is applied (RM 55.8.45.4, p.3191), so
+// masking one of these drives its pins HIGH - the gate commanded ON by the mechanism
+// meant to shut it down. Bit k corresponds to CellSm[k].
+static volatile uint8_t vInvertedCellMask = 0;
+
+// FlexPWM2 submodule index behind each modulation cell. CellSm is {Sm20, Sm22, Sm21,
+// Sm23}, so the submodule numbers are not in cell order.
+static const uint8_t CellSmIdx[MaxModulationCells] = {0, 2, 1, 3};
+
+// Direct OCTRL write: eFlex stages polarity into m_signal and only commits it inside
+// updateSetting(), which is far too heavy for a fault path.
+static inline void setCellPolarityInverted(uint8_t k, bool inverted) {
+  constexpr uint16_t Pol = FLEXPWM_SMOCTRL_POLA | FLEXPWM_SMOCTRL_POLB;
+  volatile uint16_t &octrl = IMXRT_FLEXPWM2.SM[CellSmIdx[k]].OCTRL;
+  if (inverted) {
+    octrl |= Pol;
+  } else {
+    octrl &= static_cast<uint16_t>(~Pol);
+  }
+}
+
+// Mask every output, safely for inverted cells.
+//
+// Un-inverting first costs a brief window - a few CPU cycles - in which the live
+// waveform reaches the pins at the wrong level. That is one short wrong-level edge,
+// against a permanently held gate-on. Masking first and un-inverting afterwards would
+// invert the trade and put both pins of a leg high for that window, which is the
+// shoot-through case.
+//
+// OCTRL is not one of the LDOK-buffered registers, so these writes take effect
+// immediately rather than waiting for a reload.
+FASTRUN void maskAllOutputsSafely() {
+  uint8_t m = vInvertedCellMask;
+  while (m != 0) {
+    const uint8_t k = static_cast<uint8_t>(__builtin_ctz(m));
+    m &= static_cast<uint8_t>(m - 1);
+    setCellPolarityInverted(k, false);
+  }
+  asm volatile("dsb");
+
+  Tm1.disable();
+  Tm2.disable();
+  Tm3.disable();
+  Tm4.disable();
+}
+
+// Put back the polarity maskAllOutputsSafely() removed. Without this a cleared fault
+// resumes with the carrier geometry silently wrong - the opposition those schemes
+// exist to produce would simply be absent.
+static void restoreCellPolarity() {
+  uint8_t m = vInvertedCellMask;
+  while (m != 0) {
+    const uint8_t k = static_cast<uint8_t>(__builtin_ctz(m));
+    m &= static_cast<uint8_t>(m - 1);
+    setCellPolarityInverted(k, true);
+  }
+  asm volatile("dsb");
+}
 static volatile uint8_t vModScheme = ModSchemeSpwmUnipolar;
 static volatile uint8_t vModCells = 2;
 static volatile uint8_t vCellLdokMask = 0b0101;
@@ -289,6 +350,9 @@ void clearFaultTrip() {
   acmpClearLatch(); // release the FlexPWM fault latch (its IRQ stays off for now)
   vFaultTripped = false;
   writeLog("Fault cleared; re-enabling PWM outputs");
+  // Put back the polarity the mask removed, BEFORE unmasking. Skipping this would
+  // resume with the 180deg opposition silently absent - the legs would run in phase.
+  restoreCellPolarity();
   Tm1.enable();
   Tm2.enable();
   Tm3.enable();
@@ -352,10 +416,7 @@ void applyPwmConfig(const MainConfig &previous) {
   // have re-enabled timers: re-assert the trip's masking so the applied
   // settings take effect only after an explicit successful clear
   if (vFaultTripped) {
-    Tm1.disable();
-    Tm2.disable();
-    Tm3.disable();
-    Tm4.disable();
+    maskAllOutputsSafely(); // un-inverts polarity first; MASK is pre-polarity
     NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
   }
 }
@@ -593,6 +654,7 @@ void configureModule2() {
   // duty drives BOTH pins of the leg permanently high, which is worse than the overlap
   // it was meant to prevent. HighTrue + duty 0 is a driven LOW pin, which is the state
   // a gate driver needs. Clearing OUTEN instead would leave the pin undriven.
+  uint8_t invertedMask = 0;
   for (uint8_t k = 0; k < MaxModulationCells; k++) {
     const bool denied = (deniedMask & (1u << k)) != 0;
     const bool inverted =
@@ -611,7 +673,13 @@ void configureModule2() {
     const pwm_fault_state_t fs = inverted ? kPWM_PwmFaultState1 : kPWM_PwmFaultState0;
     CellSm[k]->setupFaultState(ChanA, fs);
     CellSm[k]->setupFaultState(ChanB, fs);
+
+    // Recorded so the mask paths can un-invert before forcing outputs off.
+    if (inverted) {
+      invertedMask |= static_cast<uint8_t>(1u << k);
+    }
   }
+  vInvertedCellMask = invertedMask;
 
   // Configure Sm20 (Channels A and B)
   SubmoduleSettings sm20Settings = {
@@ -1029,10 +1097,7 @@ void runFeedbackLoop() {
 // ---------------------------------------------------------------------------
 FASTRUN static void faultTripIsr() {
   // Mask all outputs on all four timers (MASK register + local FORCE)
-  Tm1.disable();
-  Tm2.disable();
-  Tm3.disable();
-  Tm4.disable();
+  maskAllOutputsSafely(); // un-inverts polarity first; MASK is pre-polarity
   NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
   vFaultTripped = true;
   asm volatile("dsb");
@@ -1046,10 +1111,7 @@ FASTRUN static void faultTripIsr() {
 void enterOtaSafeState() {
   Sm20.disableInterrupts(kPWM_CompareVal1InterruptEnable);
   NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
-  Tm1.disable();
-  Tm2.disable();
-  Tm3.disable();
-  Tm4.disable();
+  maskAllOutputsSafely(); // un-inverts polarity first; MASK is pre-polarity
   asm volatile("dsb");
 }
 

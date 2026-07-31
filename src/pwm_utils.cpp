@@ -598,6 +598,19 @@ void configureModule2() {
     const bool inverted =
         !denied && spwmActive() && k < vModCells && cellPlan[k].polarityInverted;
     CellSm[k]->setupLevel(inverted ? kPWM_LowTrue : kPWM_HighTrue);
+
+    // The fault state must be the level that leaves the PIN inactive, which depends
+    // on that cell's polarity. OCTRL[PWMAFS]/[PWMBFS] select what the output is forced
+    // to during a fault, and RM 55.8.18.3 p.3157 specifies it as applied "prior to
+    // consideration of output polarity control" - so on a LowTrue cell the default
+    // state 0 is driven HIGH at the pin, i.e. the gate is commanded ON by the fault
+    // response. eFlex defaults every channel to kPWM_PwmFaultState0 and nothing in
+    // src/ ever changed it.
+    //
+    // State 1 is logic 1 pre-polarity, which an inverted cell renders as a low pin.
+    const pwm_fault_state_t fs = inverted ? kPWM_PwmFaultState1 : kPWM_PwmFaultState0;
+    CellSm[k]->setupFaultState(ChanA, fs);
+    CellSm[k]->setupFaultState(ChanB, fs);
   }
 
   // Configure Sm20 (Channels A and B)

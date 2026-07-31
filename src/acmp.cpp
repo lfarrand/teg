@@ -62,10 +62,9 @@ static volatile IMXRT_REGISTER8_t *cmpBlock(uint8_t cmp) {
 // software GPIO trip so the rest of the system reacts identically (capture
 // freeze, UI banner, modulation halt). Integer-only, no FPU stacking.
 FASTRUN static void acmpFaultIsr() {
-  Tm1.disable();
-  Tm2.disable();
-  Tm3.disable();
-  Tm4.disable();
+  // Un-inverts polarity before masking: MASK forces outputs to logic 0 before polarity
+  // is applied, so masking a LowTrue cell would drive its gates ON (RM 55.8.45.4).
+  maskAllOutputsSafely();
   NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
   // FFLAG0 stays latched (it gates output recovery); silence our own vector
   // instead - acmpClearLatch() re-arms it

@@ -35,18 +35,36 @@ polarity is applied:
 So on an inverted cell, "off" is rendered as a **HIGH pin** — the gate is commanded
 **on** by the very mechanism meant to shut it down.
 
-**Partially fixed.** The *fault* state is now set per cell to match its polarity
-(state 1 on inverted cells), so the FlexPWM fault path and the ACMP hardware
-over-current trip now produce a genuinely low pin.
+**Both halves are now fixed (2026-07-31), and neither is bench-verified.**
 
-**Still broken:** `MASK` has no per-cell state — it is always logic 0 pre-polarity.
-`Tm*.disable()` is what the **software fault trip, the OTA safe state and the boot
-mask** use, so all three still drive inverted cells high. Closing this properly means
-not using polarity inversion at all, and realising the 180° displacement with
-`DTSRCSEL` + a FORCE_OUT or with `VAL2`/`VAL3` edge bias — the work deferred earlier
-in `docs/PRODUCT_READINESS.md`.
+- The **fault state** is set per cell — `PWMAFS`/`PWMBFS` = state 1 on inverted cells —
+  covering the FlexPWM fault path and the ACMP hardware over-current trip.
+- The **mask path** cannot be made polarity-aware directly, because `MASK` has no
+  per-cell state. `maskAllOutputsSafely()` therefore clears `OCTRL[POLA]/[POLB]` on the
+  inverted cells first, then masks. All four sites use it: the software fault trip, the
+  OTA safe state, the ACMP fault ISR, and the refused-clear re-mask in
+  `applyPwmConfig()`. `clearFaultTrip()` restores polarity before unmasking.
 
-**Until then: use scheme 1, 3, or level-shifted PD only.** Those never invert a cell.
+### Confirm these on a scope, on an inverted cell
+
+Run scheme 2 (bipolar) with two cells, so cell 1 is polarity-inverted, power stage
+disconnected.
+
+- [ ] **Trip a software fault.** Both pins of the inverted cell must go **LOW** and stay
+      there. If either latches high, stop — that is the gate commanded on.
+- [ ] **Trip the hardware current limit** (`FTST0[FTEST]=1` is the safe injector) and
+      confirm the same.
+- [ ] **Start an OTA upload** and confirm the same.
+- [ ] **Catch the transition edge.** Between un-inverting and the mask landing there is a
+      window of a few CPU cycles where the live waveform reaches the pin at the wrong
+      level. Expect one short wrong-level edge at the trip instant; measure it. It should
+      be well under a microsecond.
+- [ ] **Clear the fault and confirm the opposition comes back.** The two legs must be
+      180° apart again. If they run in phase, `restoreCellPolarity()` did not take.
+
+**Even with this fixed, prefer scheme 1, 3 or level-shifted PD** for anything that
+matters. They never invert a cell, so none of the above can apply — the durable fix is
+to stop using polarity for carrier inversion entirely.
 
 ## 0. Complementary pairs — implemented, never bench-verified. Do this first.
 

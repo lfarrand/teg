@@ -1099,15 +1099,20 @@ void runFeedbackLoop() {
   const float dt = static_cast<float>(static_cast<uint32_t>(sinceLastRun)) / 1000000.0f;
   sinceLastRun = 0;
 
-  // Prefer the PWM-synchronous samples (12-bit, taken at the reload point)
-  // when capture is running; fall back to a plain 10-bit analogRead otherwise
+  // Prefer the PWM-synchronous samples (taken at the reload point) when capture is
+  // running; fall back to a plain analogRead otherwise. BOTH are 12-bit: capture
+  // programs the ADC to 12 bits and setup() sets the core's read resolution to match,
+  // so the same scale applies either way. The fallback used to divide by 1023 while
+  // reading 12-bit data - four times high, which drove the regulator down until the
+  // real output sat at a quarter of the setpoint, every time the capture ring was
+  // frozen by a fault or an armed scope trigger.
   float measuredMv;
+  const float mvPerCount =
+      static_cast<float>(config.Feedback.FullScaleMillivolts) / static_cast<float>(AdcCountFullScale);
   if (captureActive() && !captureIsFrozen()) {
-    measuredMv = static_cast<float>(captureMeanRaw(64)) *
-                 (static_cast<float>(config.Feedback.FullScaleMillivolts) / 4095.0f);
+    measuredMv = static_cast<float>(captureMeanRaw(64)) * mvPerCount;
   } else {
-    const int raw = analogRead(config.Feedback.AnalogPin);
-    measuredMv = static_cast<float>(raw) * (static_cast<float>(config.Feedback.FullScaleMillivolts) / 1023.0f);
+    measuredMv = static_cast<float>(analogRead(config.Feedback.AnalogPin)) * mvPerCount;
   }
   const float errorVolts = (static_cast<float>(config.Feedback.SetpointMillivolts) - measuredMv) / 1000.0f;
 

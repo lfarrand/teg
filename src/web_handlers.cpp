@@ -893,7 +893,8 @@ void api_status(Request &req, Response &res) {
     doc["feedbackMv"] = (captureMeanRaw(64) * config.Feedback.FullScaleMillivolts) / 4095U;
   } else {
     doc["feedbackMv"] =
-      (static_cast<uint32_t>(analogRead(config.Feedback.AnalogPin)) * config.Feedback.FullScaleMillivolts) / 1023U;
+      (static_cast<uint32_t>(analogRead(config.Feedback.AnalogPin)) * config.Feedback.FullScaleMillivolts) /
+      AdcCountFullScale; // 12-bit, same as capture - see capture.h
   }
   doc["streamUnderruns"] = waveformStreamUnderruns();
   doc["derateMilli"] = thermalDerateMilliNow();

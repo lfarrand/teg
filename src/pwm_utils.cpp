@@ -315,6 +315,21 @@ void setupSubmodule(SubModule &sm, const SubmoduleSettings &settings, bool print
     if (complementary) {
       base->SM[smIdx].CTRL2 &= ~FLEXPWM_SMCTRL2_INDEP;
     } else {
+      // LEAVING complementary mode: channel B stops being derived from A and starts
+      // being generated from VAL4/VAL5. Those are buffered and do not take effect
+      // until LDOK loads them at the next reload, so flipping INDEP first publishes
+      // the PREVIOUS active VAL4/VAL5 on PWM_B for up to a full carrier period - a
+      // stale duty on a pin that was, until this instant, a half-bridge low side.
+      //
+      // Load first, then flip. The wait is bounded because at boot the counter is not
+      // running and LDOK would never clear; ~200k spins is far longer than the
+      // slowest supported carrier period and still a fraction of the 8s watchdog.
+      sm.setPwmLdok(true);
+      for (uint32_t spins = 0; spins < 200000; spins++) {
+        if ((base->MCTRL & FLEXPWM_MCTRL_LDOK(1u << smIdx)) == 0) {
+          break;
+        }
+      }
       base->SM[smIdx].CTRL2 |= FLEXPWM_SMCTRL2_INDEP;
     }
   }
@@ -552,6 +567,24 @@ static volatile uint16_t vThermalDerateMilli = 1000;
 
 void setThermalDerateMilli(uint16_t derateMilli) {
   vThermalDerateMilli = derateMilli > 1000 ? 1000 : derateMilli;
+
+  // Apply it now, rather than waiting for someone to write the index.
+  //
+  // The cap lives in setModulationIndexTargetQ15(), so a tightening derate only ever
+  // reached the output when some controller happened to call that setter. thermalTask
+  // deliberately does not re-push the index while feedback or MPPT is enabled - it
+  // would fight the tracker - and MPPT itself early-returns whenever the meter reading
+  // is invalid or its interval has not elapsed. So with MPPT enabled and the meter
+  // unhappy, the derate factor could climb with the temperature while the output sat
+  // at its old, un-derated level indefinitely: the only over-temperature protection,
+  // silently inert.
+  //
+  // Clamping DOWN only. This never raises a target, so it cannot fight a controller
+  // upward, and the ISR's slew limit still turns it into a ramp rather than a step.
+  const uint32_t capQ15 = (indexMilliToQ15(MaxModulationIndexMilli) * vThermalDerateMilli) / 1000U;
+  if (vIndexTargetQ15 > capQ15) {
+    vIndexTargetQ15 = capQ15;
+  }
 }
 
 // Clamped setter for the closed-loop controller (and anything else that wants

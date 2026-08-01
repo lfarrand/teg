@@ -62,7 +62,16 @@ FLASHMEM void configureWebServer() {
   // window, and the write loop spun on it for ever with nothing feeding the watchdog.
   // That was an unauthenticated one-request reset of a generating inverter, on any GET.
   Response::setServiceCallback(&serviceControlTasks);
+  // Two budgets, and both are needed. setWriteBudget bounds time with the peer
+  // accepting NOTHING, and resets on every byte so an honest slow client is never
+  // truncated. On its own it bounds nothing: a client that takes one byte every 2.9s
+  // resets it for ever. setWriteTotalBudget is the absolute ceiling on one response,
+  // and is what actually caps the damage. serviceControlTasks keeps the PWM, PLL,
+  // meter and watchdog alive throughout, but everything else in loop() - MQTT, NTP,
+  // metrics, the deferred OTA commit, the config persist, the OLED - is stalled for
+  // the duration, so the ceiling is what stops one GET from parking those for days.
   Response::setWriteBudget(3000);
+  Response::setWriteTotalBudget(30000);
 
   app.get("/", &index);
   app.get("/index.html", &index);

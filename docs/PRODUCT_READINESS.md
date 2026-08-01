@@ -77,16 +77,19 @@ Recorded because these were counter-intuitive and cost real time to establish:
   and 100–200 V silicon or GaN. The 2 kV board then plugs in unchanged as the DC
   interrupter, which preserves its certification work.
 
-  **Verified 2026-07-29 (5-agent adversarial pass, 4 of 5 verdicts
-  "unsafe-as-described").** The specific proposal of populating one MOSFET per
+  **Desk-reviewed 2026-07-29 (5-agent adversarial pass, 4 of 5 verdicts
+  "unsafe-as-described"; no hardware was built or measured).** The specific proposal of populating one MOSFET per
   board and strapping the vacant footprint to make four bridge switches is
   *electrically* sound — the strap bypasses nothing, the Kelvin gate loop is
   untouched, body-diode orientation is correct for a leg, and the single-switch
   role is thermally kinder than the board's intended one. It fails on five
   independent counts, any one of which destroys devices:
 
-  1. **Firmware `INDEP` defect** (above) — leg shoot-through on the first
-     carrier cycle. This is the most likely first-power-up device killer.
+  1. **Firmware pair-mode path — fixed 2026-07-30, never bench-verified.**
+     `INDEP` is now cleared for complementary pairs, and a pair that cannot be
+     honoured holds both duties at zero. Until that is confirmed on a scope,
+     treat first power-up as if the shoot-through risk were live: it was the
+     most likely first-power-up device killer, and nothing has measured the fix.
   2. **The strap is an air-bridge, not a pad link.** A 1.97 mm routed slot (the
      drain–source creepage cut) sits between Q2's drain and source holes. It
      needs a formed wire through both plated holes, restrained and insulated.
@@ -113,8 +116,8 @@ Recorded because these were counter-intuitive and cost real time to establish:
   the binding figure is the 2300 V `V_OFFSET` destruction limit.
 
   As a firmware/control test rig at ≤100 V, single-pulse, one leg, the concept is
-  usable once `INDEP` and dead time are fixed. As a route to an inverter product
-  it is not.
+  usable once the pair-mode and dead-time behaviour is confirmed on a scope (fixed
+  in firmware 2026-07-30, unverified). As a route to an inverter product it is not.
 - **Speed is the wrong headline for the arc product.** Sandia's ignition data
   shows 750 J already sits below the ignition threshold of PV materials, so extra
   speed buys little additional fire safety — and a competent assessor will say so

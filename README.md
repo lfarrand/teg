@@ -13,9 +13,11 @@ both software and hardware fault protection.
 > analysis — never on hardware. Read **[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md)**
 > before using them on a real power stage.
 >
-> **This is a bench instrument, not a product.** It has no transport security,
-> authentication defaults to *off*, and OTA accepts unsigned firmware — so
-> anyone who can reach port 80 can permanently install arbitrary code. Keep it
+> **This is a bench instrument, not a product.** It has no transport security, its
+> single shared write PIN travels in cleartext with no rate limiting or Origin
+> checking, **every GET is unauthenticated**, and OTA accepts unsigned firmware — so
+> anyone who learns the PIN can permanently install arbitrary code, and anyone who
+> can reach port 80 can read every capture, log and config. Keep it
 > on a trusted, isolated network. **[docs/SECURITY.md](docs/SECURITY.md)** states
 > the posture and the fixes in priority order;
 > **[docs/PRODUCT_READINESS.md](docs/PRODUCT_READINESS.md)** covers what would
@@ -39,10 +41,12 @@ both software and hardware fault protection.
   power measurement
 - **True power metering** — simultaneous V and I sampling with real power, RMS,
   power factor and accumulated energy
-- **Protection in depth** — latched ~1 µs software fault trip, plus an on-chip
-  analog comparator path (comparator → XBAR → FlexPWM fault) giving hardware
-  overcurrent shutdown and cycle-by-cycle current limiting with no software in
-  the loop
+- **Protection in depth** — latched software fault trip, plus an on-chip
+  analog comparator path (comparator → XBAR → FlexPWM fault) intended to give
+  hardware overcurrent shutdown and cycle-by-cycle current limiting with no software
+  in the loop. Both latencies are derived from the reference manual, and whether the
+  comparator reaches FAULT0 on this silicon is **unconfirmed** — neither has been
+  measured
 - **Instrumentation** — spectrum/THD analysis, a triggered single-shot scope with
   raw capture download, and a timestamped event log with an NTP-disciplined RTC
 - **Integrations** — InfluxDB metrics, MQTT with Home Assistant auto-discovery,
@@ -51,7 +55,7 @@ both software and hardware fault protection.
   plus named configuration presets with export/import
 - **Modern web UI** — single-page app with automatic dark mode, live telemetry,
   and scheme-aware forms, served gzip-compressed from flash
-- **Tested** — 278 native unit tests cover the hardware-independent logic. They
+- **Tested** — 285 native unit tests cover the hardware-independent logic. They
   cannot see registers, ISRs, boot order or the network path, which is where every
   defect found by the 2026-07-30 adversarial review lived
   (modulation, metering, PLL, MPPT, OTA image verification, config mapping) and
@@ -109,8 +113,13 @@ pio test -e native           # run the unit tests on the host
 Flash `.pio/build/teensy41/firmware.hex` with the Teensy loader. CI builds the
 firmware and runs the tests on every PR; the hex is attached as a build artifact.
 
-Settings persist to `/settings.cfg` (JSON) on the SD card; missing keys fall back
-to safe defaults, so the file can be edited or deleted freely.
+Settings persist to `/settings.cfg` (JSON) on the SD card. **Missing sections are
+not safe to omit.** Absent `FaultProtection`, `CurrentLimit` and `Thermal` blocks
+fall back to compiled defaults in which all three are *disabled*, so an incomplete
+file boots with no fault trip, no current limit and no thermal derate. The boot
+path logs a warning and loads it anyway; the preset/import path refuses such a file
+outright. Deleting the file returns to those same defaults — do it deliberately,
+knowing what it disarms.
 
 ## Web UI and API
 
@@ -308,8 +317,9 @@ fires a highest-priority GPIO interrupt (it preempts even the modulation ISR) th
 masks every FlexPWM output — roughly **1 µs pin-to-off** — and latches. The web UI
 shows a red banner; outputs stay off until settings are re-applied (Save). Wire an
 overcurrent comparator or thermal switch here. The default pin (32) is
-XBAR-capable, so a future zero-software hardware fault path (FlexPWM FAULT0) can
-reuse the same wiring.
+XBAR-capable. A separate zero-software hardware path already exists via the analog
+comparator (see *Hardware current limit* below); this GPIO trip is the software
+complement to it.
 
 ## Asymmetric induction mode (Timer 4 / SM42)
 
@@ -397,6 +407,13 @@ current-sense pin against its internal 6-bit DAC threshold and routes the result
 through XBARA1 to **FlexPWM2's private FAULT0 input** — disabling the modulated
 outputs combinationally, with no software in the loop and sub-microsecond
 latency. It works even if the CPU clock fails.
+
+> **Not bench-verified.** Whether the comparator output actually reaches FAULT0 on
+> this silicon is unconfirmed — see [docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md) §3,
+> which includes the `OPE`-bit fallback to try if it never trips. Both the ~1 µs
+> software trip latency and the sub-microsecond hardware latency are derived from the
+> reference manual, not measured. Do not rely on either as your only protection until
+> you have seen it on a scope.
 
 Two modes:
 
@@ -631,16 +648,20 @@ device's config file on the SD card, never in firmware source or this repository
   `spwm_math.h`, `pwm_timing.h`, `spectrum_math.h`, `capture_math.h`,
   `meter_math.h`, `scope_math.h`, `acmp_math.h`, `pll_math.h`, `mppt_math.h`,
   `hex_parse.h`, `ota_ingest.h`, `ota_verify.h`, `ota_crc.h`, `preset_name.h`,
-  `event_log.h`, `mqtt_discovery.h`, `config_serde.h`, `config_fields.h`,
-  `ntp_utils.h`, `pi_controller.h`.
+  `event_log.h`, `mqtt_discovery.h`, `config_serde.h`, `pwm_pair.h`,
+  `thermal_math.h`, `waveform_parse.h`, `gzip_stream.h`, `stream_ring.h`,
+  `write_pin.h`, `ntp_utils.h`, `pi_controller.h`.
 - The ISR's per-cycle duty pipeline is itself one of those headers
   (`modulationCycleDuties`), called verbatim by the interrupt — so the spectral
   tests measure the real thing rather than a reimplementation.
 - The web UI lives in `web/` and is gzipped into flash at build time by
   `scripts/gzip_web_assets.py` (Pico.css v2 is vendored; no build toolchain).
-- `lib/aWOT` and `lib/eFlexPwm` are forks (submodules): aWOT is bound to QNEthernet
-  with blocking `writeFully` sends; eFlexPwm adds 16-bit duty resolution and keeps
-  its debug logging compiled out (`EFLEXPWM_ENABLE_LOGGING`).
+- `lib/aWOT` and `lib/eFlexPwm` are forks (submodules): aWOT takes a plain Arduino
+  `Client*` (its QNEthernet dependency was dropped 2026-08-01) and its response
+  writes are bounded and watchdog-serviced rather than spinning on a silent peer,
+  with host regression tests covering both properties — see `lib/aWOT/PATCHES.md`;
+  eFlexPwm adds 16-bit duty resolution and keeps its debug logging compiled out
+  (`EFLEXPWM_ENABLE_LOGGING`).
 - Hot state (sine LUT, ISR variables) lives in zero-wait-state DTCM; cold code
   (web handlers, config I/O) is marked `FLASHMEM` to keep ITCM for the fast paths.
 - True N-cell phase-shifted PWM needs RT1170 silicon — the analysis and migration
@@ -670,9 +691,10 @@ per-feature checklist, ordered by what goes wrong if you skip it.
 
 > **Do not put this on a power stage yet.** A twelve-lens adversarial review on
 > 2026-07-31, with 24 findings independently re-verified, returned **18 confirmed and
-> 6 partially confirmed — none fully refuted**. Six are hardware-damaging and one is an
-> unauthenticated one-request watchdog reset of a running inverter. The full verified
-> list, including what is fixed and what is not, is in
+> 6 partially confirmed — none fully refuted**. Six were hardware-damaging and one was
+> an unauthenticated one-request watchdog reset of a running inverter; the reset and
+> four of the six hardware-damage findings have since been fixed, **none of them
+> bench-verified**. The full verified list, including what is fixed and what is not, is in
 > **[docs/REVIEW_2026-07-31.md](docs/REVIEW_2026-07-31.md)**.
 
 > **The polarity-inverting schemes had unsafe protective states, now fixed and not yet
@@ -687,22 +709,21 @@ per-feature checklist, ordered by what goes wrong if you skip it.
 
 ### Known defects
 
-> **Complementary operation and dead time do not work.** The Teensy core sets
-> `SMCTRL2[INDEP]` on every FlexPWM submodule and this firmware never clears it,
-> so channel B is not the complement of channel A and the configured dead time is
-> ignored by the hardware. Channel B outputs its static configured duty (default
-> 50%). **Do not drive a half-bridge or H-bridge from this firmware** until it is
-> fixed and verified on a scope — both switches of a leg would conduct together
-> every carrier cycle. Cold-boot dead time is also 0, not 50 ns. Details and the
-> knock-on effects are in [docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md) §0.
+> **Complementary operation and dead time are implemented but never bench-verified.**
+> `SMCTRL2[INDEP]` — which the Teensy core sets on every FlexPWM submodule, and which
+> this firmware used to leave set — is now cleared for any submodule configured as a
+> `HalfBridge` or `Differential` pair, so channel B is the dead-time-separated
+> complement of channel A and the configured dead time reaches the hardware (fixed
+> 2026-07-30). A pair that cannot be honoured holds both duties at zero rather than
+> silently reverting to independent channels.
+>
+> **None of this has run on hardware**, and the host tests are structurally unable to
+> see FlexPWM registers. Confirm channel-B inversion, dead time on both edges, and a
+> dark refused pair on a scope with the power stage disconnected before driving a
+> half-bridge or H-bridge — [docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md) §0.
 
 Found by audit, not yet fixed — they matter because they affect what you can
 trust while bench testing:
-
-- The carrier frequency the hardware actually switches at comes from
-  `Sm2x.PwmFrequency` (default **1000**), not `SpwmCarrierFrequency`
-  (default **20000**) which the ISR uses for its maths. Set inconsistently, the
-  modulation maths silently disagrees with the switching.
 
 - ~~`getFreeMemory()` subtracts an OCRAM pointer from a DTCM pointer~~ — **fixed
   2026-07-30.** It now measures the gap between the stack pointer and `_ebss`, the
@@ -728,6 +749,6 @@ trust while bench testing:
   The CMSIS engine is now compiled out unless `TEG_ENABLE_CMSIS_FFT` is defined.
   Referencing it pulled ~77 KB of CMSIS tables into DTCM (plain `const` data is
   copied there on a Teensy 4) for a fast path reachable only via `?engine=cmsis`.
-  Free-for-locals went from **18,432 to 97,280 bytes**. `?engine=cmsis` now falls
+  Free-for-locals went from **18,432 to 96,192 bytes**. `?engine=cmsis` now falls
   back to the portable engine and the response reports `"portable"`, the same
   contract already used for an unsupported point count.

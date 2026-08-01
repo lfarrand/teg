@@ -7,6 +7,12 @@
 #include <Adafruit_SSD1306.h>
 #include <aWOT.h>
 #include <LittleFS.h>
+// The Ethernet types below used to arrive transitively, via a QNEthernet include inside
+// aWOT.h. aWOT no longer depends on QNEthernet (it only ever needed it for writeFully(),
+// now replaced by a bounded equivalent), so the firmware declares the dependency it
+// actually has. Nothing here changes which stack is used - QNEthernet is still the one.
+#include <QNEthernet.h>
+using namespace qindesign::network;
 #include "config_json.h"
 
 #define SCREEN_WIDTH 128

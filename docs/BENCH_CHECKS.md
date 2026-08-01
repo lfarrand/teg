@@ -74,7 +74,7 @@ time reaches the hardware. That was not true before 2026-07-30; if you have read
 older copy of this file saying complementary operation "does not work", it is stale.
 
 **Nothing in this path has run on hardware.** It writes FlexPWM registers directly on
-every settings apply, and the 278 host tests are structurally unable to see registers.
+every settings apply, and the 285 host tests are structurally unable to see registers.
 
 ### The one that would have damaged hardware
 
@@ -147,7 +147,7 @@ The review confirmed two further issues that are **not** fixed:
 ## 1. USB MTP — stack headroom (do this one first if MTP is enabled)
 
 > **Largely resolved 2026-07-30.** Compiling out the opt-in CMSIS FFT engine
-> returned **~77 KB of DTCM**, taking free-for-locals from **18,432 to 97,280
+> returned **~77 KB of DTCM**, taking free-for-locals from **18,432 to 96,192
 > bytes**. The stack is no longer the tightest constraint in this build, and this
 > section drops well down the priority order. It is kept because the checks are
 > still worth running once, and because defining `TEG_ENABLE_CMSIS_FFT` puts the
@@ -317,7 +317,7 @@ from here, so calibration errors propagate.
 
 ## What the tests already cover
 
-Do not re-verify these by hand — they are pinned by the 231 host-side unit
+Do not re-verify these by hand — they are pinned by the 285 host-side unit
 tests and re-run in CI on every push:
 
 - Modulation maths for all nine schemes, including FFT-verified harmonic

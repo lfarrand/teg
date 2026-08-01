@@ -1,6 +1,7 @@
 # Security posture
 
-Audited 2026-07-28 against the current `main`. This firmware was built as a
+First audited 2026-07-28; revised through 2026-08-01, with sections dated
+individually. This firmware was built as a
 personal bench instrument and its security model reflects that: it is
 appropriate for an isolated lab LAN and **not** appropriate, as it stands, for
 anything reachable from an untrusted network or sold as a product.
@@ -100,11 +101,17 @@ Three independent one-request kills, all pre-auth:
 - ~~A slow-loris header dribble deterministically trips the 8 s watchdog.~~ —
   **fixed 2026-07-30** (#42): the header phase is bounded at 4 s and the wait
   services the control tasks. See `lib/aWOT/PATCHES.md`.
-- `GET /api/capture/raw` freezes every control loop for seconds — **partially fixed
-  2026-07-30, and review found the fix incomplete.** The chunk loop now calls
-  `serviceControlTasks()` instead of a bare `kickWatchdog()`, but the **response write
-  itself is still unbounded and unserviced**, so a slow reader can still stall the loop
-  past the 8 s watchdog on an unauthenticated GET. Do not treat this path as closed. That helper runs the
+- ~~`GET /api/capture/raw` freezes every control loop for seconds~~ — **fixed
+  2026-07-30 → 2026-08-01.** The chunk loop calls `serviceControlTasks()` instead of a
+  bare `kickWatchdog()`, and the response write is now bounded as well: all three aWOT
+  write sites (`m_flushBuf` and both `Response::write` overloads) go through
+  `m_writeBounded()`, which services the control tasks on every spin and abandons the
+  response after a 3 s **no-progress** budget. The first version of that patch converted
+  only `m_flushBuf()`, leaving most of any multi-buffer response unbounded; all three are
+  converted now, and host regression tests cover both the no-truncation and the
+  no-spin property. See `lib/aWOT/PATCHES.md` patches 2 and 3. **Behaviour change:** a
+  peer that accepts nothing at all for 3 s has its response abandoned and its socket
+  closed. **Not bench-verified.** That helper runs the
   interval-gated control tasks (feedback, PLL, thermal, waveform stream, meter,
   MPPT, ACMP) and deliberately excludes everything touching the network or USB —
   re-entering the stack mid-response is the one thing it must never do. The same
@@ -156,7 +163,7 @@ commit could build against different library code on different days, with nothin
 in the repo to show it. They are now pinned to exact versions in `platformio.ini`,
 including the two transitive dependencies (`Adafruit BusIO` via SSD1306, `OneWire`
 via DallasTemperature) — an unpinned transitive dependency floats just as freely
-as a direct one. Verified: firmware builds and all 231 native tests pass against
+as a direct one. Verified: firmware builds and all 285 native tests pass against
 the pinned set.
 
 The platform, framework and toolchain were already pinned exactly. A commit now
@@ -186,8 +193,10 @@ intend to keep**, because the obligation attaches to whatever is in the binary.
    limiting, failed-auth logging and Origin checks are still outstanding.
 3. Ed25519-signed OTA with anti-rollback. **Needs a decision first:** where the
    signing key lives and whether CI signs automatically.
-4. Close the two remaining pre-auth DoS paths (slow-loris deadline, chunked raw
-   capture download).
+4. Add rate limiting, failed-auth logging and Origin checking. The two named pre-auth
+   DoS paths (slow-loris header dribble, chunked raw capture download) are both closed
+   as of 2026-08-01; what remains open here is the waveform upload's bare watchdog kick,
+   which is blocked on the upload-versus-playback question rather than on security.
 5. Encrypt secrets at rest, or move them off the removable card.
 6. For a product: custom RT1062 board with HAB, and safety functions on their
    own MCU (see [PRODUCT_READINESS.md](PRODUCT_READINESS.md)).

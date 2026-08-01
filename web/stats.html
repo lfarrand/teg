@@ -185,6 +185,9 @@ const chPower = new Chart(host, "Real power", "W", ["power"], { decimals: 2 });
 const chRms = new Chart(host, "RMS output", "", ["Vrms (V)", "Irms (A)"], { decimals: 2, min: 0 });
 const chPll = new Chart(host, "PLL frequency", "Hz", ["reference", "DDS"], { decimals: 3 });
 const chPllErr = new Chart(host, "PLL phase error", "°", ["error"], { decimals: 2 });
+const chAuxPower = new Chart(host, "Driver board power", "W", ["input"], { decimals: 2, min: 0 });
+const chAuxBus = new Chart(host, "Driver board bus", "V", ["DC in"], { decimals: 2, min: 0 });
+const chAuxCurrent = new Chart(host, "Driver board current", "A", ["INA226", "IMON"], { decimals: 3, min: 0 });
 
 const t = (deci) => (deci > -32768 ? deci / 10 : null);
 
@@ -265,6 +268,11 @@ async function poll() {
     const pllLive = s.pllEnabled && (s.pllState === "locked" || s.pllState === "acquiring");
     chPll.push([pllLive ? s.pllRefMilliHz / 1000 : null, s.pllEnabled ? s.modMilliHz / 1000 : null]);
     chPllErr.push([pllLive ? s.pllPhaseErrCentiDeg / 100 : null]);
+    const aux = s.auxMonEnabled && s.auxMonOnline;
+    chAuxPower.push([aux ? s.auxPowerMw / 1000 : null]);
+    chAuxBus.push([aux ? s.auxBusMv / 1000 : null]);
+    chAuxCurrent.push([aux ? s.auxCurrentMa / 1000 : null,
+                       aux && s.auxImonMa !== undefined ? s.auxImonMa / 1000 : null]);
     $("#fault-banner").style.display = s.fault ? "block" : "none";
     pollSpectrum();
     pollLog();
@@ -278,7 +286,16 @@ async function poll() {
       (s.meterActive
         ? ` · PF ${(s.pfMilli / 1000).toFixed(2)} · energy ${(s.energyMwh / 1000).toFixed(2)} Wh`
         : "") +
-      (s.pllEnabled ? ` · PLL ${s.pllState}` : "");
+      (s.pllEnabled ? ` · PLL ${s.pllState}` : "") +
+      (s.auxMonEnabled
+        ? s.auxMonOnline
+          ? ` · driver board ${(s.auxEnergyMwh / 1000).toFixed(2)} Wh` +
+            (s.auxPgEfuse !== undefined || s.auxPgBuck !== undefined
+              ? ` PG ${(s.auxPgEfuse ?? true) && (s.auxPgBuck ?? true) ? "ok" : "MISSING"}`
+              : "") +
+            (s.auxAlert ? " OVERCURRENT ALERT" : "")
+          : " · driver board monitor OFFLINE"
+        : "");
   } catch (e) { /* device busy; next tick */ }
 }
 

@@ -45,6 +45,12 @@ constexpr MqttSensorDef MqttSensors[] = {
   {"die", "MCU die", "\xc2\xb0""C", "temperature", "measurement", "die_c"},
   {"derate", "Thermal derate", "%", nullptr, "measurement", "derate_pct"},
   {"pll", "PLL state", nullptr, nullptr, nullptr, "pll"},
+  // Aux power monitor: the MOSFET driver board's own supply, measured by its
+  // on-board INA226 (total draw at the 14-26 V DC input, ahead of the eFuse)
+  {"aux_power", "Driver board power", "W", "power", "measurement", "aux_power_w"},
+  {"aux_voltage", "Driver board voltage", "V", "voltage", "measurement", "aux_voltage_v"},
+  {"aux_current", "Driver board current", "A", "current", "measurement", "aux_current_a"},
+  {"aux_energy", "Driver board energy", "Wh", "energy", "total_increasing", "aux_energy_wh"},
 };
 constexpr unsigned MqttSensorCount = sizeof(MqttSensors) / sizeof(MqttSensors[0]);
 
@@ -134,6 +140,12 @@ struct MqttStateValues {
   uint16_t derateMilli = 1000;
   bool fault = false;
   const char *pllState = "off";
+  bool auxValid = false;   // INA226 on the driver board answered
+  uint32_t auxPowerMw = 0;
+  uint32_t auxBusMv = 0;
+  int32_t auxCurrentMa = 0;
+  uint64_t auxEnergyMwh = 0;
+  bool auxAlert = false;
 };
 
 inline void mqttBuildState(JsonDocument &doc, const MqttStateValues &v) {
@@ -159,6 +171,13 @@ inline void mqttBuildState(JsonDocument &doc, const MqttStateValues &v) {
   doc["derate_pct"] = v.derateMilli / 10;
   doc["fault"] = v.fault;
   doc["pll"] = v.pllState;
+  if (v.auxValid) {
+    doc["aux_power_w"] = static_cast<float>(v.auxPowerMw) / 1000.0f;
+    doc["aux_voltage_v"] = static_cast<float>(v.auxBusMv) / 1000.0f;
+    doc["aux_current_a"] = static_cast<float>(v.auxCurrentMa) / 1000.0f;
+    doc["aux_energy_wh"] = static_cast<float>(static_cast<double>(v.auxEnergyMwh) / 1000.0);
+    doc["aux_alert"] = v.auxAlert;
+  }
 }
 
 #endif

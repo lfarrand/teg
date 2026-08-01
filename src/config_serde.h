@@ -10,6 +10,7 @@
 #include "config_json.h"
 #include "acmp_math.h" // pin routing check in validateConfig
 #include "modulation.h" // scheme/dither enums for the PLL exclusion rules
+#include "power_monitor_math.h" // INA226 CAL plausibility in validateConfig
 
 // Bounded, always-terminated string copy (portable across firmware and the
 // native test host, unlike strlcpy)
@@ -187,6 +188,19 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Thermal.OneWirePin = Config_Thermal["OneWirePin"] | 21;
   config.Thermal.DerateStartC = Config_Thermal["DerateStartC"] | 70;
   config.Thermal.DerateEndC = Config_Thermal["DerateEndC"] | 90;
+
+  JsonObjectConst Config_PowerMon = doc["Config"]["PowerMon"];
+  config.PowerMon.Enabled = Config_PowerMon["Enabled"] | false;
+  config.PowerMon.Address = Config_PowerMon["Address"] | 0x40;
+  config.PowerMon.ShuntMicroOhm = Config_PowerMon["ShuntMicroOhm"] | 10000;
+  config.PowerMon.CurrentLsbMicroAmp = Config_PowerMon["CurrentLsbMicroAmp"] | 50;
+  config.PowerMon.AlertMilliAmp = Config_PowerMon["AlertMilliAmp"] | 1500;
+  config.PowerMon.IntervalMs = Config_PowerMon["IntervalMs"] | 100;
+  config.PowerMon.PgEfusePin = Config_PowerMon["PgEfusePin"] | 14;
+  config.PowerMon.PgBuckPin = Config_PowerMon["PgBuckPin"] | 15;
+  config.PowerMon.AlertPin = Config_PowerMon["AlertPin"] | 20;
+  config.PowerMon.ImonPin = Config_PowerMon["ImonPin"] | 255;
+  config.PowerMon.ImonRimonOhm = Config_PowerMon["ImonRimonOhm"] | 4530;
 }
 
 // Blank out secrets before a config document leaves the device (GET /api/config)
@@ -450,6 +464,27 @@ inline bool validateConfig(MainConfig &config) {
                      "homeassistant");
     corrected = true;
   }
+
+  // Aux power monitor: the INA226's 7-bit address space for A0/A1 strapping
+  // is 0x40-0x4F; anything else cannot be that part
+  if (config.PowerMon.Address < 0x40 || config.PowerMon.Address > 0x4F) {
+    config.PowerMon.Address = 0x40;
+    corrected = true;
+  }
+  // Shunt/LSB pairs whose CAL register does not fit 16 bits (or divides to
+  // zero) would program a silently-wrong scale; reset both to the driver
+  // board's values rather than guess which one is wrong
+  if (!ina226CalValid(config.PowerMon.ShuntMicroOhm, config.PowerMon.CurrentLsbMicroAmp)) {
+    config.PowerMon.ShuntMicroOhm = 10000;
+    config.PowerMon.CurrentLsbMicroAmp = 50;
+    corrected = true;
+  }
+  // Below 50 ms the I2C traffic starts to matter in the loop budget; there
+  // is no telemetry value in polling a 35 ms conversion faster than that
+  if (config.PowerMon.IntervalMs < 50) {
+    config.PowerMon.IntervalMs = 100;
+    corrected = true;
+  }
   return corrected;
 }
 
@@ -653,6 +688,19 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Thermal["OneWirePin"] = config.Thermal.OneWirePin;
   Config_Thermal["DerateStartC"] = config.Thermal.DerateStartC;
   Config_Thermal["DerateEndC"] = config.Thermal.DerateEndC;
+
+  JsonObject Config_PowerMon = doc["Config"]["PowerMon"].to<JsonObject>();
+  Config_PowerMon["Enabled"] = config.PowerMon.Enabled;
+  Config_PowerMon["Address"] = config.PowerMon.Address;
+  Config_PowerMon["ShuntMicroOhm"] = config.PowerMon.ShuntMicroOhm;
+  Config_PowerMon["CurrentLsbMicroAmp"] = config.PowerMon.CurrentLsbMicroAmp;
+  Config_PowerMon["AlertMilliAmp"] = config.PowerMon.AlertMilliAmp;
+  Config_PowerMon["IntervalMs"] = config.PowerMon.IntervalMs;
+  Config_PowerMon["PgEfusePin"] = config.PowerMon.PgEfusePin;
+  Config_PowerMon["PgBuckPin"] = config.PowerMon.PgBuckPin;
+  Config_PowerMon["AlertPin"] = config.PowerMon.AlertPin;
+  Config_PowerMon["ImonPin"] = config.PowerMon.ImonPin;
+  Config_PowerMon["ImonRimonOhm"] = config.PowerMon.ImonRimonOhm;
 }
 
 #endif

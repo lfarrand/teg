@@ -8,6 +8,7 @@
 #include "mppt.h"
 #include "mqtt.h"
 #include "thermal.h"
+#include "power_monitor.h"
 #include "waveform.h"
 #include "waveform_parse.h"
 #include "utils.h"
@@ -426,6 +427,9 @@ void applyPwmConfig(const MainConfig &previous) {
   }
   if (memcmp(&previous.Mqtt, &config.Mqtt, sizeof(config.Mqtt)) != 0) {
     mqttConfigure(); // reconnect with the new broker settings
+  }
+  if (memcmp(&previous.PowerMon, &config.PowerMon, sizeof(config.PowerMon)) != 0) {
+    powerMonitorConfigure(); // re-probe the INA226 with the new settings
   }
   // A refused clear leaves the trip latched, but the reconfigures above may
   // have re-enabled timers: re-assert the trip's masking so the applied

@@ -23,6 +23,7 @@
 #include "mppt.h"
 #include "mqtt.h"
 #include "ota.h"
+#include "power_monitor.h"
 #include "event_log_api.h"
 #include "mtp_service.h"
 #include "utils.h"
@@ -286,6 +287,8 @@ void setup() {
 
   thermalConfigure();
 
+  powerMonitorConfigure();
+
   printStats();
 
   reportMemoryUsage();
@@ -359,6 +362,11 @@ void loop() {
     mpptTask();
 
     acmpTask();
+
+    // Before metrics/MQTT so both publish this pass's readings. Deliberately
+    // not in serviceControlTasks(): telemetry, not control - a stalled
+    // handler pass can miss aux polls without consequence.
+    powerMonitorTask();
 
     metricsTask();
 

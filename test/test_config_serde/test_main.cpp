@@ -725,6 +725,74 @@ void test_validate_mppt() {
   TEST_ASSERT_TRUE(cfg.Mppt.Enabled); // MPPT alone is fine (PLL too)
 }
 
+void test_power_mon_serde_and_validate() {
+  // JSON fallbacks land on the compiled defaults (both zero-file paths agree)
+  MainConfig compiled;
+  MainConfig fromEmpty;
+  JsonDocument empty;
+  configFromJson(empty, fromEmpty);
+  TEST_ASSERT_EQUAL(compiled.PowerMon.Enabled, fromEmpty.PowerMon.Enabled);
+  TEST_ASSERT_EQUAL_UINT8(compiled.PowerMon.Address, fromEmpty.PowerMon.Address);
+  TEST_ASSERT_EQUAL_UINT32(compiled.PowerMon.ShuntMicroOhm, fromEmpty.PowerMon.ShuntMicroOhm);
+  TEST_ASSERT_EQUAL_UINT16(compiled.PowerMon.CurrentLsbMicroAmp,
+                           fromEmpty.PowerMon.CurrentLsbMicroAmp);
+  TEST_ASSERT_EQUAL_UINT16(compiled.PowerMon.AlertMilliAmp, fromEmpty.PowerMon.AlertMilliAmp);
+  TEST_ASSERT_EQUAL_UINT16(compiled.PowerMon.IntervalMs, fromEmpty.PowerMon.IntervalMs);
+  TEST_ASSERT_EQUAL_UINT8(compiled.PowerMon.PgEfusePin, fromEmpty.PowerMon.PgEfusePin);
+  TEST_ASSERT_EQUAL_UINT8(compiled.PowerMon.PgBuckPin, fromEmpty.PowerMon.PgBuckPin);
+  TEST_ASSERT_EQUAL_UINT8(compiled.PowerMon.AlertPin, fromEmpty.PowerMon.AlertPin);
+  TEST_ASSERT_EQUAL_UINT8(compiled.PowerMon.ImonPin, fromEmpty.PowerMon.ImonPin);
+  TEST_ASSERT_EQUAL_UINT16(compiled.PowerMon.ImonRimonOhm, fromEmpty.PowerMon.ImonRimonOhm);
+
+  // Round trip with distinctive values
+  MainConfig cfg;
+  cfg.PowerMon.Enabled = true;
+  cfg.PowerMon.Address = 0x44;
+  cfg.PowerMon.ShuntMicroOhm = 5000;
+  cfg.PowerMon.CurrentLsbMicroAmp = 100;
+  cfg.PowerMon.AlertMilliAmp = 2000;
+  cfg.PowerMon.IntervalMs = 250;
+  cfg.PowerMon.PgEfusePin = 26;
+  cfg.PowerMon.PgBuckPin = 27;
+  cfg.PowerMon.AlertPin = 255;
+  cfg.PowerMon.ImonPin = 38;
+  cfg.PowerMon.ImonRimonOhm = 5360;
+  JsonDocument doc;
+  configToJson(cfg, doc);
+  MainConfig back;
+  configFromJson(doc, back);
+  TEST_ASSERT_TRUE(back.PowerMon.Enabled);
+  TEST_ASSERT_EQUAL_UINT8(0x44, back.PowerMon.Address);
+  TEST_ASSERT_EQUAL_UINT32(5000, back.PowerMon.ShuntMicroOhm);
+  TEST_ASSERT_EQUAL_UINT16(100, back.PowerMon.CurrentLsbMicroAmp);
+  TEST_ASSERT_EQUAL_UINT16(2000, back.PowerMon.AlertMilliAmp);
+  TEST_ASSERT_EQUAL_UINT16(250, back.PowerMon.IntervalMs);
+  TEST_ASSERT_EQUAL_UINT8(26, back.PowerMon.PgEfusePin);
+  TEST_ASSERT_EQUAL_UINT8(27, back.PowerMon.PgBuckPin);
+  TEST_ASSERT_EQUAL_UINT8(255, back.PowerMon.AlertPin);
+  TEST_ASSERT_EQUAL_UINT8(38, back.PowerMon.ImonPin);
+  TEST_ASSERT_EQUAL_UINT16(5360, back.PowerMon.ImonRimonOhm);
+
+  // Validation: a non-INA226 address, an unrepresentable CAL pair, and a
+  // too-fast interval are all corrected to the driver-board defaults
+  back.PowerMon.Address = 0x23;
+  TEST_ASSERT_TRUE(validateConfig(back));
+  TEST_ASSERT_EQUAL_UINT8(0x40, back.PowerMon.Address);
+
+  back.PowerMon.ShuntMicroOhm = 1; // CAL would overflow 16 bits
+  back.PowerMon.CurrentLsbMicroAmp = 1;
+  TEST_ASSERT_TRUE(validateConfig(back));
+  TEST_ASSERT_EQUAL_UINT32(10000, back.PowerMon.ShuntMicroOhm);
+  TEST_ASSERT_EQUAL_UINT16(50, back.PowerMon.CurrentLsbMicroAmp);
+
+  back.PowerMon.IntervalMs = 10;
+  TEST_ASSERT_TRUE(validateConfig(back));
+  TEST_ASSERT_EQUAL_UINT16(100, back.PowerMon.IntervalMs);
+
+  // A config validateConfig has already corrected passes unchanged
+  TEST_ASSERT_FALSE(validateConfig(back));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_defaults_from_empty_document);
@@ -751,5 +819,6 @@ int main() {
   RUN_TEST(test_validate_current_limit);
   RUN_TEST(test_validate_pll);
   RUN_TEST(test_validate_mppt);
+  RUN_TEST(test_power_mon_serde_and_validate);
   return UNITY_END();
 }

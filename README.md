@@ -594,6 +594,30 @@ end* — the derate factor acts as a ceiling on both open-loop settings and the
 closed-loop PI output, and the soft-start slew limit shapes recovery. Live
 temperatures and the active derate factor appear in the status bar.
 
+## Driver board power monitor
+
+Reads the MOSFET driver board's built-in aux-power telemetry: its on-board
+INA226 sits across a 10 mΩ shunt at the board's 14–26 V DC input, ahead of
+the eFuse, so one sensor reports the **total** board draw — gate drive,
+isolated supplies, buck/LDO and logic together. The link is the board's J5
+header (GND/SDA/SCL/ALERT) on **Wire2** (pins 24 SCL2 / 25 SDA2 — its own
+bus, so a fault on the off-board loom cannot take the OLED down), with
+2.2 kΩ pull-ups fitted at this end (the driver board carries none). Optional
+taps: the TPS25983 eFuse and TPSM84338 buck power-good signals (3.3 V logic)
+on two GPIOs with edges timestamped into the event log, and the eFuse's
+analog IMON current mirror on an ADC pin once R\_IMON is fitted on the driver
+board (read only while waveform capture does not own the ADC modules; the
+INA226 remains the current reference either way).
+
+Voltage, current, power and integrated energy appear on the Stats page, in
+`/api/status` (`aux*` keys), in the InfluxDB line (`aux_*` fields) and as four
+Home Assistant sensors via MQTT discovery. A latched INA226 shunt-overcurrent
+alert (default 1.5 A) is polled so trips between passes are never missed, and
+lands in the event log. The INA226 is hot-pluggable: probe failures retry
+every 5 s, degraded-mode style. Scaling math lives in `power_monitor_math.h`
+(natively tested); wiring details are in the driver-board repo's
+`POWER_MONITORING_DESIGN_2026-08-01.md`.
+
 ## Reliability
 
 - **Degraded-mode boot**: a missing SD card, OLED, or DHCP lease no longer

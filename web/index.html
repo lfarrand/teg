@@ -145,6 +145,24 @@
   </article>
 
   <article>
+    <header>Driver Board Power Monitor</header>
+    <label><input type="checkbox" role="switch" data-path="PowerMon.Enabled"> Read the MOSFET driver board's on-board INA226 (total aux draw at its DC input) over Wire2 (pins 24&thinsp;SCL2 / 25&thinsp;SDA2) plus the eFuse/buck PG taps</label>
+    <div class="grid-fields">
+      <label>I2C address <input type="number" data-path="PowerMon.Address" min="64" max="79"></label>
+      <label>Shunt &micro;&Omega; <input type="number" data-path="PowerMon.ShuntMicroOhm" min="100" max="1000000"></label>
+      <label>Current LSB &micro;A <input type="number" data-path="PowerMon.CurrentLsbMicroAmp" min="1" max="10000"></label>
+      <label>Alert mA (0 off) <input type="number" data-path="PowerMon.AlertMilliAmp" min="0" max="65535"></label>
+      <label>Poll ms <input type="number" data-path="PowerMon.IntervalMs" min="50" max="65535"></label>
+      <label>eFuse PG pin (255 off) <input type="number" data-path="PowerMon.PgEfusePin" min="0" max="255"></label>
+      <label>Buck PG pin (255 off) <input type="number" data-path="PowerMon.PgBuckPin" min="0" max="255"></label>
+      <label>Alert pin (255 off) <input type="number" data-path="PowerMon.AlertPin" min="0" max="255"></label>
+      <label>IMON pin (255 off) <input type="number" data-path="PowerMon.ImonPin" min="0" max="255"></label>
+      <label>IMON R &Omega; <input type="number" data-path="PowerMon.ImonRimonOhm" min="100" max="65535"></label>
+    </div>
+    <p class="hint">Defaults match the driver board: 10&thinsp;m&Omega; shunt R24, address 0x40 (JP2+JP6 bridged), 2.2&thinsp;k&Omega; I2C pull-ups needed at this end. IMON requires R_IMON fitted on the driver board and stays off while waveform capture owns the ADCs. Live charts appear on the Stats page.</p>
+  </article>
+
+  <article>
     <header>Waveform Capture</header>
     <label><input type="checkbox" role="switch" data-path="Capture.Enabled"> Sample the feedback pin every carrier cycle into PSRAM (~52&thinsp;s of history; freezes on fault trip)</label>
     <div style="display:flex;gap:0.8rem;align-items:center;margin-bottom:0.6rem">

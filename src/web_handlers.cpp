@@ -4,6 +4,7 @@
 #include "pwm_utils.h"
 #include "capture.h"
 #include "meter.h"
+#include "power_monitor.h"
 #include "acmp.h"
 #include "pll.h"
 #include "mppt.h"
@@ -957,6 +958,30 @@ void api_status(Request &req, Response &res) {
     doc["irmsMa"] = meter.irmsMa;
     doc["pfMilli"] = meter.pfMilli;
     doc["energyMwh"] = meterEnergyMwh();
+  }
+  // Aux power monitor: the driver board's own supply telemetry (INA226 over
+  // Wire2 plus eFuse PG/IMON taps)
+  doc["auxMonEnabled"] = config.PowerMon.Enabled;
+  if (config.PowerMon.Enabled) {
+    const PowerMonReadings aux = powerMonReadings();
+    doc["auxMonOnline"] = aux.valid;
+    if (aux.valid) {
+      doc["auxBusMv"] = aux.busMv;
+      doc["auxCurrentMa"] = aux.currentMa;
+      doc["auxPowerMw"] = aux.powerMw;
+      doc["auxEnergyMwh"] = powerMonEnergyMwh();
+      doc["auxPeakMa"] = powerMonPeakMa();
+      if (aux.imonMa >= 0) {
+        doc["auxImonMa"] = aux.imonMa;
+      }
+    }
+    if (config.PowerMon.PgEfusePin != 255) {
+      doc["auxPgEfuse"] = aux.pgEfuse;
+    }
+    if (config.PowerMon.PgBuckPin != 255) {
+      doc["auxPgBuck"] = aux.pgBuck;
+    }
+    doc["auxAlert"] = aux.alert;
   }
   // Measured feedback voltage: synchronous capture mean when available,
   // otherwise a direct (10-bit) read of the configured pin

@@ -218,6 +218,26 @@ struct ThermalConfig {
   uint8_t DerateEndC = 90;
 };
 
+// Aux power monitor: the MOSFET driver board's built-in telemetry (INA226
+// across the 10 mOhm input shunt R24, TPS25983 IMON/PG) read over Wire2
+// (pins 24/25) and surfaced on /api/status, MQTT and InfluxDB. Pin value
+// 255 = that signal not wired. ImonPin stays off (255) by default: it needs
+// R_IMON fitted on the driver board AND the ADC modules free (see
+// power_monitor.cpp - the capture ISR owns both when Capture.Enabled).
+struct PowerMonConfig {
+  bool Enabled = false;
+  uint8_t Address = 0x40;              // JP2+JP6 bridged on the driver board
+  uint32_t ShuntMicroOhm = 10000;      // R24 = 10 mOhm
+  uint16_t CurrentLsbMicroAmp = 50;    // 50 uA/bit -> CAL 10240, FS 1.64 A
+  uint16_t AlertMilliAmp = 1500;       // latched shunt alert; 0 disables
+  uint16_t IntervalMs = 100;           // I2C poll cadence
+  uint8_t PgEfusePin = 14;             // TPS259_PG tap (3.3 V logic)
+  uint8_t PgBuckPin = 15;              // TPSM843_PG tap
+  uint8_t AlertPin = 20;               // INA226 ALERT, open-drain
+  uint8_t ImonPin = 255;               // e.g. 38 once R_IMON is fitted
+  uint16_t ImonRimonOhm = 4530;        // R_IMON -> 1.101 V/A at 243 uA/A
+};
+
 struct PwmConfig {
   Module1Config Tm1;
   Module2Config Tm2;
@@ -243,6 +263,7 @@ struct MainConfig {
   PllConfig Pll;
   MpptConfig Mppt;
   ThermalConfig Thermal;
+  PowerMonConfig PowerMon;
 };
 
 extern MainConfig config;

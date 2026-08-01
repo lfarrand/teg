@@ -22,6 +22,7 @@
 #include "pwm_utils.h"
 #include "thermal.h"
 #include "meter.h"
+#include "power_monitor.h"
 #include "pll.h"
 #include "utils.h"
 #include "main.h"
@@ -47,6 +48,7 @@ static elapsedMillis sincePublish;
 static uint32_t backoffMs = 10000;
 static uint32_t publishFailures = 0;
 static uint64_t energyHighWaterMwh = 0;
+static uint64_t auxEnergyHighWaterMwh = 0;
 
 static void ensureNodeId() {
   if (nodeId[0] == '\0') {
@@ -144,6 +146,21 @@ static void publishState() {
   v.derateMilli = thermalDerateMilliNow();
   v.fault = vFaultTripped;
   v.pllState = pllStateStr();
+  const PowerMonReadings aux = powerMonReadings();
+  v.auxValid = aux.valid;
+  if (aux.valid) {
+    v.auxPowerMw = aux.powerMw;
+    v.auxBusMv = aux.busMv;
+    v.auxCurrentMa = aux.currentMa;
+    // Same monotonic guard as the meter energy: HA's total_increasing reads
+    // a dip as a meter reset and double-counts the recovery
+    const uint64_t ae = powerMonEnergyMwh();
+    if (ae > auxEnergyHighWaterMwh) {
+      auxEnergyHighWaterMwh = ae;
+    }
+    v.auxEnergyMwh = auxEnergyHighWaterMwh;
+    v.auxAlert = aux.alert;
+  }
 
   JsonDocument doc;
   mqttBuildState(doc, v);

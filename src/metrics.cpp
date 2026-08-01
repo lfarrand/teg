@@ -11,7 +11,7 @@
 
 extern MainConfig config;
 
-void metricsTask() {
+FLASHMEM void metricsTask() {
   if (config.Influx.Token[0] == '\0' || config.Influx.IntervalSeconds == 0) {
     return;
   }

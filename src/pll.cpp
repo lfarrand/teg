@@ -16,9 +16,9 @@
 // Timing model: the drained backlog was generated under the increment that
 // was live when those samples were recorded, so the mirror advances with the
 // SNAPSHOT increment for the whole batch, while updated commands are written
-// per chunk (they only affect future samples). A backlog older than 1/4s
-// resyncs instead - draining a long-stale window through the loop filter is
-// the demonstrated-unstable regime, and honesty beats heroics there.
+// per chunk (they only affect future samples). A backlog larger than one task
+// pass (or 1/4s at a low carrier) resyncs instead: without an increment history,
+// a multi-pass backlog cannot be paired with truthful historical phase.
 
 #include "pll.h"
 #include "pll_math.h"
@@ -112,8 +112,8 @@ void pllConfigure() {
   // clean re-acquire from nominal instead.
   if (wasSteering && !carrierChanged) {
     double f = heldHz;
-    if (f < params.minHz) f = params.minHz;
-    if (f > params.maxHz) f = params.maxHz;
+    if (f < static_cast<double>(params.minHz)) f = params.minHz;
+    if (f > static_cast<double>(params.maxHz)) f = params.maxHz;
     st.fHat = f;
     st.fCmd = static_cast<float>(f);
     st.fBar = static_cast<float>(f);
@@ -178,10 +178,10 @@ void pllTask() {
     }
     return;
   }
-  if (lag > carrier / 4) {
-    // Stall backlog beyond 250ms (or a counter reset): draining it through
-    // the loop filter is unstable and the phase pairing is stale - drop it,
-    // keep the frequency estimate, re-acquire
+  if (lag > pllBacklogLimit(carrier)) {
+    // Long stall/counter reset: every accepted backlog is drained in this pass.
+    // Anything larger would span multiple increment writes and make the next
+    // pass reconstruct old samples using a new increment.
     cursor = t;
     resyncs++;
     dropLock();
@@ -198,7 +198,7 @@ void pllTask() {
   static uint16_t buf[512];
   uint32_t processed = 0;
   uint32_t n;
-  while (processed < 4096 && (n = captureReadSince(&cursor, buf, 512)) > 0) {
+  while (processed < PllMaxDrainSamples && (n = captureReadSince(&cursor, buf, 512)) > 0) {
     for (uint32_t i = 0; i < n; i++) {
       const float theta = static_cast<float>(mirror) * (PllTwoPi / 4294967296.0f) - offsetRad;
       pllStep(st, params, buf[i], theta);

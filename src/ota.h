@@ -10,13 +10,15 @@
 #include <Arduino.h>
 
 bool otaInProgress();     // safe state entered; cleared only by reset
+bool otaReleaseEnabled(); // false in production unless unsafe lab flag is explicit
 bool otaImageVerified();
 uint32_t otaImageSize();
 uint32_t otaReceivedBytes();
 uint32_t otaLineCount();
 const char *otaLastError(); // "" when none
 
-bool otaIngestStream(Stream &in, const char **err, void (*progress)());
+bool otaIngestStream(Stream &in, uint32_t expectedBytes, const char **err,
+                     void (*progress)());
 bool otaRequestCommit(uint32_t confirmSize); // false unless verified + size echo matches
 void otaRequestAbort();
 void otaLoopTask(); // executes deferred commit/abort AFTER the HTTP response flushed

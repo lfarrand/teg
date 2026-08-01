@@ -39,7 +39,7 @@ uint8_t uid64[8];
 
 SdFs sd;
 
-byte mac[] = {0x04, 0xE9, 0xE5, 0x14, 0x7C, 0xB0};
+static char hostname[20] = "teg";
 
 EthernetServer server(80);
 Application app;
@@ -133,14 +133,12 @@ static void persistCrashReport() {
 void configureSdCard() {
   sdAvailable = sd.begin(FIFO_SDIO);
   if (!sdAvailable) {
-    Serial.println(F("SD init failed - running on default config, saves disabled"));
+    Serial.println(F("SD init failed - PWM outputs remain inhibited; saves disabled"));
   }
 }
 
-void loadSettings() {
-  if (sdAvailable) {
-    loadConfiguration(filename);
-  }
+bool loadSettings() {
+  return sdAvailable && loadConfiguration(filename);
 }
 
 void configureEthernet() {
@@ -148,17 +146,24 @@ void configureEthernet() {
   // IP can appear in the boot log), then continue regardless -
   // networkHousekeeping() reports when the lease eventually arrives, and
   // QNEthernet's DHCP client keeps retrying in the background.
-  Ethernet.begin(mac);
+  // QNEthernet obtains the Teensy's factory MAC from OCOTP. Do not pass a
+  // project-wide literal: two controllers must be able to share one LAN.
+  snprintf(hostname, sizeof(hostname), "teg-%02x%02x%02x%02x",
+           serial[0], serial[1], serial[2], serial[3]);
+  Ethernet.setHostname(hostname);
+  Ethernet.begin();
   if (!Ethernet.waitForLocalIP(kDHCPTimeout)) {
     Serial.println(F("No DHCP lease yet - continuing, will report when up"));
   }
   server.begin();
 
-  // mDNS: reachable as http://teg.local without knowing the DHCP address
-  if (MDNS.begin("teg")) {
+  // Per-device mDNS and DHCP names avoid collisions on multi-controller LANs.
+  if (MDNS.begin(hostname)) {
     MDNS.addService("_http", "_tcp", 80);
   }
 }
+
+const char *networkHostname() { return hostname; }
 
 static void networkHousekeeping() {
   static bool wasUp = false;
@@ -196,10 +201,16 @@ void configureNtp() {
   ntpUDP.begin(8888);
 }
 
-void setup() {
+FLASHMEM void setup() {
   Serial.begin(9600);
 
   captureBootDiagnostics();
+
+  // Arm the hardware watchdog before SD, display, DHCP or filesystem work. Every
+  // later bounded wait services it; a hang cannot leave stale PWM running forever.
+  enableWatchdog();
+  const uint32_t unsafeResetMask = (1u << 1) | (1u << 4) | (1u << 7) | (1u << 8);
+  setPwmRestartInhibit((bootResetStatus & unsafeResetMask) != 0 || crashText[0] != '\0');
 
   stdPrint = &Serial;
 
@@ -231,7 +242,10 @@ void setup() {
   teensySN(serial);
   teensyUID64(uid64);
 
-  delay(2000);
+  for (uint8_t i = 0; i < 20; ++i) {
+    delay(100);
+    kickWatchdog();
+  }
 
   Serial.printf("USB Serial: %u \n", teensyUsbSN());
   Serial.printf("Teensy Serial: %02X-%02X-%02X-%02X \n", serial[0], serial[1], serial[2], serial[3]);
@@ -244,9 +258,17 @@ void setup() {
 
   persistCrashReport();
 
-  loadSettings();
+  const bool settingsLoaded = loadSettings();
 
-  waveformLoadFromSd();
+  // EXTMEM-backed waveform/capture arrays must not be touched until the core's
+  // PSRAM probe and our data test both pass. This firmware allocates >7MB there;
+  // an unpopulated/failed chip is a hard hardware prerequisite, not a feature
+  // that can safely degrade at run time.
+  const bool havePsram = initMemory();
+  setPwmHardwareInhibit(!havePsram);
+  if (havePsram) {
+    waveformLoadFromSd();
+  }
 
   // Make the core's analogRead() agree with the hardware. captureConfigure()
   // programs both ADC modules to 12 bits directly, so every analogRead() already
@@ -254,12 +276,16 @@ void setup() {
   // guaranteed rather than incidental. See AdcCountFullScale in capture.h.
   analogReadResolution(12);
 
-  initMemory();
-
-  // Before the network comes up: an unconfigured board would otherwise accept
-  // unauthenticated writes - including a firmware upload - for the window between
-  // the interface appearing and this running.
-  writePinEnsure(filename);
+  // Establish durable credential state before the network comes up. An empty or
+  // unpersisted PIN remains fail-closed, and the provisioning interlock keeps every
+  // PWM output disconnected until both full settings and PIN survive read-back.
+  const bool provisioningReady = writePinEnsure(filename, settingsLoaded);
+  setPwmProvisioningInhibit(!provisioningReady);
+  // A generated PIN may be valid in RAM while its first SD write failed. Keep
+  // outputs dark and retry the complete, read-back-verified save from loop().
+  if (!provisioningReady && config.Security.WritePin[0] != '\0') {
+    configSaveNeeded = true;
+  }
 
   configureEthernet();
 
@@ -267,13 +293,15 @@ void setup() {
 
   configureNtp();
 
+  // Prime every synchronous DNS lookup while outputs are still inhibited.
+  // Reconnect paths defer hostname resolution until the next maintenance
+  // window, so a dead resolver can never freeze live modulation for seconds.
+  ntpTask();
+  prepareInfluxEndpoint();
+  mqttConfigure();
+  mqttTask();
+
   configurePwm();
-
-  attachInterruptVectors();
-
-  if (config.Pwm.SyncPwm) {
-    enableXbar();
-  }
 
   configureFaultProtection();
 
@@ -289,11 +317,14 @@ void setup() {
 
   powerMonitorConfigure();
 
+  // Normal power-on/external reset starts only after every protection source has
+  // been armed and sampled. Watchdog, lockup, overtemperature and crash restarts
+  // remain inhibited until POST /api/fault/clear authenticates an operator.
+  clearFaultTrip(false);
+
   printStats();
 
   reportMemoryUsage();
-
-  enableWatchdog();
 
   // LAST: MTP.begin() arms an interval timer whose handler queries the
   // filesystem from interrupt context, so nothing else may touch the card
@@ -332,6 +363,7 @@ void serviceControlTasks() {
   meterTask();
   mpptTask();
   acmpTask();
+  powerMonitorTask(); // retain PG/ALERT edges and meter continuity during long streams
 }
 
 void loop() {
@@ -363,9 +395,10 @@ void loop() {
 
     acmpTask();
 
-    // Before metrics/MQTT so both publish this pass's readings. Deliberately
-    // not in serviceControlTasks(): telemetry, not control - a stalled
-    // handler pass can miss aux polls without consequence.
+    // Before metrics/MQTT so both publish this pass's readings. This same
+    // interval-gated task also runs from serviceControlTasks(), so long
+    // capture/waveform transfers cannot lose PG/ALERT edges or bridge an
+    // unobserved energy interval.
     powerMonitorTask();
 
     metricsTask();
@@ -377,17 +410,32 @@ void loop() {
 
   static bool faultReported = false;
   if (vFaultTripped && !faultReported) {
-    writeLogLevel(EventError, "FAULT TRIP: all PWM outputs disabled (save settings to clear)");
+    writeLogLevel(EventError,
+                  "FAULT TRIP: all PWM outputs disabled (authenticated explicit clear required)");
     faultReported = true;
   } else if (!vFaultTripped) {
     faultReported = false;
   }
 
   if (configSaveNeeded) {
-    configSaveNeeded = false;
-    saveConfiguration(filename);
-    if (config.Pwm.Verbose) {
-      printFile(filename);
+    static uint32_t nextSaveAttempt = 0;
+    if (static_cast<int32_t>(millis() - nextSaveAttempt) >= 0) {
+      if (saveConfiguration(filename)) {
+        configSaveNeeded = false;
+        if (pwmProvisioningInhibited() && config.Security.WritePin[0] != '\0') {
+          // saveConfiguration() returned only after parsing the bytes back and
+          // promoting the complete document. Release this interlock last.
+          setPwmProvisioningInhibit(false);
+          clearFaultTrip(false); // other interlocks may still correctly refuse
+        }
+        if (config.Pwm.Verbose) {
+          printFile(filename);
+        }
+      } else {
+        // Keep the dirty flag set, but do not hammer a missing/failing card on
+        // every loop pass.
+        nextSaveAttempt = millis() + 5000;
+      }
     }
   }
 

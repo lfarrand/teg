@@ -138,6 +138,25 @@ void test_thd_guards() {
   TEST_ASSERT_EQUAL_FLOAT(0.0f, thdPercent(mag, 64, 40));
 }
 
+void test_noncoherent_high_order_harmonic_is_not_missed() {
+  const uint32_t n = 4096;
+  const float cycles = 25.37f;
+  for (uint32_t i = 0; i < n; ++i) {
+    const float phase = 6.28318530717958648f * cycles * i / n;
+    // The seventh harmonic is 2.6 bins away from 7*round(f1), which defeated
+    // the old integer-bin +/-1 search.
+    samples[i] = static_cast<int16_t>(2048.0f + 1300.0f * sinf(phase) +
+                                      130.0f * sinf(7.0f * phase));
+  }
+  prepareSpectrumInput(samples, n, re, im);
+  fftRadix2(re, im, n);
+  spectrumMagnitudes(re, im, mag, n / 2);
+  const uint32_t fundamental = findFundamentalBin(mag, n / 2);
+  const float fractional = spectrumFractionalPeakBin(mag, n / 2, fundamental);
+  TEST_ASSERT_FLOAT_WITHIN(0.20f, cycles, fractional);
+  TEST_ASSERT_FLOAT_WITHIN(1.0f, 10.0f, thdPercent(mag, n / 2, fundamental, 10));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_fft_impulse_is_flat);
@@ -148,5 +167,6 @@ int main() {
   RUN_TEST(test_packed_magnitudes_match_complex_layout);
   RUN_TEST(test_real_and_complex_prep_agree);
   RUN_TEST(test_thd_guards);
+  RUN_TEST(test_noncoherent_high_order_harmonic_is_not_missed);
   return UNITY_END();
 }

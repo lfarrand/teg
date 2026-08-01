@@ -36,6 +36,14 @@ static volatile bool commitPending = false;
 static volatile bool rebootPending = false;
 static void (*progressFn)() = nullptr;
 
+bool otaReleaseEnabled() {
+#ifdef TEG_ENABLE_UNSAFE_LAB_OTA
+  return true;
+#else
+  return false;
+#endif
+}
+
 // Kick the watchdog ahead of each staging-sector erase (up to 400ms each)
 static void eraseWithKick(uint32_t addr) {
   if (progressFn != nullptr) {
@@ -73,7 +81,18 @@ const char *otaLastError() {
   return lastError;
 }
 
-bool otaIngestStream(Stream &in, const char **err, void (*progress)()) {
+bool otaIngestStream(Stream &in, uint32_t expectedBytes, const char **err,
+                     void (*progress)()) {
+  if (!otaReleaseEnabled()) {
+    lastError = "OTA disabled in production build";
+    if (err) *err = lastError;
+    return false;
+  }
+  if (expectedBytes == 0) {
+    lastError = "Content-Length required";
+    if (err) *err = lastError;
+    return false;
+  }
   // Safe state first: outputs masked, modulation IRQ off, tasks idled by
   // the loop() gate. Only a reboot leaves this state.
   if (!active) {
@@ -85,18 +104,23 @@ bool otaIngestStream(Stream &in, const char **err, void (*progress)()) {
   otaIngestInit(ing);
   progressFn = progress;
 
-  uint32_t idleSpins = 0;
   uint32_t sinceKick = 0;
+  uint32_t received = 0;
+  uint32_t lastProgressMs = millis();
   bool streamOk = true;
-  for (;;) {
+  while (received < expectedBytes) {
     const int c = in.read();
     if (c < 0) {
-      if (++idleSpins < 200000) {
-        continue;
+      if (progress != nullptr) progress();
+      if (millis() - lastProgressMs > 5000U) {
+        ing.error = "upload stalled before Content-Length bytes arrived";
+        streamOk = false;
+        break;
       }
-      break; // body exhausted
+      continue;
     }
-    idleSpins = 0;
+    received++;
+    lastProgressMs = millis();
     if (!otaFeedByte(ing, static_cast<char>(c), hwOps)) {
       streamOk = false;
       break;
@@ -140,7 +164,7 @@ bool otaIngestStream(Stream &in, const char **err, void (*progress)()) {
 }
 
 bool otaRequestCommit(uint32_t confirmSize) {
-  if (!verified || confirmSize != verifiedSize) {
+  if (!otaReleaseEnabled() || !verified || confirmSize != verifiedSize) {
     return false;
   }
   commitPending = true;
@@ -148,7 +172,7 @@ bool otaRequestCommit(uint32_t confirmSize) {
 }
 
 void otaRequestAbort() {
-  if (!active) {
+  if (!otaReleaseEnabled() || !active) {
     return;
   }
   verified = false;

@@ -24,10 +24,10 @@ void test_consumes_and_flips_buffers() {
   for (int i = 0; i < 4; i++) {
     TEST_ASSERT_EQUAL_INT16(100 + i, ring.next(bufs));
   }
-  TEST_ASSERT_FALSE(ring.refillNeeded[0]);
+  TEST_ASSERT_FALSE(ring.refillNeeded(0));
   // Next sample flips to buffer 1 and flags 0 for refill
   TEST_ASSERT_EQUAL_INT16(200, ring.next(bufs));
-  TEST_ASSERT_TRUE(ring.refillNeeded[0]);
+  TEST_ASSERT_TRUE(ring.refillNeeded(0));
   TEST_ASSERT_EQUAL_UINT32(0, ring.underruns);
 }
 
@@ -52,8 +52,8 @@ void test_underrun_holds_last_sample_and_recovers() {
   TEST_ASSERT_EQUAL_INT16(101, ring.next(bufs)); // hold
   TEST_ASSERT_EQUAL_INT16(101, ring.next(bufs)); // still holding
   TEST_ASSERT_EQUAL_UINT32(2, ring.underruns);
-  TEST_ASSERT_TRUE(ring.refillNeeded[0]);
-  TEST_ASSERT_TRUE(ring.refillNeeded[1]);
+  TEST_ASSERT_TRUE(ring.refillNeeded(0));
+  TEST_ASSERT_TRUE(ring.refillNeeded(1));
   // Recovery once the loop refills
   ring.markFilled(1, 2);
   TEST_ASSERT_EQUAL_INT16(200, ring.next(bufs));
@@ -64,10 +64,20 @@ void test_reset_clears_everything() {
   ring.markFilled(0, 4);
   ring.next(bufs);
   ring.reset();
-  TEST_ASSERT_EQUAL_UINT16(0, ring.valid[0]);
+  TEST_ASSERT_EQUAL_UINT16(0, ring.validCount(0));
   TEST_ASSERT_EQUAL_UINT32(0, ring.underruns);
   TEST_ASSERT_EQUAL_INT16(0, ring.next(bufs)); // empty: holds the reset value
   TEST_ASSERT_EQUAL_UINT32(1, ring.underruns);
+}
+
+void test_refill_claim_prevents_duplicate_producers() {
+  ring.markFilled(0, 1);
+  ring.next(bufs);
+  ring.next(bufs); // exhausts 0 and requests both empty buffers
+  TEST_ASSERT_TRUE(ring.beginRefill(0));
+  TEST_ASSERT_FALSE(ring.beginRefill(0));
+  ring.markFilled(0, 2);
+  TEST_ASSERT_EQUAL_UINT16(2, ring.validCount(0));
 }
 
 int main() {
@@ -76,5 +86,6 @@ int main() {
   RUN_TEST(test_refill_during_playback_keeps_flowing);
   RUN_TEST(test_underrun_holds_last_sample_and_recovers);
   RUN_TEST(test_reset_clears_everything);
+  RUN_TEST(test_refill_claim_prevents_duplicate_producers);
   return UNITY_END();
 }

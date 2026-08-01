@@ -78,15 +78,34 @@ void test_deadtime_comp_magnitude_and_sign() {
 }
 
 void test_soft_start_ramp() {
-  TEST_ASSERT_EQUAL_UINT32(3, softStartStepQ15(32768, 500, 20000));
-  TEST_ASSERT_EQUAL_UINT32(1UL << 30, softStartStepQ15(32768, 0, 20000));
-  uint32_t idx = 0;
-  for (int i = 0; i < 12000 && idx != 32768; i++) {
-    idx = rampIndexQ15(idx, 32768, 3);
-    TEST_ASSERT_LESS_OR_EQUAL_UINT32(32768, idx);
+  const uint64_t step = softStartStepQ24(32768, 500, 20000);
+  TEST_ASSERT_TRUE(step > 0);
+  TEST_ASSERT_EQUAL_UINT64(SoftStartInstant, softStartStepQ24(32768, 0, 20000));
+  uint64_t idx = 0;
+  for (int i = 0; i < 10000; i++) {
+    idx = rampIndexQ24(idx, 32768, step);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT64(static_cast<uint64_t>(32768) << SoftStartFractionBits,
+                                     idx);
   }
-  TEST_ASSERT_EQUAL_UINT32(32768, idx);
-  TEST_ASSERT_EQUAL_UINT32(100, rampIndexQ15(102, 100, 3)); // no undershoot
+  TEST_ASSERT_EQUAL_UINT64(static_cast<uint64_t>(32768) << SoftStartFractionBits, idx);
+  TEST_ASSERT_EQUAL_UINT64(static_cast<uint64_t>(100) << SoftStartFractionBits,
+                           rampIndexQ24(static_cast<uint64_t>(102) << SoftStartFractionBits,
+                                        100, step)); // no undershoot
+
+  // Regression: the old integer-Q15 ramp always finished within 32768 cycles.
+  // A 60 s request at 200 kHz now remains fractional and reaches its target only
+  // after roughly twelve million ISR ticks.
+  const uint64_t longStep = softStartStepQ24(32768, 60000, 200000);
+  uint64_t longRamp = 0;
+  for (uint32_t i = 0; i < 32768; i++) {
+    longRamp = rampIndexQ24(longRamp, 32768, longStep);
+  }
+  TEST_ASSERT_TRUE(longRamp < (static_cast<uint64_t>(32768) << SoftStartFractionBits));
+  for (uint32_t i = 32768; i < 12000000; i++) {
+    longRamp = rampIndexQ24(longRamp, 32768, longStep);
+  }
+  TEST_ASSERT_EQUAL_UINT64(static_cast<uint64_t>(32768) << SoftStartFractionBits,
+                           longRamp);
 }
 
 // ---------------------------------------------------------------------------

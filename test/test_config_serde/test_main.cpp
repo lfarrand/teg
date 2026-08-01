@@ -325,6 +325,52 @@ void test_doc_completeness_gate() {
   }
 }
 
+void test_doc_completeness_checks_nested_keys_types_and_version() {
+  MainConfig cfg;
+  JsonDocument full;
+  configToJson(cfg, full);
+  TEST_ASSERT_TRUE(configDocComplete(full));
+  TEST_ASSERT_EQUAL_UINT32(1, full["SchemaVersion"].as<uint32_t>());
+
+  JsonDocument noNestedKey;
+  configToJson(cfg, noNestedKey);
+  noNestedKey["Config"]["Pwm"]["Tm2"]["Sm20"]["ChannelB"].as<JsonObject>().remove("DutyCycle");
+  TEST_ASSERT_FALSE(configDocComplete(noNestedKey));
+
+  JsonDocument wrongObjectType;
+  configToJson(cfg, wrongObjectType);
+  wrongObjectType["Config"]["CurrentLimit"] = 7;
+  TEST_ASSERT_FALSE(configDocComplete(wrongObjectType));
+
+  JsonDocument wrongScalarType;
+  configToJson(cfg, wrongScalarType);
+  wrongScalarType["Config"]["FaultProtection"]["Enabled"] = "yes";
+  TEST_ASSERT_FALSE(configDocComplete(wrongScalarType));
+
+  JsonDocument future;
+  configToJson(cfg, future);
+  future["SchemaVersion"] = 2;
+  TEST_ASSERT_FALSE(configDocComplete(future));
+
+  // A complete export from the immediately-pre-schema firmware remains
+  // importable; the next successful save adds SchemaVersion.
+  JsonDocument legacy;
+  configToJson(cfg, legacy);
+  legacy.remove("SchemaVersion");
+  TEST_ASSERT_TRUE(configDocComplete(legacy));
+}
+
+void test_shorter_config_string_clears_the_old_tail() {
+  char pin[12];
+  memset(pin, 0x5A, sizeof(pin));
+  copyConfigString(pin, sizeof(pin), "LONGERPIN");
+  copyConfigString(pin, sizeof(pin), "NEW");
+  TEST_ASSERT_EQUAL_STRING("NEW", pin);
+  for (size_t i = 4; i < sizeof(pin); i++) {
+    TEST_ASSERT_EQUAL_HEX8(0, static_cast<uint8_t>(pin[i]));
+  }
+}
+
 void test_pair_mode_roundtrips_per_submodule() {
   // Each submodule carries its own mode, so a save/load cycle must not smear one
   // submodule's setting onto another.
@@ -524,6 +570,12 @@ void test_compiled_defaults_are_safe_with_no_settings_file() {
   // wrong at some point, and each wrong value reached the power stage.
   MainConfig cfg;
 
+  // Special modulation and every optional software/hardware actuator are off.
+  TEST_ASSERT_FALSE(cfg.AsymmetricInduction.IsEnabled);
+  TEST_ASSERT_FALSE(cfg.Pwm.Tm2.UseSpwm);
+  TEST_ASSERT_FALSE(cfg.FaultProtection.Enabled);
+  TEST_ASSERT_FALSE(cfg.CurrentLimit.Enabled);
+
   // Zero frequency divided by zero in computeAsymmetricTimings, produced garbage edge
   // timings, and the outputs were enabled anyway.
   TEST_ASSERT_TRUE(cfg.Pwm.Tm2.Sm20.PwmFrequency >= 1);
@@ -533,6 +585,8 @@ void test_compiled_defaults_are_safe_with_no_settings_file() {
   // Outputs off, not half on.
   TEST_ASSERT_EQUAL_UINT16(0, cfg.Pwm.Tm2.Sm20.ChannelA.DutyCycle);
   TEST_ASSERT_EQUAL_UINT16(0, cfg.Pwm.Tm2.Sm20.ChannelB.DutyCycle);
+  TEST_ASSERT_EQUAL_UINT16(0, cfg.Pwm.Tm1.Sm13.ChannelA.DutyCycle);
+  TEST_ASSERT_EQUAL_UINT16(0, cfg.Pwm.Tm1.Sm13.ChannelB.DutyCycle);
   TEST_ASSERT_EQUAL_UINT16(0, cfg.Pwm.Tm4.Sm42.ChannelB.DutyCycle);
 
   // Every pair independent until an operator says otherwise.
@@ -562,15 +616,20 @@ void test_json_fallbacks_match_the_compiled_defaults() {
 
 void test_validate_clamps_pwm_frequency_on_every_submodule() {
   MainConfig cfg;
-  cfg.Pwm.Tm2.Sm20.PwmFrequency = 0;       // divide-by-zero downstream
+  cfg.Pwm.Tm2.Sm20.PwmFrequency = 0;       // stale mirror, canonical carrier wins
   cfg.Pwm.Tm4.Sm42.PwmFrequency = 5000000; // no usable duty resolution
   TEST_ASSERT_TRUE(validateConfig(cfg));
-  TEST_ASSERT_EQUAL_UINT32(1000, cfg.Pwm.Tm2.Sm20.PwmFrequency);
-  TEST_ASSERT_EQUAL_UINT32(1000, cfg.Pwm.Tm4.Sm42.PwmFrequency);
+  TEST_ASSERT_EQUAL_UINT32(DefaultModulationCarrierHz, cfg.Pwm.Tm2.Sm20.PwmFrequency);
+  TEST_ASSERT_EQUAL_UINT32(DefaultPwmFrequencyHz, cfg.Pwm.Tm4.Sm42.PwmFrequency);
 
-  cfg.Pwm.Tm2.Sm20.PwmFrequency = 20000; // in range, left alone
-  validateConfig(cfg);
-  TEST_ASSERT_EQUAL_UINT32(20000, cfg.Pwm.Tm2.Sm20.PwmFrequency);
+  cfg.Pwm.Tm2.SpwmCarrierFrequency = 24000;
+  cfg.Pwm.Tm2.Sm20.PwmFrequency = 20000;
+  cfg.Pwm.Tm2.Sm21.PwmFrequency = 1000;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT32(24000, cfg.Pwm.Tm2.Sm20.PwmFrequency);
+  TEST_ASSERT_EQUAL_UINT32(24000, cfg.Pwm.Tm2.Sm21.PwmFrequency);
+  TEST_ASSERT_EQUAL_UINT32(24000, cfg.Pwm.Tm2.Sm22.PwmFrequency);
+  TEST_ASSERT_EQUAL_UINT32(24000, cfg.Pwm.Tm2.Sm23.PwmFrequency);
 }
 
 void test_validate_clamps_out_of_range_frequency() {
@@ -588,6 +647,43 @@ void test_validate_clamps_out_of_range_frequency() {
   TEST_ASSERT_EQUAL_UINT32(500000, cfg.Pwm.Tm1.Sm13.PwmFrequency);
 }
 
+void test_validate_modulation_domain_and_removed_sync_option() {
+  MainConfig cfg;
+  cfg.Pwm.SyncPwm = true;
+  cfg.Pwm.Tm2.UseSpwm = true;
+  cfg.Pwm.Tm2.SpwmCarrierFrequency = 20000;
+  cfg.Pwm.Tm2.SpwmModulationFrequency = 10001; // above Nyquist
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_FALSE(cfg.Pwm.SyncPwm);
+  TEST_ASSERT_FALSE(cfg.Pwm.Tm2.UseSpwm);
+
+  cfg = MainConfig{};
+  cfg.Pwm.Tm2.UseSpwm = true;
+  cfg.Pwm.Tm2.SpwmCarrierFrequency = MaxModulationCarrierHz + 1;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT32(DefaultModulationCarrierHz,
+                           cfg.Pwm.Tm2.SpwmCarrierFrequency);
+
+  cfg = MainConfig{};
+  cfg.Pwm.Tm2.SpwmCarrierFrequency = MinRepresentablePwmFrequencyHz - 1;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT32(DefaultModulationCarrierHz,
+                           cfg.Pwm.Tm2.SpwmCarrierFrequency);
+
+  cfg = MainConfig{};
+  cfg.Pwm.Tm2.DeadTimeCompensation = true;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_FALSE(cfg.Pwm.Tm2.DeadTimeCompensation);
+
+  cfg = MainConfig{};
+  cfg.Thermal.Enabled = true;
+  cfg.Pwm.Tm2.UseSpwm = true;
+  cfg.Pwm.Tm2.SpwmCarrierFrequency = 20000;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_EQUAL_UINT32(10000, cfg.Pwm.Tm2.SpwmCarrierFrequency);
+  TEST_ASSERT_EQUAL_UINT32(10000, cfg.Pwm.Tm2.Sm20.PwmFrequency);
+}
+
 void test_validate_current_limit() {
   MainConfig cfg;
   cfg.CurrentLimit.Pin = 13; // not comparator-capable
@@ -603,8 +699,10 @@ void test_validate_current_limit() {
   TEST_ASSERT_EQUAL_UINT16(2475, cfg.CurrentLimit.ThresholdMillivolts);
 
   cfg.CurrentLimit.FilterCount = 9;
+  cfg.CurrentLimit.FilterPeriod = 255;
   TEST_ASSERT_TRUE(validateConfig(cfg));
   TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterCount);
+  TEST_ASSERT_EQUAL_UINT8(0, cfg.CurrentLimit.FilterPeriod);
 
   cfg.CurrentLimit.Pin = 18; // valid alternative route (CMP1 channel 0)
   cfg.CurrentLimit.ThresholdMillivolts = 1650;
@@ -670,6 +768,16 @@ void test_validate_pll() {
   TEST_ASSERT_TRUE(validateConfig(cfg));
   TEST_ASSERT_FALSE(cfg.Pll.Enabled);
   cfg.Pwm.Tm2.SpwmCarrierFrequency = 20000;
+
+  // Even a numerically acceptable 18:1 ratio is not a qualified sampling
+  // rate below the tested 1kHz PLL floor.
+  cfg.Pll.Enabled = true;
+  cfg.Pwm.Tm2.SpwmModulationFrequency = 1;
+  cfg.Pll.MinHz = 1;
+  cfg.Pll.MaxHz = 2;
+  cfg.Pwm.Tm2.SpwmCarrierFrequency = 18;
+  TEST_ASSERT_TRUE(validateConfig(cfg));
+  TEST_ASSERT_FALSE(cfg.Pll.Enabled);
 
   // The amplitude floor cannot be zeroed (noise would sweep the clamps)
   cfg.Pll.Enabled = true;
@@ -802,6 +910,8 @@ int main() {
   RUN_TEST(test_preserve_secrets_keeps_stored_values_on_empty_post);
   RUN_TEST(test_restore_secrets_is_unconditional);
   RUN_TEST(test_doc_completeness_gate);
+  RUN_TEST(test_doc_completeness_checks_nested_keys_types_and_version);
+  RUN_TEST(test_shorter_config_string_clears_the_old_tail);
   RUN_TEST(test_pair_mode_roundtrips_per_submodule);
   RUN_TEST(test_absent_pair_key_defaults_to_independent);
   RUN_TEST(test_validate_refuses_pairing_submodules_without_a_b_pin);
@@ -816,6 +926,7 @@ int main() {
   RUN_TEST(test_json_fallbacks_match_the_compiled_defaults);
   RUN_TEST(test_validate_clamps_pwm_frequency_on_every_submodule);
   RUN_TEST(test_validate_clamps_out_of_range_frequency);
+  RUN_TEST(test_validate_modulation_domain_and_removed_sync_option);
   RUN_TEST(test_validate_current_limit);
   RUN_TEST(test_validate_pll);
   RUN_TEST(test_validate_mppt);

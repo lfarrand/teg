@@ -9,6 +9,14 @@ struct ChannelConfig {
   uint16_t DutyCycle{};
 };
 
+constexpr uint32_t DefaultPwmFrequencyHz = 1000;
+constexpr uint32_t DefaultModulationCarrierHz = 20000;
+constexpr uint32_t MinRepresentablePwmFrequencyHz = 18;
+constexpr uint32_t MaxPwmFrequencyHz = 1000000;
+// The modulation ISR, capture and dual-ADC path are release-qualified only up to
+// this rate. Fixed-duty outputs may still use MaxPwmFrequencyHz without the ISR.
+constexpr uint32_t MaxModulationCarrierHz = 200000;
+
 struct SubmoduleConfig {
   // What this submodule's A/B pins physically drive. PairIndependent is what the
   // firmware has always done, so it stays the default - an update must not change
@@ -25,7 +33,7 @@ struct SubmoduleConfig {
   // readable settings file, and 0 reaches computeAsymmetricTimings() as a divisor -
   // inf, an undefined cast, garbage edge timings, and then enabled outputs. Matches
   // the JSON fallback so the two paths cannot disagree.
-  uint32_t PwmFrequency = 1000;
+  uint32_t PwmFrequency = DefaultPwmFrequencyHz;
   ChannelConfig ChannelA;
   ChannelConfig ChannelB;
 };
@@ -36,7 +44,7 @@ struct Module1Config {
 
 struct Module2Config {
   bool UseSpwm = false;
-  uint32_t SpwmCarrierFrequency = 20000;
+  uint32_t SpwmCarrierFrequency = DefaultModulationCarrierHz;
   uint32_t SpwmModulationFrequency = 50;
   uint8_t ModulationScheme = 1;         // modulation.h ModScheme* (1 = unipolar SPWM)
   uint16_t ModulationIndexMilli = 1000; // thousandths; up to 1155 with THIPWM/SVPWM
@@ -53,10 +61,17 @@ struct Module2Config {
   bool WaveformSampleStep = false;      // custom waveform: one stored sample per carrier cycle
                                         // (full resolution, repeat = count/carrier) instead of
                                         // one period per modulation cycle via the DDS
-  SubmoduleConfig Sm20;
-  SubmoduleConfig Sm21;
-  SubmoduleConfig Sm22;
-  SubmoduleConfig Sm23;
+  // FlexPWM2 is one modulation engine. These mirrors are retained in the JSON
+  // schema for compatibility, but validateConfig() always derives all four from
+  // SpwmCarrierFrequency before any register is touched.
+  SubmoduleConfig Sm20{PairIndependent, MinHalfBridgeDeadTimeNs,
+                       DefaultModulationCarrierHz, {}, {}};
+  SubmoduleConfig Sm21{PairIndependent, MinHalfBridgeDeadTimeNs,
+                       DefaultModulationCarrierHz, {}, {}};
+  SubmoduleConfig Sm22{PairIndependent, MinHalfBridgeDeadTimeNs,
+                       DefaultModulationCarrierHz, {}, {}};
+  SubmoduleConfig Sm23{PairIndependent, MinHalfBridgeDeadTimeNs,
+                       DefaultModulationCarrierHz, {}, {}};
 };
 
 struct Module3Config {
@@ -70,7 +85,9 @@ struct Module4Config {
 };
 
 struct AsymmetricInductionConfig {
-  bool IsEnabled = true;
+  // Fail-dark compiled default. A missing configuration must never silently
+  // select a specialised switching topology.
+  bool IsEnabled = false;
   int32_t PreShiftNanos = 250;
   int32_t PostShiftNanos = 500;
 };
@@ -88,10 +105,10 @@ struct FeedbackConfig {
   uint16_t LoopHz = 1000;
 };
 
-// Fast software trip: a transition on the fault pin masks every FlexPWM
-// output from a high-priority GPIO interrupt (~1us). Latched until the next
-// settings apply. Pin should be XBAR-capable (30/31/32) so a future hardware
-// fault path can reuse it.
+// Fast software trip: a transition on the fault pin disconnects every FlexPWM
+// output from a high-priority GPIO interrupt. The trip is latched until an
+// authenticated explicit fault-clear request; applying settings is not an
+// acknowledgement. Pin should be interrupt-capable and pass pin ownership checks.
 struct FaultProtectionConfig {
   bool Enabled = false;
   uint8_t Pin = 32;
@@ -133,8 +150,9 @@ struct MtpConfig {
   bool Enabled = false;
 };
 
-// Write protection for the API: when WritePin is set, POST /api/config
-// requires a matching X-Auth-Pin header. Redacted from GET responses.
+// Access control for every /api endpoint. The request must come from the local
+// subnet, pass Host/Origin checks and carry a matching X-Auth-Pin header. The
+// credential is redacted from configuration responses.
 struct SecurityConfig {
   char WritePin[16] = "";
 };
@@ -208,9 +226,9 @@ struct MpptConfig {
   uint32_t RestartDeltaMw = 1000; // |dP| above this = source shifted: re-track
 };
 
-// DS18B20 probes on OneWire (index 0 = TEG hot side, 1 = cold side) plus the
-// RT1062 die temperature. The worst of (hot, die) linearly derates the
-// modulation index between DerateStartC and DerateEndC.
+// Up to two DS18B20 probes on OneWire plus the RT1062 die temperature. Probe
+// ROMs are sorted for stable labels, but thermal protection deliberately uses
+// the hottest valid external probe or die reading rather than trusting roles.
 struct ThermalConfig {
   bool Enabled = false;
   uint8_t OneWirePin = 21;
@@ -268,9 +286,11 @@ struct MainConfig {
 
 extern MainConfig config;
 
-void loadConfiguration(const char *filename);
+// True only when a complete, validated live/temp/backup document was loaded.
+bool loadConfiguration(const char *filename);
 
-void saveConfiguration(const char *filename);
+// Crash-safe save through a verified temporary file and recoverable backup.
+bool saveConfiguration(const char *filename);
 
 void printFile(const char *filename);
 

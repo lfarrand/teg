@@ -21,6 +21,7 @@ void printDigits(int digits);
 // Non-blocking NTP client: call from loop(). Sends a request and collects the
 // reply on later passes, so no path ever waits on DNS or the network.
 void ntpTask();
+bool prepareInfluxEndpoint(); // resolves only while outputs are inhibited
 void writeInfluxDb(const String &data);
 
 #endif

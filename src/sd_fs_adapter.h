@@ -19,6 +19,32 @@
 #include <SdFat.h>
 #include "mtp_wdog.h"
 
+inline bool mtpAsciiEqualIgnoreCase(const char *a, const char *b) {
+  while (*a && *b) {
+    char ca = *a++;
+    char cb = *b++;
+    if (ca >= 'A' && ca <= 'Z') ca = static_cast<char>(ca + ('a' - 'A'));
+    if (cb >= 'A' && cb <= 'Z') cb = static_cast<char>(cb + ('a' - 'A'));
+    if (ca != cb) return false;
+  }
+  return *a == '\0' && *b == '\0';
+}
+
+// Config and presets contain the write PIN, MQTT password and Influx token.
+// Read-only MTP is still plaintext exfiltration, so these objects are absent
+// from both direct opens and directory enumeration.
+inline bool mtpSensitiveName(const char *path) {
+  while (*path == '/') ++path;
+  const char *name = path;
+  for (const char *p = path; *p; ++p) {
+    if (*p == '/') name = p + 1;
+  }
+  return mtpAsciiEqualIgnoreCase(name, "settings.cfg") ||
+         mtpAsciiEqualIgnoreCase(name, "settings.tmp") ||
+         mtpAsciiEqualIgnoreCase(name, "settings.bak") ||
+         mtpAsciiEqualIgnoreCase(name, "presets");
+}
+
 // Upstream SdFat makes FsFile non-copyable (a copy would double-close the
 // underlying handle), so each impl OPENS its own handle in place rather than
 // taking one by value.
@@ -62,12 +88,18 @@ public:
   bool isDirectory() override { return file_.isDirectory(); }
 
   File openNextFile(uint8_t mode) override {
-    SdFsFileImpl *impl = new SdFsFileImpl(file_, mode == FILE_WRITE ? O_RDWR : O_RDONLY);
-    if (!impl->opened()) {
-      delete impl;
-      return File();
+    for (;;) {
+      SdFsFileImpl *impl = new SdFsFileImpl(file_, mode == FILE_WRITE ? O_RDWR : O_RDONLY);
+      if (!impl->opened()) {
+        delete impl;
+        return File();
+      }
+      if (mtpSensitiveName(impl->name())) {
+        delete impl;
+        continue;
+      }
+      return File(impl);
     }
-    return File(impl);
   }
   void rewindDirectory() override { file_.rewindDirectory(); }
 
@@ -116,7 +148,7 @@ public:
   explicit SdFsAdapter(SdFs &sd) : sd_(sd) {}
 
   File open(const char *filename, uint8_t mode = FILE_READ) override {
-    if (mode != FILE_READ) {
+    if (mode != FILE_READ || mtpSensitiveName(filename)) {
       return File(); // read-only: never create or truncate
     }
     SdFsFileImpl *impl = new SdFsFileImpl(sd_, filename, O_RDONLY);
@@ -126,7 +158,9 @@ public:
     }
     return File(impl);
   }
-  bool exists(const char *filepath) override { return sd_.exists(filepath); }
+  bool exists(const char *filepath) override {
+    return !mtpSensitiveName(filepath) && sd_.exists(filepath);
+  }
   bool mkdir(const char *) override { return false; }         // read-only
   bool rename(const char *, const char *) override { return false; }
   bool remove(const char *) override { return false; }

@@ -49,14 +49,16 @@ static uint32_t backoffMs = 10000;
 static uint32_t publishFailures = 0;
 static uint64_t energyHighWaterMwh = 0;
 static uint64_t auxEnergyHighWaterMwh = 0;
+static IPAddress mqttAddr;
+static bool mqttAddrValid = false;
 
-static void ensureNodeId() {
+FLASHMEM static void ensureNodeId() {
   if (nodeId[0] == '\0') {
     snprintf(nodeId, sizeof(nodeId), "teg-%lu", static_cast<unsigned long>(teensyUsbSN()));
   }
 }
 
-void mqttConfigure() {
+FLASHMEM void mqttConfigure() {
   ensureNodeId();
   if (mq.connected()) {
     // Publish the will manually before a clean disconnect: PubSubClient's
@@ -67,13 +69,27 @@ void mqttConfigure() {
     mq.disconnect();
   }
   discoveryPublished = false;
+  mqttAddrValid = false;
   sinceAttempt = 60000; // reconnect with the new settings on the next task pass
 }
 
-static bool mqttConnect() {
+FLASHMEM static bool mqttConnect() {
+  if (!mqttAddrValid) {
+    mqttAddrValid = mqttAddr.fromString(config.Mqtt.Host);
+    if (!mqttAddrValid) {
+      // Hostname resolution is synchronous. Setup primes it while outputs are
+      // inhibited; subsequent reconnects never spend seconds in DNS while the
+      // bridge is switching.
+      if (!pwmOutputInhibited()) return false;
+      kickWatchdog();
+      mqttAddrValid = Ethernet.hostByName(config.Mqtt.Host, mqttAddr);
+      kickWatchdog();
+      if (!mqttAddrValid) return false;
+    }
+  }
   mqttNet.setConnectionTimeout(500);
   mq.setSocketTimeout(2); // CONNACK wait, seconds; default 15s outlives the watchdog
-  mq.setServer(config.Mqtt.Host, config.Mqtt.Port);
+  mq.setServer(mqttAddr, config.Mqtt.Port);
   mq.setBufferSize(1024);
   char availTopic[64];
   mqttAvailabilityTopic(availTopic, sizeof(availTopic), config.Mqtt.BaseTopic, nodeId);
@@ -89,12 +105,12 @@ static bool mqttConnect() {
   return true;
 }
 
-static void publishState();
+FLASHMEM static void publishState();
 
 // One retained discovery config per task pass: pacing lets lwIP drain the
 // send buffer between packets. When the last one lands, the first state
 // follows immediately so entities populate without waiting an interval.
-static void publishDiscoveryStep() {
+FLASHMEM static void publishDiscoveryStep() {
   JsonDocument doc;
   char topic[96];
   char payload[640];
@@ -122,7 +138,7 @@ static void publishDiscoveryStep() {
   }
 }
 
-static void publishState() {
+FLASHMEM static void publishState() {
   MqttStateValues v;
   const MeterReadings m = meterReadings();
   v.meterValid = m.valid;

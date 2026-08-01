@@ -1,6 +1,7 @@
 #include "web_handlers.h"
 #include "config_json.h"
 #include "config_serde.h"
+#include "pin_ownership.h"
 #include "pwm_utils.h"
 #include "capture.h"
 #include "meter.h"
@@ -35,6 +36,7 @@ extern Application app;
 extern MainConfig config;
 extern EthernetServer server;
 extern const char* filename;
+static Router apiRouter;
 
 // Set by the update handler after applying changes to the hardware; loop()
 // persists the config to SD so the HTTP response never waits on the card.
@@ -45,9 +47,15 @@ static volatile uint32_t lastApplyMicros = 0;
 
 // aWOT only exposes headers that were registered before processing
 static char authPinHeader[sizeof(SecurityConfig{}.WritePin) + 4];
+static char hostHeader[64];
+static char originHeader[96];
+static bool writeAuthorized(Request &req);
+static void requireApiAuthorization(Request &req, Response &res);
 
 FLASHMEM void configureWebServer() {
   app.header("X-Auth-Pin", authPinHeader, sizeof(authPinHeader));
+  app.header("Host", hostHeader, sizeof(hostHeader));
+  app.header("Origin", originHeader, sizeof(originHeader));
   // Bound the header phase and feed the watchdog while waiting on a slow client.
   // Without this a byte dribbled just inside the per-byte timeout keeps the header
   // loop alive indefinitely while nothing services the watchdog - an unauthenticated
@@ -78,30 +86,36 @@ FLASHMEM void configureWebServer() {
   app.get("/index.html", &index);
   app.get("/stats.html", &serve_stats);
   app.get("/pico.min.css", &serve_pico_css);
-  app.get("/api/config", &api_config_get);
-  app.post("/api/config", &api_config_post);
-  app.get("/api/status", &api_status);
-  app.get("/api/capture/raw", &api_capture_raw);
-  app.get("/api/capture", &api_capture);
-  app.get("/api/scope", &api_scope_get);
-  app.post("/api/scope/arm", &api_scope_arm);
-  app.post("/api/scope/release", &api_scope_release);
-  app.get("/api/waveform", &api_waveform_get);
-  app.post("/api/waveform", &api_waveform_post);
-  app.post("/api/fault/clear", &api_fault_clear);
-  app.get("/api/crash", &api_crash);
-  app.get("/api/log", &api_log);
-  app.get("/api/spectrum", &api_spectrum);
-  app.get("/api/config/export", &api_config_export);
-  app.post("/api/config/import", &api_config_import);
-  app.get("/api/presets", &api_presets_get);
-  app.post("/api/presets/save", &api_presets_save);
-  app.post("/api/presets/load", &api_presets_load);
-  app.post("/api/presets/delete", &api_presets_delete);
-  app.post("/api/ota/commit", &api_ota_commit);
-  app.post("/api/ota/abort", &api_ota_abort);
-  app.get("/api/ota", &api_ota_get);
-  app.post("/api/ota", &api_ota_post);
+  // Mount a dedicated API router so one middleware protects every current and
+  // future diagnostic GET. Static assets stay public, but status, logs, crash
+  // reports, captures and configuration no longer disclose operational data or
+  // credentials-by-context to any host that can reach the LAN.
+  apiRouter.use(&requireApiAuthorization);
+  apiRouter.get("/config", &api_config_get);
+  apiRouter.post("/config", &api_config_post);
+  apiRouter.get("/status", &api_status);
+  apiRouter.get("/capture/raw", &api_capture_raw);
+  apiRouter.get("/capture", &api_capture);
+  apiRouter.get("/scope", &api_scope_get);
+  apiRouter.post("/scope/arm", &api_scope_arm);
+  apiRouter.post("/scope/release", &api_scope_release);
+  apiRouter.get("/waveform", &api_waveform_get);
+  apiRouter.post("/waveform", &api_waveform_post);
+  apiRouter.post("/fault/clear", &api_fault_clear);
+  apiRouter.get("/crash", &api_crash);
+  apiRouter.get("/log", &api_log);
+  apiRouter.get("/spectrum", &api_spectrum);
+  apiRouter.get("/config/export", &api_config_export);
+  apiRouter.post("/config/import", &api_config_import);
+  apiRouter.get("/presets", &api_presets_get);
+  apiRouter.post("/presets/save", &api_presets_save);
+  apiRouter.post("/presets/load", &api_presets_load);
+  apiRouter.post("/presets/delete", &api_presets_delete);
+  apiRouter.post("/ota/commit", &api_ota_commit);
+  apiRouter.post("/ota/abort", &api_ota_abort);
+  apiRouter.get("/ota", &api_ota_get);
+  apiRouter.post("/ota", &api_ota_post);
+  app.use("/api", &apiRouter);
 }
 
 // Accepted connections that have not yet said anything.
@@ -187,19 +201,19 @@ FLASHMEM static void sendAsset(Response &res, const char *path, const char *cach
   res.sendStatus(404);
 }
 
-FLASHMEM void index(Request &req, Response &res) {
+FLASHMEM void index(Request &, Response &res) {
   sendAsset(res, "/index.html", "no-cache");
 }
 
-FLASHMEM void serve_stats(Request &req, Response &res) {
+FLASHMEM void serve_stats(Request &, Response &res) {
   sendAsset(res, "/stats.html", "no-cache");
 }
 
-FLASHMEM void serve_pico_css(Request &req, Response &res) {
+FLASHMEM void serve_pico_css(Request &, Response &res) {
   sendAsset(res, "/pico.min.css", "max-age=86400"); // content-stable, cache a day
 }
 
-FLASHMEM void api_config_get(Request &req, Response &res) {
+FLASHMEM void api_config_get(Request &, Response &res) {
   JsonDocument doc;
   configToJson(config, doc);
   redactSecrets(doc); // the Influx token and write PIN never leave the device
@@ -225,12 +239,133 @@ static bool pinMatches(const char *provided) {
   return diff == 0;
 }
 
-// When a write PIN is configured, POSTs must carry it in X-Auth-Pin
+namespace {
+struct AuthPeer {
+  uint32_t ip = 0;
+  uint32_t windowStart = 0;
+  uint32_t blockedUntil = 0;
+  uint8_t failures = 0;
+  bool used = false;
+};
+AuthPeer authPeers[4];
+constexpr uint32_t AuthWindowMs = 60000;
+constexpr uint32_t AuthBlockMs = 60000;
+constexpr uint8_t AuthFailuresBeforeBlock = 5;
+
+static uint32_t requestPeerIp(Request &req) {
+  EthernetClient *client = static_cast<EthernetClient *>(req.stream());
+  const IPAddress ip = client->remoteIP();
+  return (static_cast<uint32_t>(ip[0]) << 24) | (static_cast<uint32_t>(ip[1]) << 16) |
+         (static_cast<uint32_t>(ip[2]) << 8) | ip[3];
+}
+
+static uint32_t packIp(const IPAddress &ip) {
+  return (static_cast<uint32_t>(ip[0]) << 24) | (static_cast<uint32_t>(ip[1]) << 16) |
+         (static_cast<uint32_t>(ip[2]) << 8) | ip[3];
+}
+
+static bool requestPeerIsLocal(Request &req) {
+  const uint32_t mask = packIp(Ethernet.subnetMask());
+  if (mask == 0) return false;
+  return (requestPeerIp(req) & mask) == (packIp(Ethernet.localIP()) & mask);
+}
+
+static AuthPeer &authPeerFor(uint32_t ip, uint32_t now) {
+  AuthPeer *oldest = &authPeers[0];
+  for (AuthPeer &peer : authPeers) {
+    if (peer.used && peer.ip == ip) return peer;
+    if (!peer.used) {
+      peer.used = true;
+      peer.ip = ip;
+      peer.windowStart = now;
+      return peer;
+    }
+    if (now - peer.windowStart > now - oldest->windowStart) oldest = &peer;
+  }
+  *oldest = AuthPeer{};
+  oldest->used = true;
+  oldest->ip = ip;
+  oldest->windowStart = now;
+  return *oldest;
+}
+
+static bool authPeerBlocked(Request &req) {
+  const uint32_t now = millis();
+  AuthPeer &peer = authPeerFor(requestPeerIp(req), now);
+  return peer.blockedUntil != 0 && static_cast<int32_t>(now - peer.blockedUntil) < 0;
+}
+
+static bool authorityAllowed() {
+  if (hostHeader[0] == '\0') return false; // HTTP/1.1 requires Host
+  char localIp[20];
+  snprintf(localIp, sizeof(localIp), "%u.%u.%u.%u", Ethernet.localIP()[0],
+           Ethernet.localIP()[1], Ethernet.localIP()[2], Ethernet.localIP()[3]);
+  char localName[40];
+  snprintf(localName, sizeof(localName), "%s.local", networkHostname());
+
+  char authority[sizeof(hostHeader)];
+  copyConfigString(authority, sizeof(authority), hostHeader);
+  char *port = strchr(authority, ':');
+  if (port != nullptr) *port = '\0';
+  const bool hostOk = strcmp(authority, localIp) == 0 ||
+                      strcasecmp(authority, networkHostname()) == 0 ||
+                      strcasecmp(authority, localName) == 0;
+  if (!hostOk) return false;
+  if (originHeader[0] == '\0') return true; // curl/native client
+  constexpr char prefix[] = "http://";
+  if (strncmp(originHeader, prefix, sizeof(prefix) - 1) != 0) return false;
+  // A browser Origin contains only scheme + authority. Requiring it to match
+  // Host blocks cross-site and DNS-rebinding writes without pretending HTTP
+  // provides confidentiality.
+  return strcmp(originHeader + sizeof(prefix) - 1, hostHeader) == 0;
+}
+} // namespace
+
+// Fail closed. An empty PIN means entropy/persistence provisioning failed; it
+// must never turn a missing credential into unauthenticated control.
 static bool writeAuthorized(Request &req) {
   if (config.Security.WritePin[0] == '\0') {
+    return false;
+  }
+  const uint32_t now = millis();
+  const uint32_t ip = requestPeerIp(req);
+  AuthPeer &peer = authPeerFor(ip, now);
+  if (peer.blockedUntil != 0 && static_cast<int32_t>(now - peer.blockedUntil) < 0) {
+    return false;
+  }
+  if (pinMatches(req.get("X-Auth-Pin"))) {
+    peer.failures = 0;
+    peer.blockedUntil = 0;
+    peer.windowStart = now;
     return true;
   }
-  return pinMatches(req.get("X-Auth-Pin"));
+  if (now - peer.windowStart >= AuthWindowMs) {
+    peer.windowStart = now;
+    peer.failures = 0;
+  }
+  ++peer.failures;
+  if (peer.failures == 1 || peer.failures >= AuthFailuresBeforeBlock) {
+    char message[96];
+    snprintf(message, sizeof(message), "Web auth failed from %u.%u.%u.%u%s",
+             static_cast<unsigned>(ip >> 24), static_cast<unsigned>((ip >> 16) & 0xFF),
+             static_cast<unsigned>((ip >> 8) & 0xFF), static_cast<unsigned>(ip & 0xFF),
+             peer.failures >= AuthFailuresBeforeBlock ? "; blocked 60s" : "");
+    writeLogLevel(EventWarn, message);
+  }
+  if (peer.failures >= AuthFailuresBeforeBlock) {
+    peer.blockedUntil = now + AuthBlockMs;
+  }
+  return false;
+}
+
+static void requireApiAuthorization(Request &req, Response &res) {
+  if (!requestPeerIsLocal(req) || !authorityAllowed()) {
+    res.sendStatus(403);
+    return;
+  }
+  if (!writeAuthorized(req)) {
+    res.sendStatus(authPeerBlocked(req) ? 429 : 401);
+  }
 }
 
 FLASHMEM void api_config_post(Request &req, Response &res) {
@@ -249,20 +384,37 @@ FLASHMEM void api_config_post(Request &req, Response &res) {
     res.sendStatus(400);
     return;
   }
-
-  const bool spwmWasEnabled = spwmActive();
-  if (spwmWasEnabled) {
-    disablePwmInterrupts();
+  if (!configDocComplete(doc)) {
+    res.status(400);
+    res.set("Content-Type", "application/json");
+    res.print(F("{\"error\":\"incomplete or incompatible configuration document\"}"));
+    return;
   }
 
   MainConfig previous;
   memcpy(&previous, &config, sizeof(previous));
 
-  configFromJson(doc, config);
-  preserveSecrets(config, previous); // empty secret in the POST = keep current
-  if (validateConfig(config)) {
+  MainConfig candidate;
+  configFromJson(doc, candidate);
+  preserveSecrets(candidate, previous); // empty secret in the POST = keep current
+  if (validateConfig(candidate)) {
     writeLog("Invalid values in config; corrected");
   }
+  PinValidationResult pinResult;
+  if (!validatePinOwnership(candidate, &pinResult)) {
+    res.status(422);
+    res.set("Content-Type", "application/json");
+    JsonDocument out;
+    out["error"] = "pin ownership conflict or invalid pin";
+    out["pin"] = pinResult.pin;
+    out["existing"] = pinRoleName(pinResult.existing);
+    out["requested"] = pinRoleName(pinResult.requested);
+    serializeJson(out, res);
+    return;
+  }
+
+  disablePwmInterrupts();
+  memcpy(&config, &candidate, sizeof(config));
 
   // Apply to hardware first: register writes are buffered and take effect at
   // the next PWM reload, i.e. within one PWM period
@@ -270,7 +422,7 @@ FLASHMEM void api_config_post(Request &req, Response &res) {
   applyPwmConfig(previous);
   // Not while a trip is latched (a refused clear): the modulation ISR would
   // drive duty updates into fault-masked submodules
-  if (spwmActive() && !vFaultTripped) {
+  if (pwmInterruptRequired() && !vFaultTripped) {
     attachModule2PwmInterruptVectors();
     enablePwmInterrupts();
   }
@@ -279,6 +431,7 @@ FLASHMEM void api_config_post(Request &req, Response &res) {
   res.set("Content-Type", "application/json");
   JsonDocument out;
   out["applyMicros"] = lastApplyMicros;
+  out["persistPending"] = true;
   serializeJson(out, res);
 
   // Persist from loop() so the response doesn't wait on the SD card
@@ -295,15 +448,24 @@ FLASHMEM void api_waveform_post(Request &req, Response &res) {
     return;
   }
 
+  const uint8_t activeWave = config.Pwm.Tm2.ReferenceWaveform;
+  if (spwmActive() && (activeWave == RefWaveCustom || activeWave == RefWaveSequence)) {
+    res.status(409);
+    res.set("Content-Type", "application/json");
+    res.print(F("{\"error\":\"disable custom/sequence modulation before replacing its waveform\"}"));
+    return;
+  }
+
   const char *err = "";
   // Streams text or TEGW binary straight into the PSRAM store; multi-MB
   // uploads take seconds, so the watchdog is serviced during the transfer.
   //
-  // Deliberately still a bare kick, not serviceControlTasks(): that would run
-  // waveformStreamTask(), which reads the waveform store for playback, while this
-  // call is rewriting it. Servicing the control loops here needs the upload-versus-
-  // playback interaction settled first - see docs/SECURITY.md.
-  if (!waveformApplyStream(req, &err, &kickWatchdog)) {
+  // Upload goes to a separate file and a currently generated custom waveform is
+  // rejected above, so supervisory tasks can continue throughout the transfer.
+  const int bodyBytes = req.left();
+  if (bodyBytes <= 0 ||
+      !waveformApplyStream(req, static_cast<uint32_t>(bodyBytes), &err,
+                           &serviceControlTasks)) {
     res.status(400);
     res.set("Content-Type", "application/json");
     JsonDocument out;
@@ -327,7 +489,7 @@ FLASHMEM void api_waveform_post(Request &req, Response &res) {
   serializeJson(out, res);
 }
 
-FLASHMEM void api_waveform_get(Request &req, Response &res) {
+FLASHMEM void api_waveform_get(Request &, Response &res) {
   JsonDocument doc;
   const uint8_t t = waveformType();
   doc["type"] = t == WaveTypeReference ? "reference" : t == WaveTypeSequence ? "sequence" : "none";
@@ -503,7 +665,7 @@ void api_capture(Request &req, Response &res) {
 // Download the running configuration as a file. Secrets are redacted, so
 // the export is safe to store or share; importing it back keeps whatever
 // credentials are currently on the device.
-FLASHMEM void api_config_export(Request &req, Response &res) {
+FLASHMEM void api_config_export(Request &, Response &res) {
   JsonDocument doc;
   configToJson(config, doc);
   redactSecrets(doc);
@@ -513,7 +675,7 @@ FLASHMEM void api_config_export(Request &req, Response &res) {
   serializeJson(doc, res);
 }
 
-FLASHMEM void api_presets_get(Request &req, Response &res) {
+FLASHMEM void api_presets_get(Request &, Response &res) {
   JsonDocument doc;
   const bool ok = presetList(doc);
   doc["available"] = ok;
@@ -622,8 +784,12 @@ FLASHMEM void api_presets_delete(Request &req, Response &res) {
   presetResult(res, presetDelete(name, &err), err);
 }
 
-FLASHMEM void api_ota_get(Request &req, Response &res) {
+FLASHMEM void api_ota_get(Request &, Response &res) {
   JsonDocument doc;
+  doc["enabled"] = otaReleaseEnabled();
+  if (!otaReleaseEnabled()) {
+    doc["reason"] = "disabled: updater is unsigned and single-slot; use USB bootloader";
+  }
   doc["inProgress"] = otaInProgress();
   doc["valid"] = otaImageVerified();
   doc["received"] = otaReceivedBytes();
@@ -635,6 +801,12 @@ FLASHMEM void api_ota_get(Request &req, Response &res) {
 }
 
 void api_ota_post(Request &req, Response &res) {
+  if (!otaReleaseEnabled()) {
+    res.status(501);
+    res.set("Content-Type", "application/json");
+    res.print(F("{\"error\":\"OTA disabled in production; use the Teensy USB bootloader\"}"));
+    return;
+  }
   if (!writeAuthorized(req)) {
     // Drain the (multi-MB) body before answering: replying mid-upload makes
     // the browser see a connection reset instead of the 401, so the PIN
@@ -647,7 +819,10 @@ void api_ota_post(Request &req, Response &res) {
     return;
   }
   const char *err = "";
-  const bool ok = otaIngestStream(req, &err, &kickWatchdog);
+  const int bodyBytes = req.left();
+  const bool ok = bodyBytes > 0 &&
+                  otaIngestStream(req, static_cast<uint32_t>(bodyBytes), &err,
+                                  &serviceControlTasks);
   res.status(ok ? 200 : 400);
   res.set("Content-Type", "application/json");
   JsonDocument out;
@@ -660,6 +835,10 @@ void api_ota_post(Request &req, Response &res) {
 }
 
 FLASHMEM void api_ota_commit(Request &req, Response &res) {
+  if (!otaReleaseEnabled()) {
+    res.sendStatus(501);
+    return;
+  }
   if (!writeAuthorized(req)) {
     res.sendStatus(401);
     return;
@@ -682,6 +861,10 @@ FLASHMEM void api_ota_commit(Request &req, Response &res) {
 }
 
 FLASHMEM void api_ota_abort(Request &req, Response &res) {
+  if (!otaReleaseEnabled()) {
+    res.sendStatus(501);
+    return;
+  }
   if (!writeAuthorized(req)) {
     res.sendStatus(401);
     return;
@@ -700,7 +883,7 @@ static const char *scopeStateName(uint8_t s) {
   }
 }
 
-FLASHMEM void api_scope_get(Request &req, Response &res) {
+FLASHMEM void api_scope_get(Request &, Response &res) {
   JsonDocument doc;
   doc["state"] = scopeStateName(captureScopeState());
   doc["source"] = captureScopeSourceIsCurrent() ? "i" : "v";
@@ -830,10 +1013,15 @@ FLASHMEM void api_fault_clear(Request &req, Response &res) {
     res.sendStatus(409); // clearing would re-enable outputs mid-flash
     return;
   }
-  clearFaultTrip();
+  const bool released = clearFaultTrip(true);
   res.set("Content-Type", "application/json");
   JsonDocument out;
   out["fault"] = vFaultTripped;
+  out["restartInhibit"] = pwmRestartInhibited();
+  out["hardwareInhibit"] = pwmHardwareInhibited();
+  out["provisioningInhibit"] = pwmProvisioningInhibited();
+  out["outputsInhibited"] = pwmOutputInhibited();
+  out["released"] = released;
   // Why a clear may not stick: the overcurrent comparator is still asserting
   out["ocStillActive"] = acmpFaultPinActive();
   serializeJson(out, res);
@@ -891,20 +1079,27 @@ FLASHMEM void api_log(Request &req, Response &res) {
   serializeJson(doc, res);
 }
 
-FLASHMEM void api_crash(Request &req, Response &res) {
+FLASHMEM void api_crash(Request &, Response &res) {
   res.set("Content-Type", "text/plain");
   const char *text = crashReportText();
   res.print(text[0] != '\0' ? text : "none");
 }
 
-void api_status(Request &req, Response &res) {
+FLASHMEM void api_status(Request &, Response &res) {
   JsonDocument doc;
   doc["uptimeMs"] = millis();
   doc["version"] = TEG_GIT_HASH;
   doc["resetCause"] = resetCauseString();
+  doc["hostname"] = networkHostname();
   doc["crash"] = crashReportText()[0] != '\0';
   doc["active"] = spwmActive();
   doc["fault"] = vFaultTripped;
+  doc["restartInhibit"] = pwmRestartInhibited();
+  doc["hardwareInhibit"] = pwmHardwareInhibited();
+  doc["provisioningInhibit"] = pwmProvisioningInhibited();
+  doc["outputsInhibited"] = pwmOutputInhibited();
+  doc["configPersistPending"] = configSaveNeeded;
+  doc["pwmConfigValid"] = pwmConfigurationValid();
   doc["ota"] = otaInProgress();
   doc["mtp"] = mtpEnabled();
   if (mtpEnabled()) {
@@ -931,6 +1126,8 @@ void api_status(Request &req, Response &res) {
   doc["captureActive"] = captureActive();
   doc["captureFrozen"] = captureIsFrozen();
   doc["captureSamples"] = captureSampleCount();
+  doc["captureVoltageMisses"] = captureVoltageMissCount();
+  doc["captureCurrentMisses"] = captureCurrentMissCount();
   doc["mqttConnected"] = mqttConnected();
   doc["mqttPublishFailures"] = mqttPublishFailures();
   doc["mpptEnabled"] = config.Mppt.Enabled;
@@ -982,9 +1179,12 @@ void api_status(Request &req, Response &res) {
       doc["auxPgBuck"] = aux.pgBuck;
     }
     doc["auxAlert"] = aux.alert;
+    doc["auxAlertCount"] = aux.alertCount;
+    doc["auxPgEdgeCount"] = aux.pgEdgeCount;
+    doc["auxCommsErrors"] = aux.commsErrors;
   }
   // Measured feedback voltage: synchronous capture mean when available,
-  // otherwise a direct (10-bit) read of the configured pin
+  // otherwise a direct 12-bit read of the configured pin
   if (captureActive() && !captureIsFrozen()) {
     doc["feedbackMv"] = (captureMeanRaw(64) * config.Feedback.FullScaleMillivolts) / 4095U;
   } else {

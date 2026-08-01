@@ -80,6 +80,24 @@ const $ = (s) => document.querySelector(s);
 const HISTORY = 300; // points kept per chart (5 min at 1s refresh)
 const PALETTE = ["#0172ad", "#d32f2f", "#2e7d32", "#f9a825"];
 
+function authHeaders() {
+  const h = {};
+  const pin = sessionStorage.getItem("pin");
+  if (pin) h["X-Auth-Pin"] = pin;
+  return h;
+}
+
+async function apiGet(path) {
+  let r = await fetch(path, { headers: authHeaders() });
+  if (r.status === 401) {
+    const pin = prompt("Device access PIN required:");
+    if (pin === null) throw new Error("authentication cancelled");
+    sessionStorage.setItem("pin", pin);
+    r = await fetch(path, { headers: authHeaders() });
+  }
+  return r;
+}
+
 // ---------------------------------------------------------------------------
 // Minimal rolling time-series chart on a canvas (theme-aware, auto-scaled)
 // ---------------------------------------------------------------------------
@@ -178,7 +196,7 @@ const host = $("#charts");
 const chIndex = new Chart(host, "Modulation index", "", ["live", "target"], { decimals: 3, min: 0 });
 const chFeedback = new Chart(host, "Feedback voltage", "mV", ["measured"], { decimals: 0, min: 0 });
 const chIsr = new Chart(host, "Modulation ISR time", "µs", ["duration"], { decimals: 2, min: 0 });
-const chTemp = new Chart(host, "Temperatures", "°C", ["hot", "cold", "die"], { decimals: 1 });
+const chTemp = new Chart(host, "Temperatures", "°C", ["probe 1", "probe 2", "die"], { decimals: 1 });
 const chDerate = new Chart(host, "Thermal derate", "%", ["derate"], { decimals: 0, min: 0, max: 105 });
 const chRam = new Chart(host, "Free RAM", "kB", ["DTCM", "OCRAM"], { decimals: 0, min: 0 });
 const chPower = new Chart(host, "Real power", "W", ["power"], { decimals: 2 });
@@ -234,7 +252,7 @@ async function pollSpectrum() {
   if (!$("#spec-auto").checked) return;
   try {
     const engine = $("#spec-engine").value;
-    const d = await (await fetch(`/api/spectrum?engine=${engine}`)).json();
+    const d = await (await apiGet(`/api/spectrum?engine=${engine}`)).json();
     if (!d.available) {
       $("#spec-info").textContent = "capture not running";
       return;
@@ -256,7 +274,7 @@ let paused = false;
 
 async function poll() {
   try {
-    const s = await (await fetch("/api/status")).json();
+    const s = await (await apiGet("/api/status")).json();
     chIndex.push([s.indexMilli / 1000, s.targetMilli / 1000]);
     chFeedback.push([s.feedbackMv ?? null]);
     chIsr.push([s.active ? s.isrCycles / 600 : null]);
@@ -312,7 +330,7 @@ async function pollLog() {
   if (!$("#log-auto").checked || logBusy) return; // one request in flight at a time
   logBusy = true;
   try {
-    const d = await (await fetch(`/api/log?since=${logCursor}`)).json();
+    const d = await (await apiGet(`/api/log?since=${logCursor}`)).json();
     const box = $("#log-lines");
     // The device rebooted (OTA commit, watchdog, power cycle): sequence
     // numbers restarted, so a retained cursor would silently match nothing

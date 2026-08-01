@@ -1,17 +1,10 @@
 #pragma once
 
-// Bootstrap for the API write PIN.
+// Bootstrap for the network API access PIN.
 //
-// writeAuthorized() returns true unconditionally when the PIN is empty, and empty is
-// the compiled default - so an unconfigured board accepts every mutating request from
-// anyone who can reach port 80, including a firmware upload. That single default is
-// what makes the unsigned-OTA hole remotely reachable and what makes the OTA
-// safe-state a one-request denial of service.
-//
-// Rather than refuse to operate until an operator sets one - which would need the
-// very API being refused - the device generates a PIN on first boot, persists it, and
-// displays it. Fails closed without locking anyone out, which is how consumer network
-// equipment has settled this. The trade it accepts: anyone with physical sight of the
+// The device generates a PIN on first boot, persists it, and displays it. If entropy
+// or persistence fails the API remains locked and the physical serial/OLED channel
+// explains recovery. The trade it accepts: anyone with physical sight of the
 // display learns the PIN. That is consistent with the existing threat model, where
 // physical access is already out of scope (see docs/SECURITY.md).
 //
@@ -76,5 +69,9 @@ inline bool writePinLooksGenerated(const char *pin) {
 }
 
 // Generate, persist and display a PIN if none is configured. Call once at boot, after
-// the configuration has been loaded. No-op when a PIN is already set.
-void writePinEnsure(const char *settingsFile);
+// the configuration has been loaded. `configurationPersisted` says whether the
+// existing PIN came from a verified settings document; it prevents a future compiled
+// non-empty default from being mistaken for durable provisioning. Returns true only
+// when both a PIN and a complete configuration are durably present. API access and
+// PWM output release remain fail-closed if entropy or persistence fails.
+bool writePinEnsure(const char *settingsFile, bool configurationPersisted);

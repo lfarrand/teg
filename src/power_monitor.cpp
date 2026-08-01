@@ -41,6 +41,20 @@ static uint32_t lastEnergyMs = 0;
 static int32_t peakMa = 0;
 static elapsedMillis sinceRead;
 static elapsedMillis sinceProbe = ProbeRetryMs; // first probe immediately
+static volatile uint8_t pinEvents = 0;
+static uint8_t attachedPgEfuse = 255;
+static uint8_t attachedPgBuck = 255;
+static uint8_t attachedAlert = 255;
+
+enum : uint8_t {
+  PinEventPgEfuse = 1u << 0,
+  PinEventPgBuck = 1u << 1,
+  PinEventAlert = 1u << 2,
+};
+
+FASTRUN static void pgEfuseIsr() { pinEvents |= PinEventPgEfuse; }
+FASTRUN static void pgBuckIsr() { pinEvents |= PinEventPgBuck; }
+FASTRUN static void alertIsr() { pinEvents |= PinEventAlert; }
 
 static bool regWrite(uint8_t reg, uint16_t value) {
   bus.beginTransmission(config.PowerMon.Address);
@@ -62,6 +76,15 @@ static bool regRead(uint8_t reg, uint16_t &value) {
   value = static_cast<uint16_t>(bus.read()) << 8;
   value |= static_cast<uint16_t>(bus.read());
   return true;
+}
+
+static void resetBus() {
+  // Teensy Wire bounds each transfer and attempts recovery clocks when BUSY
+  // is stuck. Reinitialising LPI2C3 as well clears stale FIFO/status state
+  // after a telemetry-loom hot unplug before the next probe.
+  bus.end();
+  bus.begin();
+  bus.setClock(PowerMonBusHz);
 }
 
 // Probe + program the INA226. Returns false when it does not answer (loom
@@ -94,18 +117,40 @@ static void pinInput(uint8_t pin) {
   }
 }
 
-void powerMonitorConfigure() {
+static void detachPinInterrupt(uint8_t &pin) {
+  if (pin != 255) {
+    detachInterrupt(digitalPinToInterrupt(pin));
+    pin = 255;
+  }
+}
+
+static void attachPinInterrupt(uint8_t pin, void (*handler)(), int mode, uint8_t &remember) {
+  if (pin != 255) {
+    attachInterrupt(digitalPinToInterrupt(pin), handler, mode);
+    remember = pin;
+  }
+}
+
+FLASHMEM void powerMonitorConfigure() {
+  detachPinInterrupt(attachedPgEfuse);
+  detachPinInterrupt(attachedPgBuck);
+  detachPinInterrupt(attachedAlert);
+  pinEvents = 0;
   enabled = config.PowerMon.Enabled;
   inaOnline = false;
   lastReadings = PowerMonReadings{};
   if (!enabled) {
     return;
   }
-  bus.begin();
-  bus.setClock(PowerMonBusHz);
+  resetBus();
   pinInput(config.PowerMon.PgEfusePin);  // driver board provides 10k pull-ups
   pinInput(config.PowerMon.PgBuckPin);
-  pinInput(config.PowerMon.AlertPin);    // open-drain; pull-up at this end
+  if (config.PowerMon.AlertPin != 255) {
+    pinMode(config.PowerMon.AlertPin, INPUT_PULLUP); // external 2k2 remains required
+  }
+  attachPinInterrupt(config.PowerMon.PgEfusePin, pgEfuseIsr, CHANGE, attachedPgEfuse);
+  attachPinInterrupt(config.PowerMon.PgBuckPin, pgBuckIsr, CHANGE, attachedPgBuck);
+  attachPinInterrupt(config.PowerMon.AlertPin, alertIsr, FALLING, attachedAlert);
   inaOnline = inaProgram();
   writeLogLevel(inaOnline ? EventInfo : EventWarn,
                 inaOnline ? "Aux monitor: INA226 online" : "Aux monitor: INA226 not answering");
@@ -114,21 +159,40 @@ void powerMonitorConfigure() {
   lastEnergyMs = 0;
 }
 
-// PG/alert pins are cheap digital reads: sampled every pass so state edges
-// are timestamped at loop resolution, not at the I2C interval
+// The ISRs retain an edge through long HTTP/SD operations. Loop context owns
+// GPIO reads and logging; interrupt handlers only OR one byte in ITCM.
 static void samplePins() {
+  noInterrupts();
+  const uint8_t events = pinEvents;
+  pinEvents = 0;
+  interrupts();
   const bool pg1 = config.PowerMon.PgEfusePin != 255 &&
                    digitalRead(config.PowerMon.PgEfusePin) == HIGH;
   const bool pg2 = config.PowerMon.PgBuckPin != 255 &&
                    digitalRead(config.PowerMon.PgBuckPin) == HIGH;
-  if (config.PowerMon.PgEfusePin != 255 && pg1 != lastReadings.pgEfuse) {
+  if (config.PowerMon.PgEfusePin != 255 &&
+      (pg1 != lastReadings.pgEfuse || (events & PinEventPgEfuse) != 0)) {
     writeLogLevel(pg1 ? EventInfo : EventWarn,
                   pg1 ? "Aux monitor: eFuse PG asserted" : "Aux monitor: eFuse PG lost");
+    ++lastReadings.pgEdgeCount;
   }
-  if (config.PowerMon.PgBuckPin != 255 && pg2 != lastReadings.pgBuck) {
+  if (config.PowerMon.PgBuckPin != 255 &&
+      (pg2 != lastReadings.pgBuck || (events & PinEventPgBuck) != 0)) {
     writeLogLevel(pg2 ? EventInfo : EventWarn,
                   pg2 ? "Aux monitor: buck PG asserted" : "Aux monitor: buck PG lost");
+    ++lastReadings.pgEdgeCount;
   }
+  const bool alertActive = config.PowerMon.AlertPin != 255 &&
+                           digitalRead(config.PowerMon.AlertPin) == LOW;
+  if ((events & PinEventAlert) != 0) {
+    ++lastReadings.alertCount;
+  }
+  if (alertActive && !lastReadings.alert) {
+    writeLogLevel(EventError, "Aux monitor: hardware ALERT asserted");
+  }
+  // Preserve the hardware edge when I2C is unavailable. inaProgram() resets
+  // the chip, but cannot erase the software evidence captured here.
+  lastReadings.alert = lastReadings.alert || alertActive || (events & PinEventAlert) != 0;
   lastReadings.pgEfuse = pg1;
   lastReadings.pgBuck = pg2;
 }
@@ -143,12 +207,14 @@ void powerMonitorTask() {
   if (!inaOnline) {
     if (sinceProbe >= ProbeRetryMs) {
       sinceProbe = 0;
+      resetBus();
       inaOnline = inaProgram();
       if (inaOnline) {
         writeLog("Aux monitor: INA226 online");
       }
     }
     lastReadings.valid = false;
+    lastEnergyMs = 0; // do not backfill the unobserved gap after recovery
     return;
   }
 
@@ -165,6 +231,8 @@ void powerMonitorTask() {
     inaOnline = false;
     lastReadings.valid = false;
     writeLogLevel(EventWarn, "Aux monitor: INA226 comms lost");
+    ++lastReadings.commsErrors;
+    lastEnergyMs = 0;
     sinceProbe = 0;
     return;
   }
@@ -182,13 +250,20 @@ void powerMonitorTask() {
   // clears the latch, so a trip between polls is never missed
   if (config.PowerMon.AlertMilliAmp != 0) {
     uint16_t maskEn = 0;
-    if (regRead(RegMaskEn, maskEn)) {
-      const bool alert = (maskEn & Ina226MaskAffBit) != 0;
-      if (alert && !lastReadings.alert) {
-        writeLogLevel(EventError, "Aux monitor: overcurrent alert (shunt limit exceeded)");
-      }
-      lastReadings.alert = alert;
+    if (!regRead(RegMaskEn, maskEn)) {
+      inaOnline = false;
+      lastReadings.valid = false;
+      ++lastReadings.commsErrors;
+      lastEnergyMs = 0;
+      sinceProbe = 0;
+      writeLogLevel(EventWarn, "Aux monitor: INA226 alert-register read failed");
+      return;
     }
+    const bool alert = (maskEn & Ina226MaskAffBit) != 0;
+    if (alert && !lastReadings.alert) {
+      writeLogLevel(EventError, "Aux monitor: overcurrent alert (shunt limit exceeded)");
+    }
+    lastReadings.alert = alert;
   }
 
   // IMON (optional): the eFuse's analog current mirror into R_IMON. Read
@@ -221,7 +296,7 @@ PowerMonReadings powerMonReadings() {
 }
 
 uint64_t powerMonEnergyMwh() {
-  return energyMwh >= 0.0 ? static_cast<uint64_t>(energyMwh) : 0;
+  return energyMwhToCounter(energyMwh);
 }
 
 int32_t powerMonPeakMa() {

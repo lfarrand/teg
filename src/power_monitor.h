@@ -28,6 +28,9 @@ struct PowerMonReadings {
   bool pgEfuse = false;    // TPS25983 power good (pin configured and high)
   bool pgBuck = false;     // TPSM84338 power good
   bool alert = false;      // INA226 shunt-overcurrent alert (latched)
+  uint32_t alertCount = 0; // ALERT edges retained even across I2C recovery
+  uint32_t pgEdgeCount = 0;
+  uint32_t commsErrors = 0;
 };
 
 void powerMonitorConfigure();

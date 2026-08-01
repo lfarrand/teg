@@ -5,6 +5,7 @@
 #include "ntp_utils.h"
 #include <QNEthernet.h>
 #include "config_json.h"
+#include "pwm_utils.h"
 #include "Adafruit_SSD1306.h"
 #include "qnethernet/QNEthernetClient.h"
 #include "qnethernet/QNEthernetUDP.h"
@@ -129,11 +130,11 @@ void flushDisplay() {
 // collides with the statics, which is the failure that matters. At shallow call
 // depth it should read close to the "free for local variables" figure that
 // `pio run` reports; docs/BENCH_CHECKS.md leans on that agreement.
-extern char _ebss;
+extern unsigned long _ebss;
 
 int getFreeMemory() {
   char top;
-  return &top - &_ebss;
+  return &top - reinterpret_cast<char *>(&_ebss);
 }
 
 // Smallest headroom seen since boot. An instantaneous reading is nearly useless for
@@ -176,6 +177,7 @@ constexpr uint32_t NtpReplyTimeoutMs = 2000UL;
 IPAddress ntpAddr;
 bool ntpAddrValid = false;
 bool ntpAwaiting = false;
+uint64_t ntpAssociationToken = 0;
 uint32_t ntpSentAt = 0;
 uint32_t ntpLastAttempt = 0;
 bool ntpEverAttempted = false;
@@ -188,9 +190,20 @@ void ntpTask() {
 
   if (ntpAwaiting) {
     const int size = ntpUDP.parsePacket();
-    if (size >= NTP_PACKET_SIZE) {
-      ntpUDP.read(packetBuffer, NTP_PACKET_SIZE);
-      const uint32_t secsSince1900 = parseNtpSeconds(packetBuffer);
+    if (size > 0) {
+      const IPAddress source = ntpUDP.remoteIP();
+      const uint16_t sourcePort = ntpUDP.remotePort();
+      const int readN = ntpUDP.read(packetBuffer, NTP_PACKET_SIZE);
+      while (ntpUDP.available()) ntpUDP.read();
+      uint32_t secsSince1900 = 0;
+      const bool associated = source == ntpAddr && sourcePort == 123 &&
+                              readN == NTP_PACKET_SIZE &&
+                              validateNtpResponse(packetBuffer, ntpAssociationToken,
+                                                  &secsSince1900);
+      if (!associated) {
+        writeLogLevel(EventWarn, "NTP reply rejected (source/association/header)");
+        return; // keep awaiting the genuine reply until the normal timeout
+      }
       const uint32_t epoch = static_cast<uint32_t>(ntpToUnixEpoch(secsSince1900));
       ntpAwaiting = false;
       // Validate before adopting: an unsolicited or malformed datagram must
@@ -218,18 +231,26 @@ void ntpTask() {
   ntpEverAttempted = true;
 
   if (!ntpAddrValid) {
-    // The one blocking step, rate-limited to once a minute at worst and
-    // bracketed by watchdog kicks
-    kickWatchdog();
-    ntpAddrValid = Ethernet.hostByName(timeServer, ntpAddr);
-    kickWatchdog();
+    ntpAddrValid = ntpAddr.fromString(timeServer);
+    if (!ntpAddrValid) {
+      // DNS is synchronous and can stall for seconds. It is primed during
+      // setup; after that, never perform it while gate outputs are live.
+      if (!pwmOutputInhibited()) return;
+      kickWatchdog();
+      ntpAddrValid = Ethernet.hostByName(timeServer, ntpAddr);
+      kickWatchdog();
+    }
     if (!ntpAddrValid) {
       return;
     }
   }
   while (ntpUDP.parsePacket() > 0) {
   }
-  buildNtpRequest(packetBuffer);
+  ntpAssociationToken = (static_cast<uint64_t>(ARM_DWT_CYCCNT) << 32) ^
+                        static_cast<uint64_t>(micros()) ^
+                        (static_cast<uint64_t>(millis()) << 11);
+  if (ntpAssociationToken == 0) ntpAssociationToken = 1;
+  buildNtpRequest(packetBuffer, ntpAssociationToken);
   ntpUDP.beginPacket(ntpAddr, 123);
   ntpUDP.write(packetBuffer, NTP_PACKET_SIZE);
   ntpUDP.endPacket();
@@ -237,7 +258,33 @@ void ntpTask() {
   ntpAwaiting = true;
 }
 
-void writeInfluxDb(const String &data) {
+namespace {
+IPAddress influxAddr;
+bool influxAddrValid = false;
+elapsedMillis sinceInfluxResolve;
+char influxResolvedHost[sizeof(config.Influx.Host)] = {};
+}
+
+FLASHMEM bool prepareInfluxEndpoint() {
+  if (config.Influx.Host[0] == '\0') return false;
+  if (strncmp(influxResolvedHost, config.Influx.Host, sizeof(influxResolvedHost)) != 0) {
+    influxAddrValid = false;
+    strncpy(influxResolvedHost, config.Influx.Host, sizeof(influxResolvedHost) - 1);
+    influxResolvedHost[sizeof(influxResolvedHost) - 1] = '\0';
+  }
+  if (influxAddrValid && sinceInfluxResolve <= 300000) return true;
+  influxAddrValid = influxAddr.fromString(config.Influx.Host);
+  if (!influxAddrValid) {
+    if (!pwmOutputInhibited()) return false;
+    kickWatchdog();
+    influxAddrValid = Ethernet.hostByName(config.Influx.Host, influxAddr);
+    kickWatchdog();
+  }
+  sinceInfluxResolve = 0;
+  return influxAddrValid;
+}
+
+FLASHMEM void writeInfluxDb(const String &data) {
   // Metrics are disabled until a token is configured (settings.cfg / web UI);
   // the token is deliberately never present in source
   if (config.Influx.Token[0] == '\0' || config.Influx.Host[0] == '\0') {
@@ -255,19 +302,7 @@ void writeInfluxDb(const String &data) {
   // Resolve once and connect by address after that, the same way ntpTask does. The
   // blocking resolve is bracketed by watchdog kicks and retried at most every 5
   // minutes, or immediately after a failed connect in case the server has moved.
-  static IPAddress influxAddr;
-  static bool influxAddrValid = false;
-  static elapsedMillis sinceResolve;
-
-  if (!influxAddrValid || sinceResolve > 300000) {
-    kickWatchdog();
-    influxAddrValid = Ethernet.hostByName(config.Influx.Host, influxAddr);
-    kickWatchdog();
-    sinceResolve = 0;
-    if (!influxAddrValid) {
-      return; // skip this push rather than stalling again on the next one
-    }
-  }
+  if (!prepareInfluxEndpoint()) return;
 
   influxDbClient.setConnectionTimeout(500);
   if (influxDbClient.connect(influxAddr, config.Influx.Port)) {

@@ -9,18 +9,18 @@ on:
 jobs:
   build-firmware:
     name: Build Teensy 4.1 firmware
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           submodules: recursive
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
           python-version: "3.12"
 
       - name: Cache PlatformIO
-        uses: actions/cache@v5
+        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
         with:
           path: |
             ~/.cache/pip
@@ -28,13 +28,20 @@ jobs:
           key: pio-build-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
 
       - name: Install PlatformIO
-        run: pip install --upgrade platformio
+        run: pip install platformio==6.1.18
 
-      - name: Build firmware
-        run: pio run -e teensy41
+      - name: Build firmware twice and verify reproducibility
+        shell: bash
+        run: |
+          pio run -e teensy41
+          cp .pio/build/teensy41/firmware.hex /tmp/firmware-first.hex
+          pio run -e teensy41 -t clean
+          pio run -e teensy41
+          cmp /tmp/firmware-first.hex .pio/build/teensy41/firmware.hex
+          sha256sum .pio/build/teensy41/firmware.hex
 
       - name: Upload firmware artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: firmware-teensy41
           path: .pio/build/teensy41/firmware.hex
@@ -42,18 +49,18 @@ jobs:
 
   unit-tests:
     name: Native unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           submodules: recursive
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
           python-version: "3.12"
 
       - name: Cache PlatformIO
-        uses: actions/cache@v5
+        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
         with:
           path: |
             ~/.cache/pip
@@ -61,10 +68,30 @@ jobs:
           key: pio-test-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
 
       - name: Install PlatformIO and gcovr
-        run: pip install --upgrade platformio gcovr
+        run: pip install platformio==6.1.18 gcovr==8.6
 
       - name: Run tests
         run: pio test -e native --verbose
 
       - name: Coverage report (tested units, line coverage gated at 80%)
         run: gcovr --root . --filter 'src/' --print-summary --fail-under-line 80
+
+  submodule-tests:
+    name: Forked-library native tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          submodules: recursive
+
+      - name: Test aWOT fork
+        run: |
+          cmake -S lib/aWOT/test -B /tmp/awot-build
+          cmake --build /tmp/awot-build --parallel
+          ctest --test-dir /tmp/awot-build --output-on-failure
+
+      - name: Test eFlexPwm fork
+        run: |
+          cmake -S lib/eFlexPwm/test -B /tmp/eflex-build
+          cmake --build /tmp/eflex-build --parallel
+          ctest --test-dir /tmp/eflex-build --output-on-failure

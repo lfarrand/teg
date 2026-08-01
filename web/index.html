@@ -28,6 +28,8 @@
   .savebar button { margin: 0; width: auto; }
   .hidden { display: none !important; }
   .hint { font-size: 0.75rem; color: var(--pico-muted-color); margin: -0.4rem 0 0.8rem; }
+  .link-button { display:inline; width:auto; margin:0; padding:0; border:0; background:none;
+                 color:var(--pico-primary); text-decoration:underline; font:inherit; }
   select, input { margin-bottom: 0.8rem; }
 </style>
 </head>
@@ -47,11 +49,12 @@
     <div><span>Index</span> <b id="st-idx">&mdash;</b></div>
     <div><span>ISR</span> <b id="st-isr">&mdash;</b></div>
     <div><span>Last apply</span> <b id="st-apply">&mdash;</b></div>
+    <div><span>Settings</span> <b id="st-persist">&mdash;</b></div>
     <div><span>RAM free</span> <b id="st-ram">&mdash;</b></div>
     <div><span>Temp</span> <b id="st-temp">&mdash;</b></div>
     <div><span>Derate</span> <b id="st-derate">&mdash;</b></div>
   </div>
-  <div id="fault-banner">&#9888; FAULT TRIPPED &mdash; all PWM outputs disabled.
+  <div id="fault-banner">&#9888; <span id="fault-text">FAULT TRIPPED &mdash; all PWM outputs disabled.</span>
     <button id="fault-clear" style="width:auto;margin:0 0 0 0.8rem;padding:0.2rem 0.8rem;background:#fff;color:#c62828;border:none">Clear fault</button>
   </div>
 
@@ -72,7 +75,7 @@
           <option value="8">8 &middot; 3D-SVPWM (4-leg)</option>
         </select>
       </label>
-      <label>Carrier <input type="number" data-path="Pwm.Tm2.SpwmCarrierFrequency" min="100"> </label>
+      <label>Carrier <input type="number" data-path="Pwm.Tm2.SpwmCarrierFrequency" min="18" max="200000"> </label>
       <label>Modulation Hz <input type="number" data-path="Pwm.Tm2.SpwmModulationFrequency" min="1"></label>
       <label>Index /1000 <input type="number" data-path="Pwm.Tm2.ModulationIndexMilli" min="0" max="1155"></label>
       <label data-show="4,5">Cells <input type="number" data-path="Pwm.Tm2.ModulationCells" min="1" max="4"></label>
@@ -136,7 +139,7 @@
 
   <article>
     <header>Thermal Monitoring</header>
-    <label><input type="checkbox" role="switch" data-path="Thermal.Enabled"> DS18B20 probes (index 0 = hot side, 1 = cold side) + die temperature; the worst of hot/die linearly derates the modulation index</label>
+    <label><input type="checkbox" role="switch" data-path="Thermal.Enabled"> DS18B20 probes + die temperature; ROM-sorted probe labels are deterministic and the hottest of all three linearly derates the modulation index</label>
     <div class="grid-fields">
       <label>OneWire pin <input type="number" data-path="Thermal.OneWirePin" min="0" max="41"></label>
       <label>Derate start &deg;C <input type="number" data-path="Thermal.DerateStartC" min="0" max="255"></label>
@@ -198,8 +201,8 @@
         <span class="hint" id="trig-info">idle</span>
       </div>
       <p class="hint">Raw download: 20-byte <code>TEGC</code> header (version, channel, flags, sample rate, count, trigger offset) + little-endian uint16 samples. Freeze first (trigger or fault) for a consistent record.
-        <a href="/api/capture/raw?channel=v" download>voltage.tegc</a> &middot;
-        <a href="/api/capture/raw?channel=i" download>current.tegc</a></p>
+        <button type="button" id="download-v" class="link-button">voltage.tegc</button> &middot;
+        <button type="button" id="download-i" class="link-button">current.tegc</button></p>
     </details>
   </article>
 
@@ -250,8 +253,7 @@
     <div class="grid-fields">
       <label>Pin <input type="number" data-path="CurrentLimit.Pin" min="0" max="41"></label>
       <label>Threshold mV <input type="number" data-path="CurrentLimit.ThresholdMillivolts" min="100" max="3300"></label>
-      <label>Filter samples <input type="number" data-path="CurrentLimit.FilterCount" min="0" max="7"></label>
-      <label>Filter period <input type="number" data-path="CurrentLimit.FilterPeriod" min="0" max="255"></label>
+      <p class="hint">Continuous high-speed mode is enforced. Sampled filtering is disabled because it adds fault latency; condition noise in the analogue front end instead.</p>
     </div>
     <label><input type="checkbox" role="switch" data-path="CurrentLimit.CycleByCycle"> Cycle-by-cycle limiting (auto-recover each PWM cycle; off = latched fault)</label>
     <span class="hint" id="oc-status"></span>
@@ -289,7 +291,7 @@
       <button id="preset-save" class="secondary outline" style="width:auto;margin:0">Save current</button>
     </div>
     <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap">
-      <a href="/api/config/export" download="teg-config.json" role="button" class="secondary outline" style="width:auto;margin:0">Export settings</a>
+      <button type="button" id="cfg-export" class="secondary outline" style="width:auto;margin:0">Export settings</button>
       <input type="file" id="cfg-import-file" accept=".json" style="margin:0;width:auto">
       <button id="cfg-import" class="secondary outline" style="width:auto;margin:0">Import</button>
     </div>
@@ -298,10 +300,10 @@
 
   <article>
     <header>Firmware Update (OTA)</header>
-    <p class="hint"><strong>Starting an upload disables the inverter outputs until reboot.</strong> Upload the PlatformIO <code>.hex</code> build; it stages into upper flash and is structurally verified (Teensy 4.1 boot headers, board marker, density) before the Commit button becomes available. Commit rewrites the firmware and reboots &mdash; do not remove power during the ~10&thinsp;s flash write. Abort invalidates the staged image and reboots into the current firmware.</p>
+    <p class="hint"><strong>Disabled in production builds.</strong> The experimental updater is unsigned and the Teensy 4.1 boot path is single-slot, so authenticity, rollback protection and power-loss recovery cannot be guaranteed. Release firmware must be installed with the Teensy USB bootloader. Lab builds may opt in explicitly with <code>TEG_ENABLE_UNSAFE_LAB_OTA</code>.</p>
     <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
       <input type="file" id="ota-file" accept=".hex" style="margin:0;width:auto">
-      <button id="ota-upload" class="secondary outline" style="width:auto;margin:0">Upload &amp; verify</button>
+      <button id="ota-upload" class="secondary outline" style="width:auto;margin:0" disabled>Upload &amp; verify</button>
       <button id="ota-commit" style="width:auto;margin:0" disabled>Commit &amp; reboot</button>
       <button id="ota-abort" class="secondary outline" style="width:auto;margin:0" disabled>Abort</button>
     </div>
@@ -360,7 +362,7 @@
 
   <article>
     <header>System</header>
-    <label><input type="checkbox" role="switch" data-path="Pwm.SyncPwm"> Sync PWM timers via XBAR (applies at boot)</label>
+    <small>Cross-module XBAR synchronization is disabled until PIT ownership and hardware common-start timing are bench-qualified.</small>
     <label><input type="checkbox" role="switch" data-path="Pwm.PrintRegs"> Print registers on configure</label>
   </article>
 
@@ -487,7 +489,8 @@ function toast(msg, isErr) {
 }
 
 async function load() {
-  const r = await fetch("/api/config");
+  const r = await apiGet("/api/config");
+  if (!r.ok) throw new Error("HTTP " + r.status);
   cfg = (await r.json()).Config;
   loadIntoForm();
 }
@@ -497,6 +500,31 @@ function authHeaders(extra) {
   const pin = sessionStorage.getItem("pin");
   if (pin) h["X-Auth-Pin"] = pin;
   return h;
+}
+
+async function apiGet(path) {
+  let r = await fetch(path, { headers: authHeaders() });
+  if (r.status === 401) {
+    const pin = prompt("Device access PIN required:");
+    if (pin === null) throw new Error("authentication cancelled");
+    sessionStorage.setItem("pin", pin);
+    r = await fetch(path, { headers: authHeaders() });
+  }
+  return r;
+}
+
+async function downloadApi(path, filename) {
+  const r = await apiGet(path);
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const url = URL.createObjectURL(await r.blob());
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
 
 function postConfig() {
@@ -524,7 +552,7 @@ async function save() {
     const out = await r.json();
     dirty = false;
     $("#dirty").textContent = "";
-    toast(`Applied in ${out.applyMicros} µs`);
+    toast(`Applied in ${out.applyMicros} µs · SD verification pending`);
   } catch (e) {
     toast("Save failed: " + e.message, true);
   }
@@ -539,7 +567,7 @@ function fmtUptime(ms) {
 
 async function pollStatus() {
   try {
-    const s = await (await fetch("/api/status")).json();
+    const s = await (await apiGet("/api/status")).json();
     $("#st-up").textContent = fmtUptime(s.uptimeMs);
     $("#st-freq").textContent = s.active ? (s.modMilliHz / 1000).toFixed(3) + " Hz" : "off";
     $("#st-idx").textContent = s.active
@@ -547,12 +575,25 @@ async function pollStatus() {
       : "—";
     $("#st-isr").textContent = s.active ? (s.isrCycles / 600).toFixed(1) + " µs" : "—";
     $("#st-apply").textContent = s.applyMicros ? s.applyMicros + " µs" : "—";
+    $("#st-persist").textContent = s.configPersistPending ? "saving…" : "verified";
     $("#st-ram").textContent = Math.floor(s.dtcmFree / 1024) + "k / " + Math.floor(s.ocramFree / 1024) + "k";
     const t = (d) => (d > -32768 ? (d / 10).toFixed(1) + "°" : "—");
-    $("#st-temp").textContent = `hot ${t(s.hotDeciC)} cold ${t(s.coldDeciC)} die ${t(s.chipDeciC)}`;
+    $("#st-temp").textContent = `probe 1 ${t(s.hotDeciC)} probe 2 ${t(s.coldDeciC)} die ${t(s.chipDeciC)}`;
     $("#st-derate").textContent = s.derateMilli < 1000 ? (s.derateMilli / 10).toFixed(0) + "%" : "none";
     $("#st-derate").style.color = s.derateMilli < 1000 ? "#c62828" : "";
-    $("#fault-banner").style.display = s.fault ? "block" : "none";
+    const inhibited = s.fault || s.restartInhibit || s.hardwareInhibit || s.provisioningInhibit;
+    $("#fault-banner").style.display = inhibited ? "block" : "none";
+    if (s.hardwareInhibit) {
+      $("#fault-text").textContent = "HARDWARE INTERLOCK — mandatory PSRAM unavailable; PWM outputs disabled.";
+    } else if (s.provisioningInhibit) {
+      $("#fault-text").textContent = "PROVISIONING INTERLOCK — persist a complete configuration and PIN before PWM release.";
+    } else if (s.restartInhibit) {
+      $("#fault-text").textContent = "RESTART INTERLOCK — inspect the reset cause, then acknowledge explicitly.";
+    } else {
+      $("#fault-text").textContent = "FAULT TRIPPED — all PWM outputs disabled.";
+    }
+    $("#fault-clear").style.display =
+      (s.fault || s.restartInhibit) && !s.hardwareInhibit && !s.provisioningInhibit ? "inline-block" : "none";
     $("#mtp-status").textContent = s.mtp
       ? (s.mtpPaused ? "· active but paused (inverter busy)" : "· active")
       : (cfg && cfg.Mtp && cfg.Mtp.Enabled ? "· enabled in settings — reboot to start" : "");
@@ -582,7 +623,7 @@ async function refreshCapture() {
   const sec = Number($("#cap-window").value);
   try {
     const chan = $("#cap-channel").value;
-    const d = await (await fetch(`/api/capture?count=${rate * sec}&bins=600&channel=${chan}`)).json();
+    const d = await (await apiGet(`/api/capture?count=${rate * sec}&bins=600&channel=${chan}`)).json();
     const c = $("#cap-canvas");
     c.width = c.clientWidth * (window.devicePixelRatio || 1);
     const ctx = c.getContext("2d");
@@ -610,6 +651,10 @@ async function refreshCapture() {
   }
 }
 $("#cap-refresh").addEventListener("click", refreshCapture);
+$("#download-v").addEventListener("click", () =>
+  downloadApi("/api/capture/raw?channel=v", "voltage.tegc").catch((e) => toast("Download failed: " + e.message, true)));
+$("#download-i").addEventListener("click", () =>
+  downloadApi("/api/capture/raw?channel=i", "current.tegc").catch((e) => toast("Download failed: " + e.message, true)));
 
 function showScopeState(s) {
   const labels = {
@@ -642,7 +687,7 @@ async function scopePost(path, body) {
 
 async function refreshPresets() {
   try {
-    const d = await (await fetch("/api/presets")).json();
+    const d = await (await apiGet("/api/presets")).json();
     const sel = $("#preset-list");
     const prev = sel.value;
     sel.innerHTML = "";
@@ -746,6 +791,10 @@ $("#cfg-import").addEventListener("click", async () => {
   }
 });
 
+$("#cfg-export").addEventListener("click", () =>
+  downloadApi("/api/config/export", "teg-config.json").catch((e) =>
+    $("#preset-info").textContent = "export failed: " + e.message));
+
 refreshPresets();
 
 let otaSize = 0;
@@ -817,7 +866,14 @@ $("#ota-abort").addEventListener("click", async () => {
 // mid-flow, re-expose the abort path so the device is never stranded
 (async () => {
   try {
-    const s = await (await fetch("/api/ota")).json();
+    const s = await (await apiGet("/api/ota")).json();
+    if (!s.enabled) {
+      $("#ota-file").disabled = true;
+      $("#ota-upload").disabled = true;
+      $("#ota-info").textContent = s.reason || "OTA disabled in this production build";
+      return;
+    }
+    $("#ota-upload").disabled = false;
     if (s.inProgress) {
       otaSize = s.size;
       $("#ota-abort").disabled = false;
@@ -867,7 +923,7 @@ setInterval(async () => {
   const panel = $("#trig-info").closest("details");
   if (!panel || !panel.open) return;
   try {
-    const s = await (await fetch("/api/scope")).json();
+    const s = await (await apiGet("/api/scope")).json();
     showScopeState(s);
     if (s.state === "complete" && !scopeWasComplete) refreshCapture();
     scopeWasComplete = s.state === "complete";
@@ -898,7 +954,7 @@ function drawWavePreview(pts) {
 
 async function refreshWaveform() {
   try {
-    const d = await (await fetch("/api/waveform")).json();
+    const d = await (await apiGet("/api/waveform")).json();
     if (d.type === "none") {
       $("#wave-info").textContent = "none uploaded";
       drawWavePreview([]);

@@ -13,6 +13,7 @@ void acmpClearLatch();      // clear the latched FlexPWM fault flag (IRQ stays o
 void acmpRearmFaultIrq();   // re-enable the fault IRQ; call LAST in the clear flow
 bool acmpFaultPinActive();  // live filtered comparator state (FSTS0 FFPIN0)
 bool acmpArmedLatched();    // latched mode armed (clear flow needs to know)
+bool acmpCbcEnabled();      // true when per-carrier trip polling is required
 uint32_t acmpCbcTripCount();    // cumulative cycle-by-cycle limited cycles
 uint32_t acmpCbcTripsPerSec();  // last-second rate
 uint16_t acmpActualThresholdMv(); // DAC-quantized threshold actually programmed

@@ -13,6 +13,7 @@
 // using per-count scale factors derived from the sensor calibration.
 
 #include <stdint.h>
+#include <limits.h>
 #include <math.h>
 
 struct MeterReadings {
@@ -39,32 +40,73 @@ inline int32_t meterZeroCounts(uint16_t zeroMillivolts) {
   return static_cast<int32_t>(roundf(static_cast<float>(zeroMillivolts) * 4095.0f / 3300.0f));
 }
 
+// Reject calibrations whose worst possible 12-bit sample pair cannot be
+// represented by the public engineering-unit types. This is deliberately
+// conservative (full-scale signed deltas on both channels).
+inline bool meterCalibrationValid(uint16_t voltageZeroMillivolts,
+                                  uint16_t currentZeroMillivolts,
+                                  uint32_t currentMilliampPerVolt,
+                                  uint32_t voltageRatioMilli) {
+  if (voltageZeroMillivolts > 3300 || currentZeroMillivolts > 3300 ||
+      currentMilliampPerVolt == 0 || voltageRatioMilli == 0) {
+    return false;
+  }
+  const double mvPerCount = (3300.0 / 4095.0) * voltageRatioMilli / 1000.0;
+  const double maPerCount = (3300.0 / 4095.0) * currentMilliampPerVolt / 1000.0;
+  const double maxCounts = 4095.0;
+  const double maxPowerMw = maxCounts * maxCounts * mvPerCount * maPerCount / 1000.0;
+  return isfinite(maxPowerMw) && maxPowerMw <= static_cast<double>(INT32_MAX) &&
+         maxCounts * mvPerCount <= static_cast<double>(UINT32_MAX) &&
+         maxCounts * maPerCount <= static_cast<double>(UINT32_MAX);
+}
+
+inline int32_t meterSaturatingRoundI32(double value) {
+  if (!isfinite(value)) return 0;
+  if (value >= static_cast<double>(INT32_MAX)) return INT32_MAX;
+  if (value <= static_cast<double>(INT32_MIN)) return INT32_MIN;
+  return static_cast<int32_t>(llround(value));
+}
+
+inline uint32_t meterSaturatingRoundU32(double value) {
+  if (!isfinite(value) || value <= 0.0) return 0;
+  if (value >= static_cast<double>(UINT32_MAX)) return UINT32_MAX;
+  return static_cast<uint32_t>(llround(value));
+}
+
 inline MeterReadings computeMeterReadings(int64_t sumP, uint64_t sumVsq, uint64_t sumIsq,
                                           uint32_t n, float mvPerCountV, float maPerCountI) {
   MeterReadings r;
-  if (n == 0) {
+  if (n == 0 || !isfinite(mvPerCountV) || !isfinite(maPerCountI) ||
+      mvPerCountV <= 0.0f || maPerCountI <= 0.0f) {
     return r;
   }
-  // count-domain means (double: sums can reach 2^54 over a 1s window)
-  const float meanP = static_cast<float>(static_cast<double>(sumP) / n);
-  const float vrmsCounts = sqrtf(static_cast<float>(static_cast<double>(sumVsq) / n));
-  const float irmsCounts = sqrtf(static_cast<float>(static_cast<double>(sumIsq) / n));
+  // Keep the full accumulator precision through the range checks. Sums can
+  // reach 2^54 over a one-second window and accepted calibration values used
+  // to make float-to-int overflow undefined at this boundary.
+  const double meanP = static_cast<double>(sumP) / n;
+  const double vrmsCounts = sqrt(static_cast<double>(sumVsq) / n);
+  const double irmsCounts = sqrt(static_cast<double>(sumIsq) / n);
+  const double mvScale = static_cast<double>(mvPerCountV);
+  const double maScale = static_cast<double>(maPerCountI);
 
   // (mV) * (mA) / 1000 = mW
-  const float powerMw = meanP * mvPerCountV * maPerCountI / 1000.0f;
-  const float vrmsMv = vrmsCounts * mvPerCountV;
-  const float irmsMa = irmsCounts * maPerCountI;
+  const double powerMw = meanP * mvScale * maScale / 1000.0;
+  const double vrmsMv = vrmsCounts * mvScale;
+  const double irmsMa = irmsCounts * maScale;
+  if (!isfinite(powerMw) || !isfinite(vrmsMv) || !isfinite(irmsMa)) {
+    return r;
+  }
 
-  r.powerMw = static_cast<int32_t>(roundf(powerMw));
-  r.vrmsMv = static_cast<uint32_t>(roundf(vrmsMv));
-  r.irmsMa = static_cast<uint32_t>(roundf(irmsMa));
+  r.powerMw = meterSaturatingRoundI32(powerMw);
+  r.vrmsMv = meterSaturatingRoundU32(vrmsMv);
+  r.irmsMa = meterSaturatingRoundU32(irmsMa);
 
-  const float apparentMw = (vrmsMv / 1000.0f) * irmsMa;
-  if (apparentMw > 0.5f) {
-    float pf = 1000.0f * powerMw / apparentMw;
-    if (pf > 1000.0f) pf = 1000.0f;
-    if (pf < -1000.0f) pf = -1000.0f;
-    r.pfMilli = static_cast<int32_t>(roundf(pf));
+  const double apparentMw = (vrmsMv / 1000.0) * irmsMa;
+  if (apparentMw > 0.5) {
+    double pf = 1000.0 * powerMw / apparentMw;
+    if (pf > 1000.0) pf = 1000.0;
+    if (pf < -1000.0) pf = -1000.0;
+    r.pfMilli = meterSaturatingRoundI32(pf);
   }
   r.valid = true;
   return r;
@@ -73,6 +115,12 @@ inline MeterReadings computeMeterReadings(int64_t sumP, uint64_t sumVsq, uint64_
 // Energy integration step: mWh added by holding powerMw for elapsedMs
 inline double energyStepMwh(int32_t powerMw, uint32_t elapsedMs) {
   return static_cast<double>(powerMw) * elapsedMs / 3600000.0;
+}
+
+inline uint64_t energyMwhToCounter(double energyMwh) {
+  if (!isfinite(energyMwh) || energyMwh <= 0.0) return 0;
+  if (energyMwh >= static_cast<double>(UINT64_MAX)) return UINT64_MAX;
+  return static_cast<uint64_t>(energyMwh);
 }
 
 #endif

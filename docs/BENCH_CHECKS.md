@@ -11,17 +11,51 @@ This file lists what to confirm before trusting each feature, roughly in
 descending order of what goes wrong if you skip it. Work down as far as the
 features you actually intend to use.
 
+> **Release gate, 2026-08-01: NO-SHIP.** The confirmed software blockers in
+> [REVIEW_2026-08-01.md](REVIEW_2026-08-01.md) are remediated on the hardening
+> branch. This checklist is the remaining evidence gate: validate the corrected
+> build with gate drivers and the power stage disconnected.
+
 Everything here is in addition to the original checklist (dead-time per
 complementary pair, bipolar leg opposition, POD/APOD idle states, fault-trip
 latency, dither spectrum).
 
 ---
 
-## 0a. DO NOT USE THE POLARITY-INVERTING SCHEMES ON A REAL POWER STAGE
+## Preflight — before trusting any waveform
+
+- [ ] Hold every PWM pin in a hardware-safe inactive state from reset until the
+      loaded configuration is validated, every fault source is armed and sampled,
+      PSRAM is proven healthy, and the watchdog is running. The implementation now
+      claims this ordering; prove it on every pin during boot and apply.
+- [ ] Boot with the SD card absent, with corrupt live/tmp/backup settings, and with
+      an injected first-save failure. `/api/status` must report
+      `provisioningInhibit:true`, OUTEN must remain disconnected, and explicit fault
+      clear must not release a pin. Restore storage, let the verified deferred save
+      finish, and confirm only then that the interlock can clear.
+- [ ] Boot/apply with the GPIO fault input already active. Outputs must remain dark;
+      an edge-only ISR is insufficient.
+- [ ] Force a direct TEMPMON reset, allow the board to cool, and prove PWM remains
+      inhibited until an authenticated explicit operator acknowledgement.
+- [ ] Fit and identify an 8 MiB PSRAM device. Test the full used range, not the
+      small boot probe alone, and fail dark on absence/corruption. The image reserves
+      7,341,056 EXTMEM bytes; test each ring/store through its normal access path.
+- [ ] Reject every conflict among PWM pins, Wire/Wire2, ADC, OneWire, GPIO fault,
+      trigger and PowerMon pins before any `pinMode()` or peripheral mux change.
+- [ ] Make `SpwmCarrierFrequency` and all four FlexPWM2 submodule frequencies one
+      validated value. Reject DDS fundamentals at or above half the actual carrier,
+      hardware PWM below the representable ~18 Hz boundary, and asymmetric edges
+      outside `INIT..VAL1`.
+- [ ] Keep affected outputs inhibited while staging all timing/topology changes;
+      load buffered registers together and verify immediate `OCTRL`, `OUTEN` and
+      `CTRL2[INDEP]` transitions on a scope. Do not use `SyncPwm` as a safety claim;
+      its PIT/external-sync path is incomplete.
+
+## 0a. VERIFY POLARITY-INVERTING SCHEMES BEFORE ANY REAL POWER STAGE
 
 **Schemes 2 (bipolar), 5 (phase-shifted), and 4 (level-shifted) with POD or APOD
-carrier disposition are unsafe on hardware as this firmware stands.** Found by
-adversarial review 2026-07-31 and independently reported by five separate lenses.
+had unsafe protective states.** Found by adversarial review 2026-07-31 and
+independently reported by five separate lenses; the software fix is unverified.
 
 Those schemes realise a 180° opposition by inverting a cell's output polarity
 (`OCTRL[POLA]`/`[POLB]` = 1). Both mechanisms that force outputs off act **before**
@@ -54,11 +88,10 @@ disconnected.
       there. If either latches high, stop — that is the gate commanded on.
 - [ ] **Trip the hardware current limit** (`FTST0[FTEST]=1` is the safe injector) and
       confirm the same.
-- [ ] **Start an OTA upload** and confirm the same.
-- [ ] **Catch the transition edge.** Between un-inverting and the mask landing there is a
-      window of a few CPU cycles where the live waveform reaches the pin at the wrong
-      level. Expect one short wrong-level edge at the trip instant; measure it. It should
-      be well under a microsecond.
+- [ ] In an unsafe-lab OTA build, **start an OTA upload** and confirm the same. In a
+      normal release, confirm the upload is refused before any output-state change.
+- [ ] **Catch the transition edge.** Output drivers should disconnect before polarity
+      changes and remain dark through mask/restore. Any wrong-level pulse is a stop.
 - [ ] **Clear the fault and confirm the opposition comes back.** The two legs must be
       180° apart again. If they run in phase, `restoreCellPolarity()` did not take.
 
@@ -74,7 +107,7 @@ time reaches the hardware. That was not true before 2026-07-30; if you have read
 older copy of this file saying complementary operation "does not work", it is stale.
 
 **Nothing in this path has run on hardware.** It writes FlexPWM registers directly on
-every settings apply, and the 285 host tests are structurally unable to see registers.
+every settings apply, and the 309 host tests are structurally unable to see registers.
 
 ### The one that would have damaged hardware
 
@@ -108,18 +141,16 @@ both its pins **high** and hold them there.
       drives A and B from independent start/stop values.
 - [ ] The dead-time floor works: set `DeadTime` to 0, save, and confirm the log reports
       it was raised and the scope agrees.
-- [ ] Boot with **no SD card** and confirm dead time is still present — that path skips
-      config validation entirely.
+- [ ] Boot with **no SD card** and confirm the compiled defaults are fail-dark
+      (zero duty, modulation/asymmetric mode off) and **no output driver is released**.
 
-### Still open in this path
+### Hardened path to verify
 
-The review confirmed two further issues that are **not** fixed:
-
-- A **prescaler change is applied to live outputs** through an `LDMOD=1` + `LDOK` pulse
-  with a stale `VAL1`, and nothing masks the pins across the reconfigure.
-- `PwmBusClockHz` in `pwm_pair.h` is hard-coded at 150 MHz, while the value that
-  actually reaches the register derives from `F_BUS_ACTUAL`. If those differ, the
-  dead-time nanosecond conversion is wrong by that ratio.
+The implementation now disconnects every output driver before immediate polarity,
+enable and pair-topology writes, stages the FlexPWM2 submodules, issues one
+module-wide LDOK, waits with a carrier-derived deadline, arms and samples protections,
+and reconnects only on success. Verify each step electrically: host tests cannot see
+OUTEN, OCTRL, MCTRL or the pin mux, and a timeout must leave every pin dark.
 
 ## 0b. Before anything else
 
@@ -147,8 +178,9 @@ The review confirmed two further issues that are **not** fixed:
 ## 1. USB MTP — stack headroom (do this one first if MTP is enabled)
 
 > **Largely resolved 2026-07-30.** Compiling out the opt-in CMSIS FFT engine
-> returned **~77 KB of DTCM**, taking free-for-locals from **18,432 to 96,192
-> bytes**. The stack is no longer the tightest constraint in this build, and this
+> returned **~77 KB of DTCM**. The current hardened O2/LTO release reports
+> **90,752 bytes** free for locals; the exact figure changes with code generation.
+> The stack is no longer the tightest constraint in this build, and this
 > section drops well down the priority order. It is kept because the checks are
 > still worth running once, and because defining `TEG_ENABLE_CMSIS_FFT` puts the
 > whole 77 KB back.
@@ -177,6 +209,9 @@ stack, and it was the single most likely way this build bites you.
 
 Also for MTP:
 
+- [ ] Enter a deliberate maintenance state first: inhibit every PWM output and stop
+      control ownership before browsing. Confirm the automatic gate never starts or
+      services MTP during SPWM, fixed duty, resident playback or other-module output.
 - [ ] **It is read-only by design.** Confirm the host cannot delete, rename or
       write — that refusal is a safety property, not a bug (see
       `lib/MTP_Teensy/PATCHES.md`).
@@ -192,6 +227,10 @@ Also for MTP:
 
 **Test on a bench board with USB access before ever using this remotely.**
 
+- [ ] Confirm a normal release build reports OTA disabled and returns 501 for upload.
+      The destructive checks below apply only to a deliberately compiled
+      `TEG_ENABLE_UNSAFE_LAB_OTA` sacrificial build.
+
 - [ ] From the first erase of the commit until the reset (**~10–60 s**), a power
       loss leaves the board unbootable and needing physical recovery
       (pushbutton + Teensy Loader over USB). There is no A/B partition on the
@@ -202,14 +241,14 @@ Also for MTP:
       itself is derived from datasheet timings, not measured.
 - [ ] Confirm a deliberately-corrupt upload is rejected (flip a byte in a `.hex`
       and check the error), and that a Teensy 4.0 build is refused.
-- [ ] **Know what a failed commit now does.** If the flash read-back never matches
-      after three attempts, the commit no longer wipes and resets — that used to
-      leave a blank base image and a board recoverable only over USB. It now leaves
-      the best-effort image in place, logs
-      *"OTA COMMIT FAILED … DO NOT REBOOT"*, and keeps running the old firmware from
-      ITCM with the outputs still in the OTA safe state. **If you ever see that
-      message, do not power-cycle** — retry the update, or recover over USB
-      deliberately.
+- [ ] **Know what a failed commit actually does.** After three failed read-backs the
+      base image may already be damaged and the commit path returns with ENET, USB and
+      other interrupts disabled. It is not a credible remotely retryable state.
+      Keep outputs off, do not power-cycle, and use the physical Program button plus
+      Teensy Loader. Verify this recovery procedure on a sacrificial board.
+- [ ] Prove signature and rollback policy before calling OTA deployable. The current
+      CRC/structure checks accept any compatible unsigned image and any older build
+      from a holder of the cleartext PIN.
 - [ ] Confirm the outputs really are dead from the moment an upload starts, and
       that only a reboot restores them.
 
@@ -219,6 +258,9 @@ Also for MTP:
       sense pin, sweep `ThresholdMillivolts`, and watch `ocActive` in
       `/api/status` flip. The DAC reference is the 3.3 V rail, so accuracy
       tracks that rail.
+- [ ] Submit non-zero filter count/period values and confirm validation restores both
+      to zero. Measure pin-to-FlexPWM-off latency in the enforced continuous,
+      high-speed comparator mode; do not quote the comparator's ~25 ns alone.
 - [ ] Confirm the comparator output actually reaches the PWM fault input. If it
       never trips, try setting the comparator's `OPE` bit — the RM block diagram
       says the XBAR branch is ungated, but the one known-working community
@@ -243,9 +285,30 @@ from here, so calibration errors propagate.
       mid-rail bias (1650 mV) for both channels.
 - [ ] Check `VoltageRatioMilli` and `CurrentMilliampPerVolt` against your actual
       divider and sensor, then verify `vrmsMv`/`irmsMa` against a meter.
+- [ ] Reject calibration extremes that can drive computed power outside `int32_t`;
+      confirm finite/saturating behavior before MPPT is enabled.
 - [ ] Confirm the power sign convention matches your wiring (negative = export).
 - [ ] V and I are sampled one ADC conversion apart (~1–2 µs) — negligible at
       50 Hz, but relevant if you push the fundamental much higher.
+- [ ] Disable/freeze capture for a known interval and reconnect at a different load.
+      Energy must expose the gap counter and resume from a fresh timestamp without
+      backfilling the interval with the first recovered instantaneous power.
+
+### 4a. Driver-board power monitor
+
+- [ ] Verify the isolated bus is **Wire2** on pins 24 (SCL2) / 25 (SDA2), with
+      pull-ups present at this end, and prove none of its configurable GPIO/ADC pins
+      conflicts with a PWM or protection pin.
+- [ ] Read back INA226 register 0x00: expect `0x4527` (16 averages and about 35.2 ms
+      per refreshed shunt+bus result at 1.1 ms conversion times).
+- [ ] Configure a threshold beyond the INA226 positive shunt range and verify the SOL
+      register saturates at signed `0x7FFF`, never wraps to `0x8000` or above.
+- [ ] Confirm the physical ALERT pin toggles and that its ISR counter/event is retained
+      even if Wire2 is wedged. Then recover I²C and verify the reset/gap counters.
+- [ ] Hot-unplug the INA226, wait, reconnect under a changed load, and verify both
+      status recovery and energy-gap handling.
+- [ ] Compare TPS25983 IMON with INA226 only inside the eFuse datasheet's specified
+      IMON current range. Below it, treat IMON as qualitative.
 
 ## 5. Grid / reference PLL
 
@@ -260,6 +323,12 @@ from here, so calibration errors propagate.
       closes on itself and locks to nothing meaningful.
 - [ ] Note that arming the triggered scope freezes the shared capture ring and
       therefore coasts the PLL — surfaced as `pllState`, but surprising.
+- [ ] Reject low carrier/sample rates that make `Ts/20 ms >= 2` or dwell counters
+      zero. The accepted 1 Hz nominal / 18 Hz carrier case is unstable in the current
+      build; test the exact supported minimum after fixing validation.
+- [ ] Stall foreground processing long enough to build 4,097+ samples of backlog at
+      200 kHz, then verify phase history. The current multi-pass drain reconstructs
+      old samples with a newer DDS increment.
 
 ## 6. MPPT
 
@@ -293,6 +362,10 @@ from here, so calibration errors propagate.
       Without one, entries before the first NTP reply show uptime instead of a
       wall-clock time (never a misleading 1970 date).
 - [ ] Times are **UTC**.
+- [ ] Before treating time as evidence, inject replies from the wrong IP/port and with
+      mismatched originate timestamp, invalid mode/leap/stratum, and zero transmit
+      seconds. All must be rejected by the implemented RFC 5905 association/sanity
+      checks. NTP remains unauthenticated, so this is robustness rather than proof.
 - [ ] Confirm the log survives and explains a real reset: trip a fault, reboot,
       and check `/api/log` plus the "device restarted" marker in the viewer.
 
@@ -312,12 +385,15 @@ from here, so calibration errors propagate.
       the unit-tested reference, CMSIS is the fast path. They should agree.
 - [ ] Sanity-check the reported THD against a known-clean and a known-distorted
       output before trusting absolute numbers.
+- [ ] Use a deliberately non-coherent fundamental and inject a known high-order
+      harmonic. The current rounded-fundamental ±1-bin search can miss it almost
+      completely (for example 50 Hz / 20 kSPS / 4096 points with H17).
 
 ---
 
 ## What the tests already cover
 
-Do not re-verify these by hand — they are pinned by the 285 host-side unit
+Do not re-verify these by hand — they are pinned by the 309 host-side unit
 tests and re-run in CI on every push:
 
 - Modulation maths for all nine schemes, including FFT-verified harmonic

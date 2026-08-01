@@ -87,8 +87,9 @@ void test_alert_limit_counts() {
   TEST_ASSERT_EQUAL_UINT16(6000, ina226AlertLimitCounts(1500, 10000));
   // 0 mA -> 0 counts (caller treats 0 mA as "alert disabled" before here)
   TEST_ASSERT_EQUAL_UINT16(0, ina226AlertLimitCounts(0, 10000));
-  // Clamped rather than wrapped when the request exceeds the register
-  TEST_ASSERT_EQUAL_UINT16(0xFFFF, ina226AlertLimitCounts(2000000, 100000));
+  // SOL is signed: a positive threshold clamps at INT16_MAX rather than
+  // wrapping into the negative half of the register.
+  TEST_ASSERT_EQUAL_UINT16(0x7FFF, ina226AlertLimitCounts(2000000, 100000));
 }
 
 // --------------------------------------------------------------------------
@@ -118,10 +119,10 @@ void test_imon_invalid_divisor() {
 // --------------------------------------------------------------------------
 
 void test_config_register_fields() {
-  // 0x4927 = AVG 16 (100b), VBUSCT 1.1ms (100b), VSHCT 1.1ms (100b),
+  // 0x4527 = AVG 16 (010b), VBUSCT 1.1ms (100b), VSHCT 1.1ms (100b),
   // mode continuous shunt+bus (111b) - decode the fields rather than
   // trusting the assembled literal
-  TEST_ASSERT_EQUAL_UINT16(0x4, (Ina226ConfigValue >> 9) & 0x7);  // AVG
+  TEST_ASSERT_EQUAL_UINT16(0x2, (Ina226ConfigValue >> 9) & 0x7);  // AVG
   TEST_ASSERT_EQUAL_UINT16(0x4, (Ina226ConfigValue >> 6) & 0x7);  // VBUSCT
   TEST_ASSERT_EQUAL_UINT16(0x4, (Ina226ConfigValue >> 3) & 0x7);  // VSHCT
   TEST_ASSERT_EQUAL_UINT16(0x7, Ina226ConfigValue & 0x7);         // MODE

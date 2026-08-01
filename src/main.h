@@ -2,11 +2,11 @@
 #define TEG_MAIN_H
 
 #include <Arduino.h>
+#include <LittleFS.h>
 #include <SdFat.h>
 #include <Wire.h>
 #include <Adafruit_SSD1306.h>
 #include <aWOT.h>
-#include <LittleFS.h>
 // The Ethernet types below used to arrive transitively, via a QNEthernet include inside
 // aWOT.h. aWOT no longer depends on QNEthernet (it only ever needed it for writeFully(),
 // now replaced by a bounded equivalent), so the firmware declares the dependency it
@@ -24,7 +24,6 @@ extern const char* filename;
 static constexpr uint32_t kDHCPTimeout = 5000; // boot-time wait only; DHCP keeps retrying in background
 extern MainConfig config;
 extern SdFs sd;
-extern byte mac[];
 extern EthernetServer server;
 extern Application app;
 extern char timeServer[];
@@ -33,16 +32,19 @@ extern Adafruit_SSD1306 display;
 extern EthernetClient influxDbClient;
 extern Print *stdPrint;
 
-// Degraded-mode flags: the firmware boots and runs PWM regardless of which
-// peripherals are present; consumers must check these before using them.
+// Peripheral availability. Missing PSRAM or a durable complete configuration
+// is a hard PWM-output interlock; display/network helpers may still degrade.
 extern bool sdAvailable;
 extern bool displayAvailable;
 
 void configureSdCard();
 
-void loadSettings();
+// True only when a complete, integrity-checked live/temp/backup configuration
+// was loaded. False leaves the provisioning output interlock asserted.
+bool loadSettings();
 
 void configureEthernet();
+const char *networkHostname();
 
 void configureNtp();
 

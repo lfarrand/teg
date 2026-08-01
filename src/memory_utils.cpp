@@ -4,22 +4,33 @@
 
 LittleFS_QSPIFlash flashFS;
 static bool flashFSMounted = false;
+static bool psramReady = false;
 EXTMEM uint8_t buf[1024];
+
+extern "C" uint8_t external_psram_size;
 
 bool flashFSAvailable() {
   return flashFSMounted;
 }
 
 bool testPsram() {
+  if (external_psram_size < 8) {
+    return false;
+  }
   memset(buf, 0xAA, sizeof(buf));
   return (buf[0] == 0xAA && buf[1023] == 0xAA);
 }
 
-void initMemory() {
-  if (testPsram()) {
+bool psramAvailable() {
+  return psramReady;
+}
+
+bool initMemory() {
+  psramReady = testPsram();
+  if (psramReady) {
     writeLog("PSRAM detected (8MB)");
   } else {
-    writeLog("PSRAM not detected!");
+    writeLogLevel(EventError, "PSRAM missing/undersized; PWM output permanently inhibited");
   }
   flashFSMounted = flashFS.begin();
   if (flashFSMounted) {
@@ -27,6 +38,7 @@ void initMemory() {
   } else {
     writeLog("Flash init failed");
   }
+  return psramReady;
 }
 
 void reportMemoryUsage() {

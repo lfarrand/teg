@@ -34,7 +34,12 @@ def build_web_assets():
             continue
         raw = f.read_bytes()
         # mtime=0 keeps the gzip output deterministic across builds
-        packed = gzip.compress(raw, compresslevel=9, mtime=0)
+        packed = bytearray(gzip.compress(raw, compresslevel=9, mtime=0))
+        # Python versions that delegate mtime=0 to zlib inherit zlib's host OS
+        # byte (gzip header offset 9), so Linux and Windows produced different
+        # firmware from identical sources. 255 means "unknown" and is canonical.
+        packed[9] = 255
+        packed = bytes(packed)
         assets.append((f.name, CONTENT_TYPES[f.suffix], packed, len(raw)))
 
     lines = [

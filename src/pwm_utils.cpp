@@ -16,6 +16,7 @@
 #include "config_json.h"
 
 extern qindesign::network::EthernetServer server;
+extern void kickWatchdog();
 
 volatile uint32_t vPhase = 0;
 volatile uint32_t vIsrCycles = 0;
@@ -49,10 +50,19 @@ static volatile uint32_t vPhaseIncrement = 0;
 // target; the ISR moves the current value.
 static volatile uint32_t vIndexQ15 = 0;
 static volatile uint32_t vIndexTargetQ15 = 0;
-static volatile uint32_t vIndexStepQ15 = 1UL << 30;
+static uint64_t vIndexAccumQ24 = 0; // ISR-owned; configured only with its IRQ off
+static uint64_t vIndexStepQ24 = SoftStartInstant;
 static volatile int32_t vDtCompQ15 = 0;
 
 volatile bool vFaultTripped = false;
+static volatile bool vPwmConfigurationValid = true;
+// True from reset until every requested register set has loaded and all protection
+// sources have been armed and sampled. It is also asserted for every timing/topology
+// transaction, fault and OTA operation.
+static volatile bool vOutputInhibited = true;
+static volatile bool vRestartInhibited = false;
+static volatile bool vHardwareInhibited = false;
+static volatile bool vProvisioningInhibited = true;
 
 // Modulation cells map onto FlexPWM2 submodules in this order; cells=2 drives
 // Sm20+Sm22 (the original SPWM pair), 3-4 add Sm21/Sm23.
@@ -90,17 +100,37 @@ static inline void setCellPolarityInverted(uint8_t k, bool inverted) {
   }
 }
 
-// Mask every output, safely for inverted cells.
-//
-// Un-inverting first costs a brief window - a few CPU cycles - in which the live
-// waveform reaches the pins at the wrong level. That is one short wrong-level edge,
-// against a permanently held gate-on. Masking first and un-inverting afterwards would
-// invert the trade and put both pins of a leg high for that window, which is the
-// shoot-through case.
-//
-// OCTRL is not one of the LDOK-buffered registers, so these writes take effect
-// immediately rather than waiting for a reload.
+// OUTEN is immediate and independent of MASK/polarity. Disconnecting the peripheral
+// drivers first prevents the brief wrong-polarity edge that the old shutdown order
+// could expose while changing OCTRL. External gate-driver inputs must still have
+// hardware pull-downs; firmware cannot guarantee an un-driven PCB net.
+FASTRUN static void disconnectAllOutputDrivers() {
+  IMXRT_FLEXPWM1.OUTEN = 0;
+  IMXRT_FLEXPWM2.OUTEN = 0;
+  IMXRT_FLEXPWM3.OUTEN = 0;
+  IMXRT_FLEXPWM4.OUTEN = 0;
+  asm volatile("dsb");
+}
+
+static void connectConfiguredOutputDrivers() {
+  IMXRT_FLEXPWM1.OUTEN = FLEXPWM_OUTEN_PWMA_EN(1u << 3) |
+                         FLEXPWM_OUTEN_PWMB_EN(1u << 3);
+  IMXRT_FLEXPWM2.OUTEN = FLEXPWM_OUTEN_PWMA_EN(0x0Fu) |
+                         FLEXPWM_OUTEN_PWMB_EN((1u << 0) | (1u << 2) | (1u << 3));
+  IMXRT_FLEXPWM3.OUTEN = FLEXPWM_OUTEN_PWMA_EN(1u << 1) |
+                         FLEXPWM_OUTEN_PWMB_EN(1u << 1);
+  IMXRT_FLEXPWM4.OUTEN = FLEXPWM_OUTEN_PWMA_EN((1u << 0) | (1u << 1) | (1u << 2)) |
+                         FLEXPWM_OUTEN_PWMB_EN(1u << 2);
+  asm volatile("dsb");
+}
+
+// Mask every output, safely for inverted cells. OUTEN disconnects the pads first,
+// so the following immediate OCTRL polarity writes cannot create an observable
+// wrong-level edge. External gate-driver inputs still require hardware pull-downs.
 FASTRUN void maskAllOutputsSafely() {
+  vOutputInhibited = true;
+  disconnectAllOutputDrivers();
+
   uint8_t m = vInvertedCellMask;
   while (m != 0) {
     const uint8_t k = static_cast<uint8_t>(__builtin_ctz(m));
@@ -126,6 +156,79 @@ static void restoreCellPolarity() {
     setCellPolarityInverted(k, true);
   }
   asm volatile("dsb");
+}
+
+static bool releaseOutputInhibit() {
+  const bool gpioActive = config.FaultProtection.Enabled &&
+      (digitalReadFast(config.FaultProtection.Pin) ==
+       (config.FaultProtection.ActiveHigh ? HIGH : LOW));
+  if (!vPwmConfigurationValid || vFaultTripped || vRestartInhibited || vHardwareInhibited ||
+      vProvisioningInhibited ||
+      gpioActive || acmpFaultPinActive()) {
+    if (gpioActive || acmpFaultPinActive()) {
+      vFaultTripped = true;
+      writeLogLevel(EventWarn, "PWM release refused: a protection input is active");
+    }
+    disconnectAllOutputDrivers();
+    return false;
+  }
+
+  // OUTEN stays disconnected while polarity and mask state change. Only the final
+  // module-wide writes reconnect pins, after every unbuffered field is stable.
+  restoreCellPolarity();
+  Tm1.enable();
+  Tm2.enable();
+  Tm3.enable();
+  Tm4.enable();
+  asm volatile("dsb");
+  connectConfiguredOutputDrivers();
+  vOutputInhibited = false;
+  return true;
+}
+
+void setPwmRestartInhibit(bool inhibit) {
+  vRestartInhibited = inhibit;
+  if (inhibit) {
+    maskAllOutputsSafely();
+  }
+}
+
+void setPwmHardwareInhibit(bool inhibit) {
+  vHardwareInhibited = inhibit;
+  if (inhibit) {
+    maskAllOutputsSafely();
+  }
+}
+
+void setPwmProvisioningInhibit(bool inhibit) {
+  vProvisioningInhibited = inhibit;
+  if (inhibit) {
+    maskAllOutputsSafely();
+  }
+}
+
+bool pwmRestartInhibited() {
+  return vRestartInhibited;
+}
+
+bool pwmHardwareInhibited() {
+  return vHardwareInhibited;
+}
+
+bool pwmProvisioningInhibited() {
+  return vProvisioningInhibited;
+}
+
+bool pwmOutputInhibited() {
+  return vOutputInhibited;
+}
+
+bool pwmConfigurationValid() {
+  return vPwmConfigurationValid;
+}
+
+bool pwmInterruptRequired() {
+  return spwmActive() || captureActive() || acmpCbcEnabled();
 }
 static volatile uint8_t vModScheme = ModSchemeSpwmUnipolar;
 static volatile uint8_t vModCells = 2;
@@ -213,7 +316,35 @@ struct SubmoduleSettings {
   // Add phaseShift, etc., for special cases
 };
 
-void setupSubmodule(SubModule &sm, const SubmoduleSettings &settings, bool printRegs) {
+static bool waitForLdok(IMXRT_FLEXPWM_t *base, uint8_t smMask,
+                        uint32_t slowestFrequency) {
+  const uint32_t periodUs = slowestFrequency == 0
+      ? 100000U
+      : (1000000U + slowestFrequency - 1U) / slowestFrequency;
+  const uint32_t timeoutUs = periodUs > 120000U ? 250000U : (periodUs * 2U + 2000U);
+  const uint32_t startUs = micros();
+  while ((base->MCTRL & FLEXPWM_MCTRL_LDOK(smMask)) != 0) {
+    if (static_cast<uint32_t>(micros() - startUs) > timeoutUs) {
+      return false;
+    }
+    kickWatchdog();
+  }
+  return true;
+}
+
+static bool commitBufferedSettings(eFlex::Timer &timer, IMXRT_FLEXPWM_t *base,
+                                   uint8_t smMask, uint32_t slowestFrequency) {
+  timer.setPwmLdok(smMask, true);
+  if (waitForLdok(base, smMask, slowestFrequency)) {
+    return true;
+  }
+  timer.setPwmLdok(smMask, false);
+  disconnectAllOutputDrivers();
+  writeLogLevel(EventError, "PWM reload timeout: outputs remain inhibited");
+  return false;
+}
+
+static bool setupSubmodule(SubModule &sm, const SubmoduleSettings &settings, bool printRegs) {
   constexpr uint32_t NanosecondsUnit = 1000000000;
 
   // Registers are touched directly rather than through SubModule::configure(), which
@@ -282,19 +413,26 @@ void setupSubmodule(SubModule &sm, const SubmoduleSettings &settings, bool print
   }
 
   if (!sm.setPwmFrequency(settings.frequency, false, true)) {
-    writeLog("Failed to set PWM freq");
+    writeLogLevel(EventError, "Failed to set representable PWM frequency; outputs remain inhibited");
+    return false;
   }
 
   // First call only: pin mux + counter start. No-op on reconfiguration.
   if (!sm.begin(true, false, false)) {
-    writeLog("Failed to start submodule");
+    writeLogLevel(EventError, "Failed to start PWM submodule; outputs remain inhibited");
+    return false;
   }
 
-  // Programs deadtime (DTCNT), output enable (OUTEN), polarity and duty registers.
+  // Programs deadtime, polarity and duty with OUTEN deliberately clear. The desired
+  // enable state is restored only in the software shadow; releaseOutputInhibit()
+  // reconnects all pins together after a checked module-wide LDOK.
+  sm.setupOutputEnable(false);
   // begin() skips this on reconfiguration, so it must be called explicitly every time.
   if (!sm.updateSetting(false)) {
-    writeLog("Failed to apply submodule settings");
+    writeLogLevel(EventError, "Failed to stage PWM settings; outputs remain inhibited");
+    return false;
   }
+  sm.setupOutputEnable(true);
 
   // DTCNT1 belt-and-braces. PWM_SetupPwm writes DTCNT0 on the channel-A pass and
   // DTCNT1 on the channel-B pass, and the Teensy core's flexpwm_init() writes only
@@ -322,28 +460,22 @@ void setupSubmodule(SubModule &sm, const SubmoduleSettings &settings, bool print
       // the PREVIOUS active VAL4/VAL5 on PWM_B for up to a full carrier period - a
       // stale duty on a pin that was, until this instant, a half-bridge low side.
       //
-      // Load first, then flip. The wait is bounded because at boot the counter is not
-      // running and LDOK would never clear; ~200k spins is far longer than the
-      // slowest supported carrier period and still a fraction of the 8s watchdog.
-      sm.setPwmLdok(true);
-      for (uint32_t spins = 0; spins < 200000; spins++) {
-        if ((base->MCTRL & FLEXPWM_MCTRL_LDOK(1u << smIdx)) == 0) {
-          break;
-        }
-      }
+      // OUTEN is disconnected for the whole transaction, so publishing the old B
+      // buffer briefly cannot reach a pin. The caller commits every affected
+      // submodule with one LDOK and does not reconnect until that load is observed.
       base->SM[smIdx].CTRL2 |= FLEXPWM_SMCTRL2_INDEP;
     }
   }
 
-  sm.timer().enable();
-  sm.setPwmLdok(true); // hardware loads the buffered values at the next PWM reload
-
   if (printRegs) {
     sm.printRegs();
   }
+  return true;
 }
 
 void configurePwm() {
+  vPwmConfigurationValid = true;
+  maskAllOutputsSafely();
   configureModule1();
   configureModule2();
   configureModule3();
@@ -352,45 +484,80 @@ void configurePwm() {
 
 // Reconfigure only the timers whose settings actually changed, so an update to
 // one submodule never disturbs the others' outputs or phase.
-void clearFaultTrip() {
-  if (!vFaultTripped) {
-    return;
+bool clearFaultTrip(bool operatorRequest) {
+  if (vProvisioningInhibited) {
+    writeLogLevel(EventWarn,
+                  "PWM release refused: configuration/PIN has not been durably provisioned");
+    return false;
+  }
+  if (vHardwareInhibited) {
+    writeLogLevel(EventError, "PWM release refused: required PSRAM is unavailable");
+    return false;
+  }
+  if (!vPwmConfigurationValid) {
+    writeLogLevel(EventError, "PWM release refused: PWM configuration is invalid");
+    return false;
+  }
+  if (vRestartInhibited && !operatorRequest) {
+    return false;
+  }
+  // Applying unrelated settings is never an implicit acknowledgement of a trip.
+  if (vFaultTripped && !operatorRequest) {
+    return false;
   }
   // A latched hardware overcurrent only clears safely once the comparator is
   // quiet; a still-asserting pin means the fault condition persists (stuck
   // sensor, DC offset above threshold, real short) - refuse and stay tripped
   if (acmpArmedLatched() && acmpFaultPinActive()) {
     writeLogLevel(EventWarn, "Fault clear refused: current-limit comparator still above threshold");
-    return;
+    return false;
   }
-  acmpClearLatch(); // release the FlexPWM fault latch (its IRQ stays off for now)
+  if (vFaultTripped) {
+    acmpClearLatch(); // release the FlexPWM fault latch (its IRQ stays off for now)
+  }
+  if (operatorRequest) {
+    vRestartInhibited = false;
+  }
   vFaultTripped = false;
-  writeLog("Fault cleared; re-enabling PWM outputs");
+  writeLog("Protection acknowledged; attempting PWM output release");
   // Put back the polarity the mask removed, BEFORE unmasking. Skipping this would
   // resume with the 180deg opposition silently absent - the legs would run in phase.
-  restoreCellPolarity();
-  Tm1.enable();
-  Tm2.enable();
-  Tm3.enable();
-  Tm4.enable();
+  if (!releaseOutputInhibit()) {
+    vFaultTripped = true;
+    writeLogLevel(EventError, "Fault clear refused: PWM configuration is not valid");
+    return false;
+  }
   captureConfigure(); // unfreeze the flight recorder
-  if (spwmActive()) {
+  if (pwmInterruptRequired()) {
     attachModule2PwmInterruptVectors();
     enablePwmInterrupts();
   }
   // Last, so a comparator re-assert during this sequence re-trips cleanly
   // through the pending interrupt instead of racing the writes above
   acmpRearmFaultIrq();
+  return true;
 }
 
 void applyPwmConfig(const MainConfig &previous) {
+  const bool pwmChanged =
+      memcmp(&previous.Pwm, &config.Pwm, sizeof(config.Pwm)) != 0 ||
+      memcmp(&previous.AsymmetricInduction, &config.AsymmetricInduction,
+             sizeof(config.AsymmetricInduction)) != 0;
+  const bool protectionChanged =
+      memcmp(&previous.CurrentLimit, &config.CurrentLimit, sizeof(config.CurrentLimit)) != 0 ||
+      memcmp(&previous.FaultProtection, &config.FaultProtection,
+             sizeof(config.FaultProtection)) != 0;
+  if (pwmChanged || protectionChanged) {
+    maskAllOutputsSafely();
+    NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
+  }
+
   // Current-limit config first: the clear below must judge refusal against
   // the NEW protection state, so that disabling the limiter while tripped
   // clears in one action instead of refusing against the outgoing config
   if (memcmp(&previous.CurrentLimit, &config.CurrentLimit, sizeof(config.CurrentLimit)) != 0) {
     acmpConfigure();
   }
-  clearFaultTrip();
   if (memcmp(&previous.FaultProtection, &config.FaultProtection, sizeof(config.FaultProtection)) != 0) {
     configureFaultProtection();
   }
@@ -401,19 +568,10 @@ void applyPwmConfig(const MainConfig &previous) {
     captureConfigure();
   }
   thermalConfigure();
-  if (memcmp(&previous.Pwm.Tm1, &config.Pwm.Tm1, sizeof(config.Pwm.Tm1)) != 0) {
-    configureModule1();
-  }
-  if (memcmp(&previous.Pwm.Tm2, &config.Pwm.Tm2, sizeof(config.Pwm.Tm2)) != 0) {
-    configureModule2();
-  }
-  if (memcmp(&previous.Pwm.Tm3, &config.Pwm.Tm3, sizeof(config.Pwm.Tm3)) != 0) {
-    configureModule3();
-  }
-  if (memcmp(&previous.Pwm.Tm4, &config.Pwm.Tm4, sizeof(config.Pwm.Tm4)) != 0 ||
-      memcmp(&previous.AsymmetricInduction, &config.AsymmetricInduction,
-             sizeof(config.AsymmetricInduction)) != 0) {
-    configureModule4();
+  if (pwmChanged) {
+    // Treat timing/topology as one electrical transaction. This costs a short
+    // output gap, but never exposes mixed prescalers, polarity or pair modes.
+    configurePwm();
   }
   // After the module reconfigures (buildSpwmLut resets the increment): the
   // PLL re-steers from its held estimate for a bumpless re-entry
@@ -434,9 +592,12 @@ void applyPwmConfig(const MainConfig &previous) {
   // A refused clear leaves the trip latched, but the reconfigures above may
   // have re-enabled timers: re-assert the trip's masking so the applied
   // settings take effect only after an explicit successful clear
-  if (vFaultTripped) {
+  if (vFaultTripped || vRestartInhibited || vHardwareInhibited ||
+      vProvisioningInhibited || !vPwmConfigurationValid) {
     maskAllOutputsSafely(); // un-inverts polarity first; MASK is pre-polarity
     NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
+  } else if (pwmChanged || protectionChanged) {
+    clearFaultTrip(false);
   }
 }
 
@@ -551,7 +712,7 @@ void buildSpwmLut() {
   // current value persists across reconfigures, so soft-start ramps from
   // wherever the output already is, and from zero on a cold start.
   const uint32_t targetQ15 = indexMilliToQ15(indexMilli);
-  vIndexStepQ15 = softStartStepQ15(targetQ15, tm2.SoftStartMs, carrier);
+  vIndexStepQ24 = softStartStepQ24(targetQ15, tm2.SoftStartMs, carrier);
   setModulationIndexTargetQ15(targetQ15); // applies the thermal derate cap
 
   vDtCompQ15 = tm2.DeadTimeCompensation ? deadtimeCompQ15(tm2.Sm20.DeadTime, carrier) : 0;
@@ -638,8 +799,12 @@ void configureModule1() {
     .pairMode = config.Pwm.Tm1.Sm13.Pair,
     .pairRequested = config.Pwm.Tm1.Sm13.Pair
   };
-  setupSubmodule(Sm13, settings, config.Pwm.PrintRegs);
-  writeLog("Started TM1");
+  bool ok = setupSubmodule(Sm13, settings, config.Pwm.PrintRegs);
+  if (ok) {
+    ok = commitBufferedSettings(Tm1, &IMXRT_FLEXPWM1, 1u << 3, settings.frequency);
+  }
+  vPwmConfigurationValid = vPwmConfigurationValid && ok;
+  writeLog(ok ? "Configured TM1" : "TM1 configuration failed; outputs inhibited");
 }
 
 void configureModule2() {
@@ -728,7 +893,7 @@ void configureModule2() {
     .pairMode = pairModeSanitisedForScheme(config.Pwm.Tm2.Sm20.Pair, PairSm20, needsInversion),
     .pairRequested = config.Pwm.Tm2.Sm20.Pair
   };
-  setupSubmodule(Sm20, sm20Settings, config.Pwm.PrintRegs);
+  bool ok = setupSubmodule(Sm20, sm20Settings, config.Pwm.PrintRegs);
 
   // Configure Sm21 (Channel A only)
   SubmoduleSettings sm21Settings = {
@@ -740,7 +905,7 @@ void configureModule2() {
     .pairMode = pairModeSanitisedForScheme(config.Pwm.Tm2.Sm21.Pair, PairSm21, needsInversion),
     .pairRequested = config.Pwm.Tm2.Sm21.Pair // validation forces Independent: no B pin
   };
-  setupSubmodule(Sm21, sm21Settings, config.Pwm.PrintRegs);
+  ok = setupSubmodule(Sm21, sm21Settings, config.Pwm.PrintRegs) && ok;
 
   // Configure Sm22 (Channels A and B)
   SubmoduleSettings sm22Settings = {
@@ -752,7 +917,7 @@ void configureModule2() {
     .pairMode = pairModeSanitisedForScheme(config.Pwm.Tm2.Sm22.Pair, PairSm22, needsInversion),
     .pairRequested = config.Pwm.Tm2.Sm22.Pair
   };
-  setupSubmodule(Sm22, sm22Settings, config.Pwm.PrintRegs);
+  ok = setupSubmodule(Sm22, sm22Settings, config.Pwm.PrintRegs) && ok;
 
   // Configure Sm23 (Channels A and B)
   SubmoduleSettings sm23Settings = {
@@ -764,12 +929,29 @@ void configureModule2() {
     .pairMode = pairModeSanitisedForScheme(config.Pwm.Tm2.Sm23.Pair, PairSm23, needsInversion),
     .pairRequested = config.Pwm.Tm2.Sm23.Pair
   };
-  setupSubmodule(Sm23, sm23Settings, config.Pwm.PrintRegs);
+  ok = setupSubmodule(Sm23, sm23Settings, config.Pwm.PrintRegs) && ok;
+
+  if (ok) {
+    ok = commitBufferedSettings(Tm2, &IMXRT_FLEXPWM2, 0x0F,
+                                config.Pwm.Tm2.SpwmCarrierFrequency);
+  }
+  vPwmConfigurationValid = vPwmConfigurationValid && ok;
+
+  // Sampling/CBC can use this same reload IRQ in fixed-duty mode. Keep its
+  // starvation baseline valid even when buildSpwmLut() was not called.
+  const uint32_t carrier = config.Pwm.Tm2.SpwmCarrierFrequency;
+  vIsrGapExpected = carrier ? (F_CPU_ACTUAL / carrier) : 0;
+  vIsrGapLimit = vIsrGapExpected + (vIsrGapExpected >> 1);
+  vIsrGapPrimed = false;
 
   // Dither tables need the final prescaler, so build them after submodule setup
-  buildDitherState();
+  if (ok) {
+    buildDitherState();
+  } else {
+    vDitherMode = DitherOff;
+  }
 
-  writeLog("Started TM2");
+  writeLog(ok ? "Configured TM2" : "TM2 configuration failed; outputs inhibited");
 }
 
 void buildDitherState() {
@@ -801,8 +983,12 @@ void configureModule3() {
     .pairMode = config.Pwm.Tm3.Sm31.Pair,
     .pairRequested = config.Pwm.Tm3.Sm31.Pair
   };
-  setupSubmodule(Sm31, settings, config.Pwm.PrintRegs);
-  writeLog("Started TM3");
+  bool ok = setupSubmodule(Sm31, settings, config.Pwm.PrintRegs);
+  if (ok) {
+    ok = commitBufferedSettings(Tm3, &IMXRT_FLEXPWM3, 1u << 1, settings.frequency);
+  }
+  vPwmConfigurationValid = vPwmConfigurationValid && ok;
+  writeLog(ok ? "Configured TM3" : "TM3 configuration failed; outputs inhibited");
 }
 
 void configureModule4() {
@@ -816,7 +1002,7 @@ void configureModule4() {
     .pairMode = config.Pwm.Tm4.Sm40.Pair, // validation forces Independent: no B pin
     .pairRequested = config.Pwm.Tm4.Sm40.Pair
   };
-  setupSubmodule(Sm40, sm40Settings, config.Pwm.PrintRegs);
+  bool ok = setupSubmodule(Sm40, sm40Settings, config.Pwm.PrintRegs);
 
   // Configure Sm41 (Channel A only, with phase shift handling)
   SubmoduleSettings sm41Settings = {
@@ -828,7 +1014,7 @@ void configureModule4() {
     .pairMode = config.Pwm.Tm4.Sm41.Pair, // validation forces Independent: no B pin
     .pairRequested = config.Pwm.Tm4.Sm41.Pair
   };
-  setupSubmodule(Sm41, sm41Settings, config.Pwm.PrintRegs);
+  ok = setupSubmodule(Sm41, sm41Settings, config.Pwm.PrintRegs) && ok;
 
   // Configure Sm42 (Channels A and B, with phase shift and Asymmetric Induction)
   if (config.AsymmetricInduction.IsEnabled) {
@@ -838,40 +1024,44 @@ void configureModule4() {
       config.AsymmetricInduction.PreShiftNanos, config.AsymmetricInduction.PostShiftNanos,
       MAX_COUNTER_VALUE);
 
-    Sm42.disableOutput(ChanA);
-    Sm42.disableOutput(ChanB);
+    if (!t.valid) {
+      writeLogLevel(EventError, "Asymmetric edge lies outside the PWM period; outputs inhibited");
+      ok = false;
+    }
 
     Sm42.setPwmLdok(false);
     Sm42.setPrescaler(static_cast<pwm_clock_prescale_t>(t.prescalerIndex));
     Sm42.setupDeadtime(config.Pwm.Tm4.Sm42.DeadTime, 1000000000);
 
-    if (!Sm42.setPwmFrequency(config.Pwm.Tm4.Sm42.PwmFrequency, false, true)) {
-      writeLog("Failed to set SM42 PWM freq.");
+    if (ok && !Sm42.setPwmFrequency(config.Pwm.Tm4.Sm42.PwmFrequency, false, true)) {
+      writeLogLevel(EventError, "Failed to set SM42 PWM frequency");
+      ok = false;
     }
 
     // First call only: pin mux + counter start. No-op on reconfiguration.
-    if (!Sm42.begin(true, false, false)) {
-      writeLog("Failed to start SM42");
+    if (ok && !Sm42.begin(true, false, false)) {
+      writeLogLevel(EventError, "Failed to start SM42");
+      ok = false;
     }
 
     // Programs deadtime/output-enable/polarity plus standard VALx values...
-    if (!Sm42.updateSetting(false)) {
-      writeLog("Failed to apply SM42 settings");
+    Sm42.setupOutputEnable(false);
+    if (ok && !Sm42.updateSetting(false)) {
+      writeLogLevel(EventError, "Failed to stage SM42 settings");
+      ok = false;
     }
+    Sm42.setupOutputEnable(true);
 
     // ...which the custom asymmetric edge timings then overwrite
-    Sm42.setInitValue(t.periodStart);
-    Sm42.setVal0Value(t.periodStart);
-    Sm42.setVal1Value(t.periodEnd);
-    Sm42.setVal2Value(t.startChanA);
-    Sm42.setVal3Value(t.stopChanA);
-    Sm42.setVal4Value(t.startChanB);
-    Sm42.setVal5Value(t.stopChanB);
-
-    Sm42.setPwmLdok(true);
-    Tm4.enable();
-    Sm42.enableOutput(ChanA);
-    Sm42.enableOutput(ChanB);
+    if (ok) {
+      Sm42.setInitValue(t.periodStart);
+      Sm42.setVal0Value(t.periodStart);
+      Sm42.setVal1Value(t.periodEnd);
+      Sm42.setVal2Value(t.startChanA);
+      Sm42.setVal3Value(t.stopChanA);
+      Sm42.setVal4Value(t.startChanB);
+      Sm42.setVal5Value(t.stopChanB);
+    }
   } else {
     // Standard mode for Sm42
     SubmoduleSettings sm42Settings = {
@@ -886,8 +1076,16 @@ void configureModule4() {
       .pairMode = config.Pwm.Tm4.Sm42.Pair,
     .pairRequested = config.Pwm.Tm4.Sm42.Pair
     };
-    setupSubmodule(Sm42, sm42Settings, config.Pwm.PrintRegs);
+    ok = setupSubmodule(Sm42, sm42Settings, config.Pwm.PrintRegs) && ok;
   }
+
+  if (ok) {
+    uint32_t slowest = config.Pwm.Tm4.Sm40.PwmFrequency;
+    if (config.Pwm.Tm4.Sm41.PwmFrequency < slowest) slowest = config.Pwm.Tm4.Sm41.PwmFrequency;
+    if (config.Pwm.Tm4.Sm42.PwmFrequency < slowest) slowest = config.Pwm.Tm4.Sm42.PwmFrequency;
+    ok = commitBufferedSettings(Tm4, &IMXRT_FLEXPWM4, 0x07, slowest);
+  }
+  vPwmConfigurationValid = vPwmConfigurationValid && ok;
 
   // Log summary for all submodules
   if (config.Pwm.Verbose) {
@@ -904,7 +1102,7 @@ void configureModule4() {
     writeLog(strBuf);
   }
 
-  writeLog("Started TM4");
+  writeLog(ok ? "Configured TM4" : "TM4 configuration failed; outputs inhibited");
 }
 
 uint8_t calculateBestPrescaler(uint32_t pwmFrequency) {
@@ -914,7 +1112,7 @@ uint8_t calculateBestPrescaler(uint32_t pwmFrequency) {
 void attachInterruptVectors() {
   Serial.println(F("Attaching PWM interrupt vectors"));
 
-  if (spwmActive()) {
+  if (pwmInterruptRequired()) {
     attachModule2PwmInterruptVectors();
     enablePwmInterrupts();
   }
@@ -970,10 +1168,24 @@ FASTRUN void IsrOverflowSm20() {
 
   digitalToggleFast(TriggerPin);
 
+  // Fixed-duty PWM still needs a carrier-synchronous interrupt when capture,
+  // dual-channel metering, scope triggering or CBC telemetry is active. Do no
+  // duty/phase work in that case; sample and clear the source only.
+  if (!spwmActive()) {
+    Sm20.clearStatusFlags(kPWM_CompareVal1Flag);
+    captureTick();
+    acmpCbcTick();
+    vIsrCycles = ARM_DWT_CYCCNT - t0;
+    asm volatile("dsb");
+    return;
+  }
+
   const uint32_t phase = vPhase;
 
   // Slew-limited amplitude: soft-start ramp and closed-loop target tracking
-  const uint32_t idx = rampIndexQ15(vIndexQ15, vIndexTargetQ15, vIndexStepQ15);
+  const uint64_t accum = rampIndexQ24(vIndexAccumQ24, vIndexTargetQ15, vIndexStepQ24);
+  vIndexAccumQ24 = accum;
+  const uint32_t idx = static_cast<uint32_t>(accum >> SoftStartFractionBits);
   vIndexQ15 = idx;
 
   const uint8_t scheme = vModScheme;
@@ -1133,7 +1345,7 @@ void runFeedbackLoop() {
 // ---------------------------------------------------------------------------
 // Fault protection (item: protection). Fast software trip: a transition on
 // the fault pin masks every FlexPWM output from a high-priority GPIO
-// interrupt (~1us pin-to-off). Latched until the next settings apply.
+// interrupt (~1us pin-to-off). Latched until an authenticated explicit clear.
 // A true hardware fault path (XBAR -> FlexPWM FAULT0, <10ns, zero software)
 // can reuse the same pin; see docs/RT1170_PSPWM.md for the bring-up notes.
 // ---------------------------------------------------------------------------
@@ -1178,6 +1390,15 @@ void configureFaultProtection() {
   NVIC_SET_PRIORITY(IRQ_GPIO6789, 16);
   attached = true;
   attachedPin = pin;
+
+  // Edge IRQs do not report a level that was already active before attach.
+  // Sample after the pull and vector are established; the same ISR-safe path
+  // handles both boot-active and transition-active faults.
+  const bool activeNow = digitalReadFast(pin) ==
+                         (config.FaultProtection.ActiveHigh ? HIGH : LOW);
+  if (activeNow) {
+    faultTripIsr();
+  }
 
   char strBuf[LOG_BUF_SIZE];
   snprintf(strBuf, sizeof(strBuf), "Fault trip armed on pin %u (active %s)",

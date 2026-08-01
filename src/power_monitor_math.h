@@ -58,11 +58,13 @@ inline uint32_t ina226PowerMw(uint16_t raw, uint32_t currentLsbMicroAmp) {
 
 // Shunt-overvoltage alert limit register for a threshold in milliamps:
 // counts = V / 2.5 uV where V = mA*1e-3 * uOhm*1e-6, so counts = mA*uOhm/2500.
-// 1500 mA on 10 mOhm -> 15 mV -> 6000. Clamped to the 16-bit register; 0
-// means "no alert" to the caller.
+// 1500 mA on 10 mOhm -> 15 mV -> 6000. The shunt register and SOL limit are
+// SIGNED two's-complement values, so a positive threshold stops at 0x7FFF;
+// 0x8000..0xFFFF are negative limits that would trip on an ordinary positive
+// reading. 0 means "no alert" to the caller.
 inline uint16_t ina226AlertLimitCounts(uint32_t alertMilliAmp, uint32_t shuntMicroOhm) {
   const uint64_t counts = (static_cast<uint64_t>(alertMilliAmp) * shuntMicroOhm + 1250) / 2500;
-  return counts > 0xFFFF ? 0xFFFF : static_cast<uint16_t>(counts);
+  return counts > 0x7FFF ? 0x7FFF : static_cast<uint16_t>(counts);
 }
 
 // IMON ADC counts -> milliamps through R_IMON (Ohm) at the TPS25983 gain.
@@ -82,7 +84,7 @@ inline int32_t imonMilliAmp(uint32_t counts, uint32_t fullScaleCounts, uint32_t 
 // INA226 configuration register value: AVG=16, VBUSCT=VSHCT=1.1 ms,
 // continuous shunt+bus. One full result every 16*(1.1+1.1) = 35.2 ms, so a
 // 100 ms poll always sees a fresh, well-averaged conversion.
-constexpr uint16_t Ina226ConfigValue = 0x4927;
+constexpr uint16_t Ina226ConfigValue = 0x4527;
 
 // Mask/Enable: shunt-overvoltage alert, latched until read (SOL | LEN)
 constexpr uint16_t Ina226MaskSolLatched = 0x8001;

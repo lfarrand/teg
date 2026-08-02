@@ -39,8 +39,11 @@ inline int hexNibble(char c) {
 
 inline int hexByteAt(const char *s) {
   const int hi = hexNibble(s[0]);
+  if (hi < 0) {
+    return -1;
+  }
   const int lo = hexNibble(s[1]);
-  if (hi < 0 || lo < 0) {
+  if (lo < 0) {
     return -1;
   }
   return (hi << 4) | lo;

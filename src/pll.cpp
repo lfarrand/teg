@@ -26,6 +26,7 @@
 #include "pwm_utils.h"
 #include "spwm_math.h"
 #include "config_json.h"
+#include "config_compare.h"
 #include "utils.h"
 #include <Arduino.h>
 
@@ -81,7 +82,7 @@ void pllConfigure() {
   }
 
   const bool relevantChanged =
-    memcmp(&lastRelevant.pll, &config.Pll, sizeof(PllConfig)) != 0 ||
+    !configValuesEqual(lastRelevant.pll, config.Pll) ||
     lastRelevant.carrier != carrier || lastRelevant.nominal != nominal;
   lastRelevant.pll = config.Pll;
   const bool carrierChanged = lastRelevant.carrier != carrier;

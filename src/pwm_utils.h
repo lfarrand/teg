@@ -45,6 +45,9 @@ void configurePwm();
 // cell drives its pins HIGH - the gate commanded ON by the shutdown. Use this instead
 // of Tm*.disable() on any path that exists to make the outputs safe.
 void maskAllOutputsSafely();
+// Read back every ACMP-protected channel's fault-state encoding against the
+// polarity that releaseOutputInhibit() will restore (safe to call while masked).
+bool pwmFaultStatesSafeForConfiguredPolarity();
 
 struct MainConfig;
 void applyPwmConfig(const MainConfig &previous);

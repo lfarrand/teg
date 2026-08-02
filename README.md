@@ -66,7 +66,7 @@ both software and hardware fault protection.
   unsafe-lab build flag is enabled
 - **Modern web UI** — single-page app with automatic dark mode, live telemetry,
   and scheme-aware forms, served gzip-compressed from flash
-- **Tested core logic** — 309 native unit tests across 27 suites cover the selected
+- **Tested core logic** — 317 native unit tests across 27 suites cover the selected
   hardware-independent headers (modulation, metering, PLL, MPPT, OTA verification,
   config mapping and related helpers): 94.2% lines, 100% functions and 64.1%
   branches in that scope, gated at 80% line coverage in CI. The native environment
@@ -84,7 +84,7 @@ both software and hardware fault protection.
 | Display | 128×64 SSD1306 OLED over I²C — rolling 5-line log + status line |
 | Scope trigger | Pin 13 (LED) toggles every modulation ISR cycle |
 | Analog sense | Voltage/feedback pin (default A17/41) + current pin (default A16/40), sampled once per carrier cycle by both ADC modules |
-| Overcurrent | On-chip analog comparator vs internal 6-bit DAC → XBARA1 → FlexPWM2 FAULT0 |
+| Overcurrent | On-chip analog comparator vs internal 6-bit DAC → XBARA1 → FlexPWM1 SM3 + FlexPWM2 SM0-3 private FAULT0 inputs |
 | Clock | SNVS RTC disciplined by NTP — fit a CR2032 on VBAT to keep time across power cycles |
 | USB | CDC serial + MTP composite (`USB_MTPDISK_SERIAL`); PID `0x04D5` |
 
@@ -461,10 +461,13 @@ bench comparison before MPPT can be trusted.
 ## Hardware current limit (analog comparator)
 
 Beyond the software fault trip, an **on-chip analog comparator** compares the
-current-sense pin against its internal 6-bit DAC threshold and routes the result
-through XBARA1 to **FlexPWM2's private FAULT0 input** — disabling the modulated
-outputs combinationally, with no software in the loop and sub-microsecond
-latency. It works even if the CPU clock fails.
+current-sense pin against its internal 6-bit DAC threshold and fans the result
+through two XBARA1 selectors to the private FAULT0 inputs of **FlexPWM1 and
+FlexPWM2**. This disables PWM1 SM3 (Teensy pins 8/7, used by the MOSFET-driver
+harness) and PWM2 SM0-3 (the modulation cells) combinationally, with no software
+in the trip path and sub-microsecond expected latency. The combinational path is
+designed to remain effective if the PWM module loses its clock; registered fault
+status and recovery still require hardware validation.
 
 > **Not bench-verified.** Whether the comparator output actually reaches FAULT0 on
 > this silicon is unconfirmed — see [docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md) §3,
@@ -476,7 +479,13 @@ latency. It works even if the CPU clock fails.
 The hardware route is forced to continuous high-speed comparator mode. Sampled
 filter settings are reset to zero because they add an input-clock-dependent delay
 and violate the cycle-by-cycle PWM-fault contract; external analogue hysteresis/noise
-conditioning must be designed and measured instead.
+conditioning must be designed and measured instead. The FlexPWM fault filter is a
+shared module register, so arming fails dark if another user has configured it.
+Otherwise the firmware enables and reads back `FFILT0.GSTR` on both PWM modules;
+this stretches a narrow fault to at least two IPBus clocks so a combinational trip
+also reaches `FFLAG0` and cannot silently evade the latched/CBC state machine.
+The implementation exclusively owns the module-shared PWM2 fault vector; do not
+enable FAULT1–3 interrupts there without adding explicit dispatch/ownership logic.
 
 Two modes:
 
@@ -484,9 +493,10 @@ Two modes:
   additionally requires the comparator to be quiet. The trip mirrors the
   software fault path (capture freezes, UI banner).
 - **Cycle-by-cycle limiting** — the comparator chops the outputs the instant
-  current exceeds the threshold; the hardware re-enables them at the next cycle
-  boundary while the comparator reads quiet. Classic per-cycle current limiting,
-  not a fault — the modulation ISR counts limited cycles for telemetry.
+  current exceeds the threshold; each PWM module re-enables at its next cycle
+  boundary while the comparator reads quiet. The PWM2 modulation ISR samples
+  both module flags and reports a useful event count, but it is not an exact
+  PWM1-cycle count when the two carrier rates differ.
 
 | Option | Meaning |
 |---|---|
@@ -495,8 +505,9 @@ Two modes:
 | **Cycle-by-cycle** | Off = latched fault |
 | **Filter count / period** | Compatibility fields; validation forces both to 0 (continuous hardware-fault mode) |
 
-Clearing a latched trip is **refused while the comparator still asserts** — a
-persistent overcurrent is reported rather than silently half-cleared.
+Clearing a latched trip is **refused while the comparator still asserts or either
+module has re-latched**. PWM1 is cleared first and the interrupt-owning PWM2 last,
+so a persistent or racing overcurrent cannot silently half-clear.
 
 ## Grid / reference PLL
 
@@ -867,9 +878,10 @@ gates rather than caveats:
   scope every complementary pair, both dead-time edges, all polarity-inverting
   schemes, refused pair states, global inhibit, boot/restart and a live settings
   transition. Confirm no transient gate assertion before connecting a driver.
-- **The ACMP/XBAR/FlexPWM fault route is derived from the RT1062 reference manual,
-  not measured on this board.** Calibrate the DAC threshold and measure pin-to-PWM
-  shutdown/recovery in both latched and cycle-by-cycle modes.
+- **The dual ACMP/XBAR/FlexPWM fault route is derived from the RT1062 reference
+  manual, not measured on this board.** Calibrate the DAC threshold and measure
+  pin-to-PWM shutdown/recovery on both pins 8/7 and the PWM2 modulation outputs
+  in latched and cycle-by-cycle modes.
 - **ADC and interrupt budgets are estimates.** Exercise every enabled-feature
   carrier ceiling, verify `missedIsrCycles`, ADC miss counters and DWT ISR maxima
   under Ethernet, SD, thermal and USB stress. No non-zero miss count is acceptable

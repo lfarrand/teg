@@ -117,9 +117,10 @@ struct FaultProtectionConfig {
 
 // Hardware overcurrent protection: an on-chip analog comparator (ACMP)
 // compares the current-sense pin against its internal 6-bit DAC threshold;
-// the comparator output routes through XBARA1 to FlexPWM2's private FAULT0
-// input, disabling the modulated outputs (Sm20-23 A/B) with no software in
-// the loop. Latched mode holds them off until the fault is cleared;
+// the comparator output fans out through XBARA1 to private FAULT0 inputs on
+// FlexPWM1 and FlexPWM2, disabling Sm13 A/B (pins 8/7) and the modulated
+// Sm20-23 A/B outputs with no software in the loop. Latched mode holds them
+// off until the fault is cleared;
 // cycle-by-cycle mode lets the hardware re-enable at each cycle boundary
 // while the comparator is quiet (current limiting, not a fault).
 struct CurrentLimitConfig {

@@ -107,7 +107,7 @@ time reaches the hardware. That was not true before 2026-07-30; if you have read
 older copy of this file saying complementary operation "does not work", it is stale.
 
 **Nothing in this path has run on hardware.** It writes FlexPWM registers directly on
-every settings apply, and the 309 host tests are structurally unable to see registers.
+every settings apply, and the 317 host tests are structurally unable to see registers.
 
 ### The one that would have damaged hardware
 
@@ -261,18 +261,36 @@ Also for MTP:
 - [ ] Submit non-zero filter count/period values and confirm validation restores both
       to zero. Measure pin-to-FlexPWM-off latency in the enforced continuous,
       high-speed comparator mode; do not quote the comparator's ~25 ns alone.
-- [ ] Confirm the comparator output actually reaches the PWM fault input. If it
-      never trips, try setting the comparator's `OPE` bit — the RM block diagram
-      says the XBAR branch is ungated, but the one known-working community
-      example set it.
+- [ ] Confirm the comparator output reaches **both** private FAULT0 selectors:
+      PWM1 SM3 on pins 8/7 and PWM2 SM0-3. Trigger one threshold crossing and
+      scope every connected output; none may remain switching. If neither route
+      trips, investigate the comparator `OPE` bit — the RM block diagram says the
+      XBAR branch is ungated, but the one known-working community example set it.
+- [ ] With the source quiet, clear a latched trip repeatedly at an asynchronous
+      phase. Verify both FFLAG0 latches clear, both groups stay off if the source
+      reasserts during the clear, and PWM2's sole fault IRQ reports the re-trip.
 - [ ] Watch a cycle-by-cycle limit event on the scope (item 4's triggered
-      capture is ideal): expect the output to chop at the threshold and
-      re-enable at the next cycle boundary.
+      capture is ideal): expect both PWM groups to chop at the threshold and
+      each to re-enable at its own next cycle boundary. Deliberately use unequal
+      PWM1/PWM2 rates and treat the reported count as sampled telemetry only.
+- [ ] Confirm PWM1 SM3's OCTRL polarity/fault-state combination drives pins 8/7
+      low during FAULT0. Then repeat through reconfiguration; a readback mismatch
+      must leave OUTEN disconnected. Hardware input pull-downs are still required
+      because the latched ISR disconnects the pins after the combinational trip.
 - [ ] **A single comparator only trips on positive excursions.** With a
       mid-rail-biased sensor, negative-half-cycle overcurrent is invisible. A
       window comparator (a second CMP on FAULT1) is the future extension.
-- [ ] `FTST0[FTEST]=1` injects a simulated fault without the comparator —
-      the safest way to exercise the latched clear flow.
+- [ ] Exercise `FTST0[FTEST]=1` on **each module** without the comparator.
+      PWM2 validates the sole IRQ/software-notification path; PWM1 validates
+      that its independent latch blocks release even without a PWM1 fault IRQ.
+      Clear the test bit before attempting the latched clear flow.
+- [ ] Read back `FFILT0` on both modules: expect only `GSTR=1`, with `FILT_PER=0`
+      and `FILT_CNT=0`. Inject the shortest practical comparator pulse and prove
+      both modules set `FFLAG0`, not merely a momentary output chop. A non-zero
+      shared filter configuration must refuse to arm and leave all outputs dark.
+- [ ] Confirm no other feature enables PWM2 `FIE1`–`FIE3`: the PWM2 fault vector
+      is exclusively owned by this path. After a clean latched clear, verify the
+      stale NVIC pending bit is gone and does not cause a false re-trip.
 - [ ] Pin 40 is shared between the meter's ADC channel and the comparator.
       Check for added ADC noise with both enabled.
 
@@ -393,7 +411,7 @@ from here, so calibration errors propagate.
 
 ## What the tests already cover
 
-Do not re-verify these by hand — they are pinned by the 309 host-side unit
+Do not re-verify these by hand — they are pinned by the 317 host-side unit
 tests and re-run in CI on every push:
 
 - Modulation maths for all nine schemes, including FFT-verified harmonic

@@ -802,9 +802,13 @@ device's config file on the SD card, never in firmware source or this repository
   before updating the parent gitlink. aWOT takes a plain Arduino
   `Client*` (its QNEthernet dependency was dropped 2026-08-01) and its response
   writes are bounded and watchdog-serviced rather than spinning on a silent peer,
-  with host regression tests covering both properties — see `lib/aWOT/PATCHES.md`;
-  eFlexPwm adds 16-bit duty resolution and keeps its debug logging compiled out
-  (`EFLEXPWM_ENABLE_LOGGING`).
+  with 95.5% host line coverage across its complete source implementation — see
+  `lib/aWOT/PATCHES.md`; eFlexPwm adds 16-bit duty resolution, keeps its debug
+  logging compiled out (`EFLEXPWM_ENABLE_LOGGING`), and has 97.0% aggregate host
+  line coverage across the NXP driver and real Config/SubModule/Timer wrappers.
+  Both forks enforce a 90% line gate and run ASan/UBSan in their own CI. These
+  figures deliberately exclude hardware-only pin mux, reload timing, fault
+  propagation and electrical waveform behavior, which remain target/bench scope.
 - Hot state (sine LUT, ISR variables) lives in zero-wait-state DTCM/ITCM. Setup,
   status serialization, MQTT/Influx connection/publishing and other cold paths are
   marked `FLASHMEM`. The release uses O2/LTO: a measured global O3 build consumed

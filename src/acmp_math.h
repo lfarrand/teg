@@ -17,6 +17,70 @@ struct AcmpRoute {
   uint8_t psel; // MUXCR plus-input channel for that unit
 };
 
+// One comparator output is fanned out through two independent XBARA1 output
+// selectors.  FlexPWM1 SM3 drives Teensy pins 8/7 (the MOSFET-driver harness),
+// while FlexPWM2 SM0-3 are the inverter modulation cells.  Only PWM2 owns the
+// fault IRQ; the combinational disable is present on both modules.
+struct AcmpPwmTarget {
+  uint8_t module;
+  uint8_t submoduleMask;
+  uint8_t xbarFault0Output;
+  bool irqOwner;
+};
+
+constexpr AcmpPwmTarget AcmpPwmTargets[] = {
+    {1, 0x08, 35, false}, // XBARA1_OUT_FLEXPWM1_FAULT0, SM3 only
+    {2, 0x0F, 49, true},  // XBARA1_OUT_FLEXPWM2_FAULT0, SM0-3
+};
+constexpr uint8_t AcmpPwmTargetCount =
+    static_cast<uint8_t>(sizeof(AcmpPwmTargets) / sizeof(AcmpPwmTargets[0]));
+
+// Native-clean forms of the fault-0 fields used by acmp.cpp.  Keeping these
+// transformations pure makes it possible to prove that adding fault 0 to A/B
+// neither maps PWM_X nor destroys another user's fault1-3 mapping.
+constexpr uint16_t AcmpFault0DisA = 0x0001;
+constexpr uint16_t AcmpFault0DisB = 0x0010;
+constexpr uint16_t AcmpFault0DisX = 0x0100;
+
+constexpr uint16_t acmpMapFault0ToAb(uint16_t dismap) {
+  return static_cast<uint16_t>((dismap & ~AcmpFault0DisX) |
+                               AcmpFault0DisA | AcmpFault0DisB);
+}
+
+constexpr uint16_t AcmpFault0Fie = 0x0001;
+constexpr uint16_t AcmpFault0Fsafe = 0x0010;
+constexpr uint16_t AcmpFault0Fauto = 0x0100;
+constexpr uint16_t AcmpFault0Flvl = 0x1000;
+constexpr uint16_t AcmpFault0ControlMask =
+    AcmpFault0Fie | AcmpFault0Fsafe | AcmpFault0Fauto | AcmpFault0Flvl;
+
+// FFILT is shared by all four fault inputs in one FlexPWM module.  The ACMP
+// path needs the filter bypassed for minimum shutdown latency and GSTR set so
+// even a narrow combinational trip is stretched long enough to set FFLAG.
+// Refuse any pre-existing filter configuration rather than silently changing
+// another fault user's latency/noise policy.
+constexpr uint16_t AcmpFaultGlitchStretch = 0x8000;
+constexpr uint16_t AcmpFaultFilterOwnedMask = AcmpFaultGlitchStretch;
+
+constexpr bool acmpFaultFilterAvailable(uint16_t current) {
+  return (current & ~AcmpFaultFilterOwnedMask) == 0;
+}
+
+constexpr uint16_t acmpFaultFilterWithGlitchStretch(uint16_t current) {
+  return static_cast<uint16_t>(current | AcmpFaultGlitchStretch);
+}
+
+constexpr uint16_t acmpFault0Control(uint16_t current, bool cycleByCycle,
+                                     bool interruptOwner) {
+  current = static_cast<uint16_t>(current & ~AcmpFault0ControlMask);
+  current = static_cast<uint16_t>(current | AcmpFault0Flvl);
+  if (cycleByCycle) {
+    return static_cast<uint16_t>(current | AcmpFault0Fauto);
+  }
+  return static_cast<uint16_t>(current | AcmpFault0Fsafe |
+                               (interruptOwner ? AcmpFault0Fie : 0));
+}
+
 // One route per ACMP-reachable Teensy 4.1 pin (RM rev4 Table 10-1 pp.290-291
 // cross-checked against core_pins.h pad assignments). Pins 17/18 are
 // reachable by all four units; the table pins them to CMP1 so the other

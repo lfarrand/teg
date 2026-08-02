@@ -89,6 +89,41 @@ static volatile uint8_t vInvertedCellMask = 0;
 // Sm23}, so the submodule numbers are not in cell order.
 static const uint8_t CellSmIdx[MaxModulationCells] = {0, 2, 1, 3};
 
+static bool faultStateDrivesLowForPolarity(uint16_t octrl, bool channelA,
+                                           bool inverted) {
+  const uint8_t faultState = static_cast<uint8_t>(
+      (octrl >> (channelA ? 4 : 2)) & 0x03);
+  return faultState == (inverted ? 1 : 0);
+}
+
+bool pwmFaultStatesSafeForConfiguredPolarity() {
+  // PWM1 SM3 is fixed HighTrue.  PWM2 can be temporarily un-inverted while
+  // global inhibit is asserted, so judge its fault states against the polarity
+  // releaseOutputInhibit() will restore from vInvertedCellMask, not the transient
+  // OCTRL POL bits visible during a CurrentLimit-only reconfiguration.
+  const uint16_t sm13 = IMXRT_FLEXPWM1.SM[3].OCTRL;
+  if ((sm13 & (FLEXPWM_SMOCTRL_POLA | FLEXPWM_SMOCTRL_POLB)) != 0 ||
+      !faultStateDrivesLowForPolarity(sm13, true, false) ||
+      !faultStateDrivesLowForPolarity(sm13, false, false)) {
+    return false;
+  }
+
+  const uint8_t invertedMask = vInvertedCellMask;
+  for (uint8_t k = 0; k < MaxModulationCells; ++k) {
+    const bool inverted = (invertedMask & (1u << k)) != 0;
+    const uint16_t octrl = IMXRT_FLEXPWM2.SM[CellSmIdx[k]].OCTRL;
+    // A non-inverted cell is not touched by restoreCellPolarity(), so stale
+    // POL bits there would survive release and invert the supposedly safe state.
+    if ((!inverted &&
+         (octrl & (FLEXPWM_SMOCTRL_POLA | FLEXPWM_SMOCTRL_POLB)) != 0) ||
+        !faultStateDrivesLowForPolarity(octrl, true, inverted) ||
+        !faultStateDrivesLowForPolarity(octrl, false, inverted)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Direct OCTRL write: eFlex stages polarity into m_signal and only commits it inside
 // updateSetting(), which is far too heavy for a fault path.
 static inline void setCellPolarityInverted(uint8_t k, bool inverted) {
@@ -163,12 +198,16 @@ static bool releaseOutputInhibit() {
   const bool gpioActive = config.FaultProtection.Enabled &&
       (digitalReadFast(config.FaultProtection.Pin) ==
        (config.FaultProtection.ActiveHigh ? HIGH : LOW));
+  const bool acmpActive = acmpFaultPinActive();
+  const bool acmpLatched = acmpFaultLatched();
+  const bool acmpReady = acmpProtectionReady();
   if (!vPwmConfigurationValid || vFaultTripped || vRestartInhibited || vHardwareInhibited ||
       vProvisioningInhibited ||
-      gpioActive || acmpFaultPinActive()) {
-    if (gpioActive || acmpFaultPinActive()) {
+      !acmpReady || gpioActive || acmpActive || acmpLatched) {
+    if (!acmpReady || gpioActive || acmpActive || acmpLatched) {
       vFaultTripped = true;
-      writeLogLevel(EventWarn, "PWM release refused: a protection input is active");
+      writeLogLevel(EventWarn,
+                    "PWM release refused: protection unready, active or latched");
     }
     disconnectAllOutputDrivers();
     return false;
@@ -514,7 +553,17 @@ bool clearFaultTrip(bool operatorRequest) {
     return false;
   }
   if (vFaultTripped) {
-    acmpClearLatch(); // release the FlexPWM fault latch (its IRQ stays off for now)
+    acmpClearLatch(); // PWM1 first, IRQ-owning PWM2 last; IRQ stays off for now
+    // A fault can reassert between the pre-check and the two W1C writes.  Do
+    // not reconnect OUTEN unless both live inputs and both hardware latches
+    // remained quiet through the complete clear transaction.
+    asm volatile("dsb");
+    if (acmpFaultPinActive() || acmpFaultLatched()) {
+      vFaultTripped = true;
+      writeLogLevel(EventWarn,
+                    "Fault clear refused: current limit reasserted during latch clear");
+      return false;
+    }
   }
   if (operatorRequest) {
     vRestartInhibited = false;
@@ -553,12 +602,6 @@ void applyPwmConfig(const MainConfig &previous) {
     NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
   }
 
-  // Current-limit config first: the clear below must judge refusal against
-  // the NEW protection state, so that disabling the limiter while tripped
-  // clears in one action instead of refusing against the outgoing config
-  if (currentLimitChanged) {
-    acmpConfigure();
-  }
   if (faultProtectionChanged) {
     configureFaultProtection();
   }
@@ -573,6 +616,13 @@ void applyPwmConfig(const MainConfig &previous) {
     // Treat timing/topology as one electrical transaction. This costs a short
     // output gap, but never exposes mixed prescalers, polarity or pair modes.
     configurePwm();
+  }
+  // Apply the fault map after all PWM setup writes.  Reapply even when the
+  // current-limit JSON is unchanged: a simultaneous timer/topology update can
+  // rewrite OCTRL/DISMAP/FCTRL, and protection must be verified against the
+  // final register state before releaseOutputInhibit() reconnects the pads.
+  if (currentLimitChanged || pwmChanged) {
+    acmpConfigure();
   }
   // After the module reconfigures (buildSpwmLut resets the increment): the
   // PLL re-steers from its held estimate for a bumpless re-entry

@@ -68,8 +68,8 @@ both software and hardware fault protection.
   and scheme-aware forms, served gzip-compressed from flash
 - **Tested core logic** — 317 native unit tests across 27 suites cover the selected
   hardware-independent headers (modulation, metering, PLL, MPPT, OTA verification,
-  config mapping and related helpers): 94.2% lines, 100% functions and 64.1%
-  branches in that scope, gated at 80% line coverage in CI. The native environment
+  config mapping and related helpers): 94.6% lines, 100% functions and 63.9%
+  branches in that scope, gated at 90% lines and 60% branches in CI. The native environment
   builds no firmware `.cpp` files, so this is not whole-firmware coverage and cannot
   validate registers, ISRs, boot order or the network path
 
@@ -124,6 +124,14 @@ pio test -e native           # run the unit tests on the host
 
 Flash `.pio/build/teensy41/firmware.hex` with the Teensy loader. CI builds the
 firmware and runs the tests on every PR; the hex is attached as a build artifact.
+It also byte-compares two clean builds, enforces explicit flash/RAM/PSRAM headroom,
+retains the ELF and size/symbol reports, runs parser fuzzing and host-only
+microbenchmarks, scans the current tree for secrets, and emits a deterministic
+CycloneDX SBOM. A checksum-verified OSV-Scanner run checks exact upstream C/C++
+source commits, with a deliberately vulnerable sentinel proving that matching is
+live. See [docs/CI_SECURITY.md](docs/CI_SECURITY.md) for exact gates and
+limitations; in particular, benchmark timings from a shared x86 runner are not
+Cortex-M7 timing evidence.
 
 Settings persist to `/settings.cfg` (JSON) on the SD card. Boot, API updates,
 imports and presets all require the complete versioned schema and reject missing,
@@ -813,13 +821,20 @@ device's config file on the SD card, never in firmware source or this repository
   before updating the parent gitlink. aWOT takes a plain Arduino
   `Client*` (its QNEthernet dependency was dropped 2026-08-01) and its response
   writes are bounded and watchdog-serviced rather than spinning on a silent peer,
-  with 95.5% host line coverage across its complete source implementation — see
+  with 95.0% host line and 85.4% branch coverage across its complete source implementation — see
   `lib/aWOT/PATCHES.md`; eFlexPwm adds 16-bit duty resolution, keeps its debug
-  logging compiled out (`EFLEXPWM_ENABLE_LOGGING`), and has 96.6% aggregate host
-  line coverage across the NXP driver and real Config/SubModule/Timer wrappers.
-  Both forks enforce a 90% line gate and run ASan/UBSan in their own CI. These
+  logging compiled out (`EFLEXPWM_ENABLE_LOGGING`), and has 96.2% aggregate host
+  line and 88.5% branch coverage across the NXP driver and real
+  Config/SubModule/Timer wrappers. aWOT enforces 90% line/85% branch gates;
+  eFlexPwm enforces 95% line/87% branch gates plus a 90% line floor for each of
+  the wrapper and driver areas. Both run ASan/UBSan and bounded libFuzzer jobs in
+  their own CI. These
   figures deliberately exclude hardware-only pin mux, reload timing, fault
   propagation and electrical waveform behavior, which remain target/bench scope.
+- QNEthernet remains a released PlatformIO dependency, not a submodule. Its public
+  experimental IPv6/PTP/PHY branches were audited separately; none is safe for a
+  wholesale merge. The branch-by-branch decisions and confirmed IEEE 1588 blockers
+  are recorded in [`docs/QNETHERNET_BRANCH_AUDIT.md`](docs/QNETHERNET_BRANCH_AUDIT.md).
 - Hot state (sine LUT, ISR variables) lives in zero-wait-state DTCM/ITCM. Setup,
   status serialization, MQTT/Influx connection/publishing and other cold paths are
   marked `FLASHMEM`. The release uses O2/LTO: a measured global O3 build consumed
@@ -831,7 +846,8 @@ device's config file on the SD card, never in firmware source or this repository
   MTP implementation that collides with the patched `lib/MTP_Teensy`, and the
   framework and compiler must move together or the core's own `imxrt.h` fails to
   build. Read the comment there before bumping anything. Library/gitlink pins improve
-  repeatability. CI pins the runner, actions, PlatformIO and gcovr, canonicalises
+  repeatability. CI selects the Ubuntu 24.04 runner family and pins actions,
+  PlatformIO and gcovr, canonicalises
   gzip metadata, runs both submodule suites, and compares two clean firmware builds
   byte-for-byte. The release language/optimization is intentionally GNU++17/O2/LTO.
 

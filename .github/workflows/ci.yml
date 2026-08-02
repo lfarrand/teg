@@ -6,18 +6,42 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12.13"
+  PLATFORMIO_VERSION: "6.1.18"
+  GCOVR_VERSION: "8.6"
+  ACTIONLINT_VERSION: "1.7.12"
+  ACTIONLINT_LINUX_X64_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_LINUX_X64_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+  OSV_SCANNER_VERSION: "2.4.0"
+  OSV_SCANNER_LINUX_X64_SHA256: "15314940c10d26af9c6649f150b8a47c1262e8fc7e17b1d1029b0e479e8ed8a0"
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build-firmware:
     name: Build Teensy 4.1 firmware
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache PlatformIO
         uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
@@ -25,39 +49,70 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio
-          key: pio-build-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          key: pio-build-${{ runner.os }}-${{ hashFiles('platformio.ini', '.gitmodules', 'lib/aWOT/library.properties', 'lib/eFlexPwm/library.properties') }}
 
-      - name: Install PlatformIO
-        run: pip install platformio==6.1.18
+      - name: Install exact PlatformIO version
+        run: python -m pip install --disable-pip-version-check "platformio==${PLATFORMIO_VERSION}"
 
-      - name: Build firmware twice and verify reproducibility
-        shell: bash
+      - name: Build twice and verify reproducibility
         run: |
-          pio run -e teensy41
-          cp .pio/build/teensy41/firmware.hex /tmp/firmware-first.hex
+          set -euo pipefail
+          mkdir -p .pio/ci-artifacts
+          pio run -e teensy41 2>&1 | tee .pio/ci-artifacts/build-first.log
+          cp .pio/build/teensy41/firmware.hex .pio/ci-artifacts/firmware-first.hex
           pio run -e teensy41 -t clean
-          pio run -e teensy41
-          cmp /tmp/firmware-first.hex .pio/build/teensy41/firmware.hex
-          sha256sum .pio/build/teensy41/firmware.hex
+          pio run -e teensy41 2>&1 | tee .pio/ci-artifacts/build-second.log
+          cmp .pio/ci-artifacts/firmware-first.hex .pio/build/teensy41/firmware.hex
+          rm .pio/ci-artifacts/firmware-first.hex
+          sha256sum .pio/build/teensy41/firmware.hex | tee .pio/ci-artifacts/firmware.sha256
 
-      - name: Upload firmware artifact
+      - name: Enforce flash and RAM headroom
+        run: |
+          python scripts/check_teensy_size.py .pio/ci-artifacts/build-second.log \
+            --json-out .pio/ci-artifacts/teensy-size.json \
+            --min-flash-files-free 7340032 \
+            --min-ram1-local-free 81920 \
+            --min-ram2-heap-free 262144 \
+            --extram-capacity 8388608 \
+            --min-extram-free 786432
+
+      - name: Produce linker and symbol reports
+        run: |
+          set -euo pipefail
+          toolchain="$HOME/.platformio/packages/toolchain-gccarmnoneeabi-teensy/bin"
+          "$toolchain/arm-none-eabi-size" -A .pio/build/teensy41/firmware.elf \
+            > .pio/ci-artifacts/sections.txt
+          "$toolchain/arm-none-eabi-nm" -S --size-sort --radix=d \
+            .pio/build/teensy41/firmware.elf > .pio/ci-artifacts/symbols-by-size.txt
+          "$toolchain/arm-none-eabi-objdump" -h .pio/build/teensy41/firmware.elf \
+            > .pio/ci-artifacts/elf-sections.txt
+
+      - name: Upload firmware and build reports
+        if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: firmware-teensy41
-          path: .pio/build/teensy41/firmware.hex
-          if-no-files-found: error
+          path: |
+            .pio/build/teensy41/firmware.hex
+            .pio/build/teensy41/firmware.elf
+            .pio/ci-artifacts/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
 
   unit-tests:
-    name: Native unit tests
+    name: Native tests and coverage
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache PlatformIO
         uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
@@ -67,14 +122,46 @@ jobs:
             ~/.platformio
           key: pio-test-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
 
-      - name: Install PlatformIO and gcovr
-        run: pip install platformio==6.1.18 gcovr==8.6
+      - name: Install exact test tools
+        run: |
+          python -m pip install --disable-pip-version-check \
+            "platformio==${PLATFORMIO_VERSION}" "gcovr==${GCOVR_VERSION}"
 
-      - name: Run tests
+      - name: Run native firmware tests
         run: pio test -e native --verbose
 
-      - name: Coverage report (tested units, line coverage gated at 80%)
-        run: gcovr --root . --filter 'src/' --print-summary --fail-under-line 80
+      - name: Test release tooling and workflow policy
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s scripts/tests -p 'test_*.py' -v
+          python scripts/verify_ci_policy.py
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          curl --fail --silent --show-error --location "$url" --output "/tmp/${archive}"
+          echo "${ACTIONLINT_LINUX_X64_SHA256}  /tmp/${archive}" | sha256sum --check --strict
+          tar -xzf "/tmp/${archive}" -C /tmp actionlint
+          /tmp/actionlint
+
+      - name: Coverage report and gates
+        run: |
+          set -euo pipefail
+          mkdir -p .pio/ci-artifacts/coverage
+          gcovr --root . --filter 'src/' --print-summary \
+            --fail-under-line 90 --fail-under-branch 60 \
+            --txt .pio/ci-artifacts/coverage/coverage.txt \
+            --json-summary .pio/ci-artifacts/coverage/coverage-summary.json \
+            --xml .pio/ci-artifacts/coverage/coverage.xml \
+            --html-details .pio/ci-artifacts/coverage/coverage.html
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: native-coverage
+          path: .pio/ci-artifacts/coverage/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Run native tests with ASan and UBSan
         run: pio test -e native-sanitize --verbose
@@ -82,19 +169,192 @@ jobs:
   submodule-tests:
     name: Forked-library native tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
+          persist-credentials: false
           submodules: recursive
 
-      - name: Test aWOT fork
+      - name: Test pinned aWOT fork
         run: |
-          cmake -S lib/aWOT/test -B /tmp/awot-build
+          cmake -S lib/aWOT/test -B /tmp/awot-build -DCMAKE_BUILD_TYPE=Release
           cmake --build /tmp/awot-build --parallel
           ctest --test-dir /tmp/awot-build --output-on-failure
 
-      - name: Test eFlexPwm fork
+      - name: Test pinned eFlexPwm fork
         run: |
-          cmake -S lib/eFlexPwm/test -B /tmp/eflex-build
+          cmake -S lib/eFlexPwm/test -B /tmp/eflex-build -DCMAKE_BUILD_TYPE=Release
           cmake --build /tmp/eflex-build --parallel
           ctest --test-dir /tmp/eflex-build --output-on-failure
+
+  microbenchmarks:
+    name: Host microbenchmarks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Build pinned Google Benchmark harness
+        run: |
+          cmake -S benchmark -B /tmp/teg-bench -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/teg-bench --parallel
+
+      - name: Run benchmarks without a noisy absolute-time gate
+        run: |
+          mkdir -p .pio/ci-artifacts
+          /tmp/teg-bench/teg-benchmarks \
+            --benchmark_min_time=0.05s \
+            --benchmark_repetitions=3 \
+            --benchmark_report_aggregates_only=true \
+            --benchmark_out=.pio/ci-artifacts/benchmark.json \
+            --benchmark_out_format=json
+
+      - name: Upload benchmark JSON
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: host-microbenchmarks
+          path: .pio/ci-artifacts/benchmark.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+
+  parser-fuzzing:
+    name: Clang parser fuzzing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Build ASan and UBSan libFuzzer targets
+        run: |
+          cmake -S fuzz -B /tmp/teg-fuzz -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_CXX_COMPILER=clang++-18
+          cmake --build /tmp/teg-fuzz --parallel
+
+      - name: Fuzz OTA, waveform and gzip parsers
+        run: |
+          set -euo pipefail
+          mkdir -p .pio/fuzz-artifacts/{ota,waveform,gzip}
+          cp -R fuzz/corpus /tmp/teg-fuzz-corpus
+          /tmp/teg-fuzz/ota-ingest-fuzzer /tmp/teg-fuzz-corpus/ota \
+            -max_total_time=30 -max_len=65536 -timeout=2 -rss_limit_mb=2048 \
+            -artifact_prefix=.pio/fuzz-artifacts/ota/
+          /tmp/teg-fuzz/waveform-fuzzer /tmp/teg-fuzz-corpus/waveform \
+            -max_total_time=30 -max_len=65536 -timeout=2 -rss_limit_mb=2048 \
+            -artifact_prefix=.pio/fuzz-artifacts/waveform/
+          /tmp/teg-fuzz/gzip-fuzzer /tmp/teg-fuzz-corpus/gzip \
+            -max_total_time=30 -max_len=65536 -timeout=2 -rss_limit_mb=2048 \
+            -artifact_prefix=.pio/fuzz-artifacts/gzip/
+
+      - name: Upload fuzz crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: parser-fuzz-crashes
+          path: .pio/fuzz-artifacts/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 30
+
+  supply-chain:
+    name: Secrets, SBOM, and vulnerabilities
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Generate deterministic CycloneDX SBOM
+        run: |
+          mkdir -p .pio/ci-artifacts
+          python scripts/generate_sbom.py --commit "$GITHUB_SHA" \
+            --output .pio/ci-artifacts/teg.cdx.json
+          sha256sum .pio/ci-artifacts/teg.cdx.json > .pio/ci-artifacts/teg.cdx.json.sha256
+
+      - name: Install checksum-verified Gitleaks
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          curl --fail --silent --show-error --location "$url" --output "/tmp/${archive}"
+          echo "${GITLEAKS_LINUX_X64_SHA256}  /tmp/${archive}" | sha256sum --check --strict
+          tar -xzf "/tmp/${archive}" -C /tmp gitleaks
+          /tmp/gitleaks version
+
+      - name: Scan the checked-out tree for secrets
+        run: |
+          /tmp/gitleaks dir . --no-banner --redact \
+            --report-format json --report-path .pio/ci-artifacts/gitleaks.json
+
+      - name: Install checksum-verified OSV-Scanner
+        run: |
+          set -euo pipefail
+          binary="osv-scanner_linux_amd64"
+          url="https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/${binary}"
+          curl --fail --silent --show-error --location "$url" --output "/tmp/${binary}"
+          echo "${OSV_SCANNER_LINUX_X64_SHA256}  /tmp/${binary}" | sha256sum --check --strict
+          chmod 0755 "/tmp/${binary}"
+          mv "/tmp/${binary}" /tmp/osv-scanner
+          /tmp/osv-scanner --version
+
+      - name: Prove the vulnerability matcher is live
+        run: |
+          set -euo pipefail
+          set +e
+          /tmp/osv-scanner scan source \
+            --lockfile osv-scanner:scripts/fixtures/osv-known-vulnerable.json \
+            --format json \
+            --output-file .pio/ci-artifacts/osv-sentinel.json
+          status=$?
+          set -e
+          python scripts/verify_osv_report.py \
+            .pio/ci-artifacts/osv-sentinel.json --require-vulnerabilities
+          if [[ "$status" -eq 0 ]]; then
+            echo "OSV sentinel unexpectedly passed; vulnerability matching is ineffective" >&2
+            exit 1
+          fi
+
+      - name: Scan exact C and C++ source revisions
+        run: |
+          set -euo pipefail
+          set +e
+          /tmp/osv-scanner scan source \
+            --recursive --include-git-root --allow-no-lockfiles --all-packages \
+            --lockfile osv-scanner:scripts/osv-dependencies.json \
+            --format json \
+            --output-file .pio/ci-artifacts/osv-results.json . \
+            2>&1 | tee .pio/ci-artifacts/osv-scan.log
+          status=${PIPESTATUS[0]}
+          set -e
+          python scripts/verify_osv_report.py .pio/ci-artifacts/osv-results.json \
+            --required-lock scripts/osv-dependencies.json \
+            --require-project-gitlinks . \
+            --scan-log .pio/ci-artifacts/osv-scan.log \
+            --forbid-vulnerabilities
+          if [[ "$status" -ne 0 ]]; then
+            echo "OSV-Scanner reported a known vulnerability" >&2
+            exit "$status"
+          fi
+
+      - name: Upload security inventory
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: supply-chain-reports
+          path: .pio/ci-artifacts/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30

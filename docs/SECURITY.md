@@ -135,9 +135,23 @@ supervision. MQTT and InfluxDB are plaintext protocols in this build.
 `lib/aWOT` and `lib/eFlexPwm` are independent git submodules. Their changes must
 be reviewed, tested, committed and pushed in their own repositories before the
 parent gitlink is updated. `lib/miniz` and `lib/MTP_Teensy` are vendored in the
-parent. Platform, framework, compiler, registry libraries, CI runner, Python,
+parent. Platform, framework, compiler, registry libraries, CI runner family, Python,
 PlatformIO, gcovr and GitHub actions are pinned; CI also performs a second clean
-firmware build and compares the resulting image.
+firmware build and compares the resulting image. CI additionally enforces tested-
+source line/branch coverage and memory headroom, runs short ASan/UBSan parser fuzz
+campaigns, retains host benchmark JSON, scans the checked-out tree with a checksum-
+verified Gitleaks binary, emits a deterministic CycloneDX inventory, and scans
+exact upstream C/C++ source commits with checksum-verified OSV-Scanner. A known-
+vulnerable sentinel must be detected before the real scan is trusted. These are
+regression controls, not target-hardware or power-stage validation; the exact gates
+and private-repository platform limitations are in
+[CI_SECURITY.md](CI_SECURITY.md).
+
+The current-tree secret scan deliberately does not inspect Git history, where an
+old InfluxDB token is known to have existed. That token still must be revoked and
+rotated. CodeQL is not enabled because this private repository does not currently
+have GitHub Code Security; committing a workflow that permanently fails entitlement
+checks would weaken, not improve, the signal from CI.
 
 QNEthernet is AGPL-3.0-or-later. Shipping a linked firmware image can require
 offering its complete corresponding source. Obtain a commercial licence, replace

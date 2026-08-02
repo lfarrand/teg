@@ -1,0 +1,122 @@
+{
+  "results": [
+    {
+      "packages": [
+        {
+          "package": {
+            "name": "github.com/adafruit/Adafruit-GFX-Library",
+            "commit": "ac6d7c3869a693d406f77b9bfcd486b0673169f0"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/adafruit/Adafruit_SSD1306",
+            "commit": "d94f699451d72286357cba7259055ffff2c2940b"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/sstaub/TeensyID",
+            "commit": "89ff7fbca2f5e6e12ab1e6016f39befe2e392c8f"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/milesburton/Arduino-Temperature-Control-Library",
+            "commit": "3f570bbe2d0ad3cae55663cfaec1fedbc5b4fa50"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/LAtimes2/InternalTemperature",
+            "commit": "8f6c0af854439b28c3623285d16115040ac725c2"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/bblanchon/ArduinoJson",
+            "commit": "77771d3c07668e01d8f52acb03910c1110bb373f"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/ssilverman/QNEthernet",
+            "commit": "ce1977ecb7af916083d5d3435270bc5585e296a8"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/greiman/SdFat",
+            "commit": "cda057318bec196183d4cc92b01bc1dd64bbfb02"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/pedvide/ADC",
+            "commit": "6e9a359a8efbe47e71a60a89a30caeaf620ceaa6"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/knolleary/pubsubclient",
+            "commit": "2d228f2f862a95846c65a8518c79f48dfc8f188c"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/adafruit/Adafruit_BusIO",
+            "commit": "3b8364267c3ee6e16bad91bc2101aefbd5b5915f"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/PaulStoffregen/OneWire",
+            "commit": "72249e22ef9092b0750e303d266199965a89e500"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/PaulStoffregen/cores",
+            "commit": "dd6aa8419ee173a0a6593eab669fbff54ed85f48"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/PaulStoffregen/LittleFS",
+            "commit": "e895605b703b3ecf27f6973851224d1d7ae9fbd8"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/PaulStoffregen/SPI",
+            "commit": "52f8402bb62c56a0d5fabea20c056f584a703c9a"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/PaulStoffregen/Wire",
+            "commit": "47e46fdc6c0670ce29872cff4865c26230e329f5"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/PaulStoffregen/Time",
+            "commit": "a18e50dcea4ee17285d732d39e7bc559482d1d3d"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/richgel999/miniz",
+            "commit": "293d4db1b7d0ffee9756d035b9ac6f7431ef8492"
+          }
+        },
+        {
+          "package": {
+            "name": "github.com/KurtE/MTP_Teensy",
+            "commit": "13ae26f39f6d9f3b690950dfb96ed0f79ee436d1"
+          }
+        }
+      ]
+    }
+  ]
+}

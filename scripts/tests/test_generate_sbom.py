@@ -1,0 +1,39 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from scripts.generate_sbom import build_sbom
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class SbomTests(unittest.TestCase):
+    def test_is_deterministic_and_contains_pinned_inputs(self):
+        first = build_sbom(ROOT, "0123456789abcdef")
+        second = build_sbom(ROOT, "0123456789abcdef")
+        self.assertEqual(first, second)
+        self.assertEqual(first["specVersion"], "1.6")
+        names = {item["name"] for item in first["components"]}
+        self.assertTrue({"aWOT", "eFlexPwm", "QNEthernet", "MTP_Teensy", "miniz"} <= names)
+        self.assertTrue({"tool-teensy", "tool-scons", "native", "OSV-Scanner"} <= names)
+        submodules = [item for item in first["components"] if
+                      item["properties"][0]["value"] == "git-submodule"]
+        self.assertEqual(len(submodules), 2)
+        self.assertTrue(all(len(item["version"]) == 40 for item in submodules))
+        self.assertTrue(all(item["externalReferences"][0]["url"].startswith("ssh://")
+                            for item in submodules))
+        source_locks = [item for item in first["components"] if
+                        item["properties"][0]["value"] == "upstream-source-lock"]
+        self.assertGreaterEqual(len(source_locks), 19)
+        self.assertTrue(all(len(item["version"]) == 40 for item in source_locks))
+
+    def test_serial_changes_with_commit(self):
+        one = build_sbom(ROOT, "a" * 40)
+        two = build_sbom(ROOT, "b" * 40)
+        self.assertNotEqual(one["serialNumber"], two["serialNumber"])
+
+
+if __name__ == "__main__":
+    unittest.main()

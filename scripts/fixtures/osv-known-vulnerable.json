@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "packages": [
+        {
+          "package": {
+            "name": "lodash",
+            "version": "4.17.20",
+            "ecosystem": "npm"
+          }
+        }
+      ]
+    }
+  ]
+}

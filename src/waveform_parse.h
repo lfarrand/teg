@@ -40,6 +40,7 @@
 constexpr uint32_t MaxWaveSamples = 2UL * 1024UL * 1024UL; // PSRAM-resident limit (4MB as int16)
 constexpr uint32_t MaxStreamSamples = 1UL << 29;           // SD-streamed limit (1GB as int16)
 constexpr uint32_t MaxWaveSegments = 64;
+constexpr uint32_t MaxWaveTextLineLength = 127;
 
 enum : uint8_t {
   WaveTypeNone = 0,
@@ -54,6 +55,7 @@ enum : int32_t {
   WaveErrTooFew = -4,
   WaveErrBadDuration = -5,
   WaveErrBadBinary = -6,
+  WaveErrLineTooLong = -7,
 };
 
 inline float waveClampLevel(float v) {
@@ -79,7 +81,12 @@ struct WaveParser {
 // Feed one line (start..end exclusive, no terminator needed). Returns 0 on
 // success (including blank/comment lines) or a WaveErr* code.
 inline int32_t waveParseLine(WaveParser &p, const char *line, const char *end) {
-  const char *hash = static_cast<const char *>(memchr(line, '#', end - line));
+  if (line == nullptr || end == nullptr || end < line) {
+    return WaveErrBadValue;
+  }
+
+  const char *hash = static_cast<const char *>(
+      memchr(line, '#', static_cast<size_t>(end - line)));
   if (hash != nullptr) {
     end = hash;
   }
@@ -93,12 +100,27 @@ inline int32_t waveParseLine(WaveParser &p, const char *line, const char *end) {
     return 0; // blank
   }
 
+  const size_t length = static_cast<size_t>(end - line);
+  if (length > MaxWaveTextLineLength) {
+    return WaveErrLineTooLong;
+  }
+
+  // strtof() is a NUL-terminated API, whereas this parser's contract
+  // is a bounded [line,end) span. Parsing the caller's storage directly lets a
+  // numeric prefix consume bytes from the next line (or stale bytes in the
+  // streaming buffer), after which end-num_end underflows into an unbounded
+  // memchr(). Keep all conversion reads inside a small, fixed stack buffer.
+  char bounded[MaxWaveTextLineLength + 1];
+  memcpy(bounded, line, length);
+  bounded[length] = '\0';
+  char *const boundedEnd = bounded + length;
+
   if (p.type == WaveTypeNone) {
-    if (end - line >= 14 && strncmp(line, "type=reference", 14) == 0) {
+    if (length == 14 && memcmp(bounded, "type=reference", 14) == 0) {
       p.type = WaveTypeReference;
       return 0;
     }
-    if (end - line >= 13 && strncmp(line, "type=sequence", 13) == 0) {
+    if (length == 13 && memcmp(bounded, "type=sequence", 13) == 0) {
       p.type = WaveTypeSequence;
       return 0;
     }
@@ -107,37 +129,75 @@ inline int32_t waveParseLine(WaveParser &p, const char *line, const char *end) {
 
   if (p.type == WaveTypeReference) {
     char *num_end;
-    const float v = strtof(line, &num_end);
-    if (num_end == line || v != v || v > 1000.0f || v < -1000.0f) {
+    const float v = strtof(bounded, &num_end);
+    while (num_end < boundedEnd && (*num_end == ' ' || *num_end == '\t')) {
+      num_end++;
+    }
+    if (num_end == bounded || num_end != boundedEnd || v != v ||
+        v > 1000.0f || v < -1000.0f) {
       return WaveErrBadValue;
     }
     if (p.count >= p.maxSamples) {
       return WaveErrTooMany;
+    }
+    if (p.samples == nullptr) {
+      return WaveErrBadValue;
     }
     p.samples[p.count++] = waveLevelToQ15(v);
     return 0;
   }
 
   // sequence: "level, duration_us"
-  char *num_end;
-  const float level = strtof(line, &num_end);
-  if (num_end == line || level != level || level > 1000.0f || level < -1000.0f) {
-    return WaveErrBadValue;
-  }
-  const char *comma = static_cast<const char *>(memchr(num_end, ',', end - num_end));
+  char *const comma = static_cast<char *>(memchr(bounded, ',', length));
   if (comma == nullptr) {
     return WaveErrBadDuration;
   }
-  char *dur_end;
-  const unsigned long us = strtoul(comma + 1, &dur_end, 10);
-  if (dur_end == comma + 1 || us == 0) {
+  *comma = '\0';
+
+  char *num_end;
+  const float level = strtof(bounded, &num_end);
+  while (num_end < comma && (*num_end == ' ' || *num_end == '\t')) {
+    num_end++;
+  }
+  if (num_end == bounded || num_end != comma || level != level ||
+      level > 1000.0f || level < -1000.0f) {
+    return WaveErrBadValue;
+  }
+
+  const char *duration = comma + 1;
+  while (duration < boundedEnd && (*duration == ' ' || *duration == '\t')) {
+    duration++;
+  }
+  if (duration == boundedEnd || *duration == '-') {
     return WaveErrBadDuration;
   }
+
+  uint32_t us = 0;
+  bool haveDigit = false;
+  while (duration < boundedEnd && *duration >= '0' && *duration <= '9') {
+    const uint32_t digit = static_cast<uint32_t>(*duration - '0');
+    if (us > (UINT32_MAX - digit) / 10U) {
+      return WaveErrBadDuration;
+    }
+    us = us * 10U + digit;
+    haveDigit = true;
+    duration++;
+  }
+  while (duration < boundedEnd && (*duration == ' ' || *duration == '\t')) {
+    duration++;
+  }
+  if (!haveDigit || duration != boundedEnd || us == 0) {
+    return WaveErrBadDuration;
+  }
+
   if (p.count >= p.maxSegments) {
     return WaveErrTooMany;
   }
+  if (p.segLevelsQ15 == nullptr || p.segMicros == nullptr) {
+    return WaveErrBadValue;
+  }
   p.segLevelsQ15[p.count] = waveLevelToQ15(level);
-  p.segMicros[p.count] = static_cast<uint32_t>(us);
+  p.segMicros[p.count] = us;
   p.count++;
   return 0;
 }

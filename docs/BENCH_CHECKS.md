@@ -107,7 +107,7 @@ time reaches the hardware. That was not true before 2026-07-30; if you have read
 older copy of this file saying complementary operation "does not work", it is stale.
 
 **Nothing in this path has run on hardware.** It writes FlexPWM registers directly on
-every settings apply, and the 317 host tests are structurally unable to see registers.
+every settings apply, and the 319 host tests are structurally unable to see registers.
 
 ### The one that would have damaged hardware
 
@@ -411,7 +411,7 @@ from here, so calibration errors propagate.
 
 ## What the tests already cover
 
-Do not re-verify these by hand — they are pinned by the 317 host-side unit
+Do not re-verify these by hand — they are pinned by the 319 host-side unit
 tests and re-run in CI on every push:
 
 - Modulation maths for all nine schemes, including FFT-verified harmonic

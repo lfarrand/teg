@@ -87,6 +87,11 @@ void test_sequence_basic() {
 void test_sequence_errors_and_limit() {
   TEST_ASSERT_EQUAL_INT32(WaveErrBadDuration, parse("type=sequence\n1.0\n"));
   TEST_ASSERT_EQUAL_INT32(WaveErrBadDuration, parse("type=sequence\n1.0, 0\n"));
+  TEST_ASSERT_EQUAL_INT32(WaveErrBadDuration, parse("type=sequence\n1.0, -1\n"));
+  TEST_ASSERT_EQUAL_INT32(WaveErrBadDuration,
+                          parse("type=sequence\n1.0, 4294967296\n"));
+  TEST_ASSERT_EQUAL_INT32(WaveErrBadDuration,
+                          parse("type=sequence\n1.0, 100junk\n"));
   TEST_ASSERT_EQUAL_INT32(WaveErrBadValue, parse("type=sequence\nfoo, 100\n"));
   TEST_ASSERT_EQUAL_INT32(WaveErrTooFew, parse("type=sequence\n# nothing\n"));
 
@@ -96,6 +101,43 @@ void test_sequence_errors_and_limit() {
     p += sprintf(p, "0.5, 100\n");
   }
   TEST_ASSERT_EQUAL_INT32(WaveErrTooMany, parse(big));
+}
+
+void test_text_parser_never_reads_past_the_supplied_span() {
+  WaveParser p;
+  p.segLevelsQ15 = levels;
+  p.segMicros = micros;
+  p.maxSegments = MaxWaveSegments;
+  const char *typeLine = "type=sequence";
+  TEST_ASSERT_EQUAL_INT32(0, waveParseLine(p, typeLine, typeLine + strlen(typeLine)));
+
+  // Bytes after end deliberately continue a valid float. The old parser let
+  // strtof consume them, then underflowed end-num_end in memchr().
+  const char continuedNumber[] = "1e999999,2";
+  TEST_ASSERT_EQUAL_INT32(
+      WaveErrBadDuration,
+      waveParseLine(p, continuedNumber, continuedNumber + 2));
+
+  const char embeddedNul[] = {'1', ',', '1', '0', '0', '\0', '9'};
+  TEST_ASSERT_EQUAL_INT32(
+      WaveErrBadDuration,
+      waveParseLine(p, embeddedNul, embeddedNul + sizeof(embeddedNul)));
+}
+
+void test_text_parser_rejects_ambiguous_or_oversized_lines() {
+  TEST_ASSERT_EQUAL_INT32(WaveErrNoType, parse("type=reference-junk\n0\n1\n"));
+  TEST_ASSERT_EQUAL_INT32(WaveErrBadValue,
+                          parse("type=reference\n0.1junk\n0.2\n"));
+
+  char longLine[MaxWaveTextLineLength + 2];
+  memset(longLine, '1', sizeof(longLine));
+  WaveParser p;
+  p.type = WaveTypeReference;
+  p.samples = samples;
+  p.maxSamples = sizeof(samples) / sizeof(samples[0]);
+  TEST_ASSERT_EQUAL_INT32(
+      WaveErrLineTooLong,
+      waveParseLine(p, longLine, longLine + sizeof(longLine)));
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +232,8 @@ int main() {
   RUN_TEST(test_incremental_line_feed_matches_whole_text);
   RUN_TEST(test_sequence_basic);
   RUN_TEST(test_sequence_errors_and_limit);
+  RUN_TEST(test_text_parser_never_reads_past_the_supplied_span);
+  RUN_TEST(test_text_parser_rejects_ambiguous_or_oversized_lines);
   RUN_TEST(test_binary_header_roundtrip);
   RUN_TEST(test_binary_header_rejects_bad_input);
   RUN_TEST(test_resample_identity_when_sizes_match);

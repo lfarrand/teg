@@ -1,0 +1,9 @@
+# Safety-critical firmware and its build/release policy require owner review.
+* @lfarrand
+/.github/ @lfarrand
+/platformio.ini @lfarrand
+/lib/aWOT @lfarrand
+/lib/eFlexPwm @lfarrand
+/scripts/ @lfarrand
+/fuzz/ @lfarrand
+/benchmark/ @lfarrand

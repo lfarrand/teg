@@ -75,3 +75,11 @@ require pull requests and successful CI checks on `main`; disallow force pushes
 and branch deletion; keep the default Actions token read-only; and rotate any
 secret ever committed to history. A clean current-tree Gitleaks result does not
 make an old credential safe again.
+
+At the time of this review, GitHub's API rejected branch protection for the
+private `teg` repository because the current account plan does not provide that
+feature. The workflow checks therefore cannot yet be made server-enforced merge
+requirements. Treat a fully green PR as a manual release gate, do not push
+directly to `main`, and enable branch protection immediately if the plan changes
+or the repository becomes public. The public aWOT and eFlexPwm repositories can
+and should enforce their own required checks.

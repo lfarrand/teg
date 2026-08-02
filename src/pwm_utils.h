@@ -79,8 +79,22 @@ void runFeedbackLoop();
 // Fast software fault trip on a GPIO pin; call after configurePwm() and on config change
 void configureFaultProtection();
 void enterOtaSafeState(); // mask outputs + modulation IRQ; only reboot leaves
-// Clear a latched trip and restore outputs/interrupts/capture
-void clearFaultTrip();
+// Restart interlock: watchdog/lockup/thermal resets stay dark until an
+// authenticated operator acknowledgement reaches clearFaultTrip(true).
+void setPwmRestartInhibit(bool inhibit);
+void setPwmHardwareInhibit(bool inhibit); // immutable by ordinary fault clear
+// Missing/failed settings or PIN persistence. Cleared only after saveConfiguration()
+// has read back and atomically promoted a complete document.
+void setPwmProvisioningInhibit(bool inhibit);
+bool pwmRestartInhibited();
+bool pwmHardwareInhibited();
+bool pwmProvisioningInhibited();
+bool pwmOutputInhibited();
+bool pwmConfigurationValid();
+bool pwmInterruptRequired(); // modulation, capture/meter, or CBC sampling
+// Clear a latched trip and restore outputs/interrupts/capture. Calls from normal
+// reconfiguration must pass false; only the authenticated endpoint passes true.
+bool clearFaultTrip(bool operatorRequest = false);
 extern volatile bool vFaultTripped;
 
 void configureModule1();

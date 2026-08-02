@@ -4,13 +4,14 @@
 #include "thermal.h"
 #include "capture.h"
 #include "meter.h"
+#include "power_monitor.h"
 #include "waveform.h"
 #include "utils.h"
 #include <Arduino.h>
 
 extern MainConfig config;
 
-void metricsTask() {
+FLASHMEM void metricsTask() {
   if (config.Influx.Token[0] == '\0' || config.Influx.IntervalSeconds == 0) {
     return;
   }
@@ -22,7 +23,7 @@ void metricsTask() {
   sinceLastPush = 0;
 
   // InfluxDB line protocol; the server assigns the timestamp
-  char line[400];
+  char line[560];
   int n = snprintf(line, sizeof(line),
                    "teg index_milli=%lu,target_milli=%lu,isr_cycles=%lu,apply_us=%lu,"
                    "mod_mhz=%llu,fault=%d,derate_milli=%u,dtcm_free=%d,ocram_free=%d,"
@@ -56,6 +57,20 @@ void metricsTask() {
   }
   if (thermalChipDeciC() != INT16_MIN) {
     n += snprintf(line + n, sizeof(line) - n, ",chip_decic=%d", thermalChipDeciC());
+  }
+  const PowerMonReadings aux = powerMonReadings();
+  if (aux.valid) {
+    n += snprintf(line + n, sizeof(line) - n,
+                  ",aux_power_mw=%lu,aux_bus_mv=%lu,aux_current_ma=%ld,aux_energy_mwh=%llu,"
+                  "aux_pg_efuse=%d,aux_pg_buck=%d,aux_alert=%d",
+                  static_cast<unsigned long>(aux.powerMw), static_cast<unsigned long>(aux.busMv),
+                  static_cast<long>(aux.currentMa),
+                  static_cast<unsigned long long>(powerMonEnergyMwh()), aux.pgEfuse, aux.pgBuck,
+                  aux.alert);
+    if (aux.imonMa >= 0) {
+      n += snprintf(line + n, sizeof(line) - n, ",aux_imon_ma=%ld",
+                    static_cast<long>(aux.imonMa));
+    }
   }
   if (n >= static_cast<int>(sizeof(line))) {
     return; // truncated; skip this push

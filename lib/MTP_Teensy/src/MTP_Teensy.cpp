@@ -38,7 +38,6 @@
 #endif
 
 #include "usb_names.h"
-extern struct usb_string_descriptor_struct usb_string_serial_number;
 
 // define global mtpd object;
 MTP_class MTP;

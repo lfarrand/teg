@@ -9,6 +9,7 @@
 #include "spwm_math.h"
 
 struct AsymmetricTimings {
+  bool valid;
   uint8_t prescalerIndex;
   int16_t periodStart;
   int16_t periodEnd;
@@ -39,22 +40,40 @@ inline AsymmetricTimings computeAsymmetricTimings(uint32_t busClockHz, uint32_t 
   t.prescalerIndex = bestPrescalerIndex(busClockHz, pwmFrequencyHz, maxCounterValue);
   const uint32_t effectiveClockHz = busClockHz / (1U << t.prescalerIndex);
 
-  const float dutyCycleA = static_cast<float>(dutyCycleA16) / 65536.0f;
-  const float clockTicksPerNanosecond = static_cast<float>(effectiveClockHz) / 1000000000.0f;
-  const uint32_t periodTicks =
-    static_cast<uint32_t>(roundf(static_cast<float>(effectiveClockHz) / static_cast<float>(pwmFrequencyHz)));
-  const int16_t pulseTicksA = static_cast<int16_t>(roundf(static_cast<float>(periodTicks) * dutyCycleA));
-  const int16_t preShiftTicks =
-    static_cast<int16_t>(roundf(clockTicksPerNanosecond * static_cast<float>(preShiftNanos)));
-  const int16_t postShiftTicks =
-    static_cast<int16_t>(roundf(clockTicksPerNanosecond * static_cast<float>(postShiftNanos)));
+  const uint64_t roundedPeriod =
+      (static_cast<uint64_t>(effectiveClockHz) + pwmFrequencyHz / 2U) / pwmFrequencyHz;
+  if (roundedPeriod < 2U || roundedPeriod > static_cast<uint64_t>(maxCounterValue) + 1U) {
+    return t;
+  }
+  const int64_t periodTicks = static_cast<int64_t>(roundedPeriod);
+  const int64_t pulseTicksA =
+      (periodTicks * static_cast<uint64_t>(dutyCycleA16) + 32768U) / 65536U;
+  const auto nanosToTicks = [effectiveClockHz](int32_t ns) -> int64_t {
+    const int64_t product = static_cast<int64_t>(ns) * effectiveClockHz;
+    return product >= 0 ? (product + 500000000LL) / 1000000000LL
+                        : (product - 500000000LL) / 1000000000LL;
+  };
+  const int64_t preShiftTicks = nanosToTicks(preShiftNanos);
+  const int64_t postShiftTicks = nanosToTicks(postShiftNanos);
+
+  const int64_t periodEnd = periodTicks - 1;
+  const int64_t stopA = pulseTicksA;
+  const int64_t startB = stopA - preShiftTicks;
+  const int64_t stopB = periodEnd - postShiftTicks;
+  // Every compare must be reachable between INIT and VAL1, in order. A value
+  // outside this interval is never matched and can leave an output asserted.
+  if (stopA <= 0 || stopA > periodEnd || startB < 0 || startB >= stopB ||
+      stopB > periodEnd) {
+    return t;
+  }
 
   t.periodStart = 0;
-  t.periodEnd = static_cast<int16_t>(periodTicks - 1);
+  t.periodEnd = static_cast<int16_t>(periodEnd);
   t.startChanA = t.periodStart;
-  t.stopChanA = static_cast<int16_t>(t.startChanA + pulseTicksA);
-  t.startChanB = static_cast<int16_t>(t.stopChanA - preShiftTicks);
-  t.stopChanB = static_cast<int16_t>(t.periodEnd - postShiftTicks);
+  t.stopChanA = static_cast<int16_t>(stopA);
+  t.startChanB = static_cast<int16_t>(startB);
+  t.stopChanB = static_cast<int16_t>(stopB);
+  t.valid = true;
   return t;
 }
 

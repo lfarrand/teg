@@ -5,6 +5,7 @@
 #include "config_json.h"
 #include "pwm_utils.h" // vFaultTripped
 #include "utils.h"
+#include "memory_utils.h"
 #include <Arduino.h>
 #include <ADC.h>
 
@@ -30,6 +31,8 @@ static volatile uint32_t vTotal = 0;
 static volatile bool vEnabled = false;
 static volatile bool vFrozen = false;
 static volatile uint16_t vLatest = 0;
+static volatile uint32_t vVoltageMisses = 0;
+static volatile uint32_t vCurrentMisses = 0;
 
 static volatile bool vMeterEnabled = false;
 static volatile uint32_t vCurrentHead = 0;
@@ -51,7 +54,7 @@ void captureConfigure() {
   vScopeEnabled = false; // reconfigure invalidates an armed trigger
   scopeDisarm(scopeM);
 
-  if (!config.Capture.Enabled) {
+  if (!config.Capture.Enabled || !psramAvailable()) {
     return;
   }
 
@@ -106,6 +109,8 @@ void captureConfigure() {
 
   vHead = 0;
   vTotal = 0;
+  vVoltageMisses = 0;
+  vCurrentMisses = 0;
   vFrozen = false;
   vEnabled = true;
 }
@@ -120,7 +125,18 @@ FASTRUN void captureTick() {
   if (vFrozen) {
     return;
   }
-  if (adcModule->isComplete()) {
+  if (!adcModule->isComplete()) {
+    vVoltageMisses = vVoltageMisses + 1;
+    return;
+  }
+  // Never pair a fresh voltage sample with a stale current conversion. Leave
+  // both completed/pending conversions untouched and consume them together on
+  // the next carrier tick; telemetry records the missed sample deadline.
+  if (vMeterEnabled && !currentModule->isComplete()) {
+    vCurrentMisses = vCurrentMisses + 1;
+    return;
+  }
+  {
     const uint16_t v = static_cast<uint16_t>(adcModule->readSingle());
     vLatest = v;
     const uint32_t h = vHead;
@@ -141,7 +157,7 @@ FASTRUN void captureTick() {
 
     // Paired current sample: both conversions started in the same tick, so
     // both are ready together; accumulate zero-corrected V*I / V^2 / I^2
-    if (vMeterEnabled && currentModule->isComplete()) {
+    if (vMeterEnabled) {
       const uint16_t iRaw = static_cast<uint16_t>(currentModule->readSingle());
       const uint32_t ch = vCurrentHead;
       currentRing[ch] = iRaw;
@@ -187,6 +203,14 @@ uint32_t captureSampleCount() {
 
 uint16_t captureLatestRaw() {
   return vLatest;
+}
+
+uint32_t captureVoltageMissCount() {
+  return vVoltageMisses;
+}
+
+uint32_t captureCurrentMissCount() {
+  return vCurrentMisses;
 }
 
 uint32_t captureMeanRaw(uint32_t n) {

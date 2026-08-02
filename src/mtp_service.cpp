@@ -49,7 +49,11 @@ static bool paused = false;
 static uint32_t pausedPasses = 0;
 
 void mtpBegin() {
-  if (!config.Mtp.Enabled) {
+  if (!config.Mtp.Enabled || started) {
+    return;
+  }
+  if (!pwmOutputInhibited()) {
+    writeLogLevel(EventWarn, "MTP: waiting for maintenance mode (PWM outputs must be inhibited)");
     return;
   }
   // QSPI first so it becomes store 0 and therefore holds /mtpindex.dat -
@@ -72,13 +76,16 @@ void mtpBegin() {
 
 void mtpTask() {
   if (!started) {
+    if (config.Mtp.Enabled && pwmOutputInhibited()) {
+      mtpBegin();
+    }
     return;
   }
   // MTP.begin() arms a 20Hz interval timer that answers the host until the
   // first MTP.loop() call tears it down - and its handler queries the
   // filesystem from INTERRUPT context. Never let the gate below skip that
   // first call, or the timer stays armed forever racing the SD reader.
-  if (!firstLoopDone) {
+  if (!firstLoopDone && pwmOutputInhibited() && !otaInProgress()) {
     firstLoopDone = true;
     MTP.loop();
     return;
@@ -90,7 +97,7 @@ void mtpTask() {
   // (holding the last sample distorts the output), and the thermal derate,
   // feedback and MPPT loops must not be frozen for seconds while the bridge
   // is switching. An OTA owns the flash and must not contend either.
-  const bool busy = otaInProgress() || (spwmActive() && (waveformIsStreaming() || captureActive()));
+  const bool busy = otaInProgress() || !pwmOutputInhibited();
   if (busy) {
     if (!paused) {
       writeLogLevel(EventWarn, "MTP: paused - USB file access resumes when the inverter is idle");

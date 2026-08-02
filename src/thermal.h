@@ -2,8 +2,8 @@
 #define THERMAL_H
 
 // Temperature monitoring and thermal derating: DS18B20 probes on a OneWire
-// bus (TEG hot/cold sides) plus the RT1062 die temperature. The worst of
-// (hot-side, die) drives a linear derate factor that caps the modulation
+// bus (stable ROM-sorted probe 1/2 slots) plus the RT1062 die temperature. The
+// hottest valid reading drives a linear derate factor that caps the modulation
 // index; sensors are read with a non-blocking state machine from loop().
 
 #include <stdint.h>

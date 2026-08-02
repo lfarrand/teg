@@ -1,4 +1,5 @@
 #include "miniz.h"
+#include <limits.h>
 /**************************************************************************
  *
  * Copyright 2013-2014 RAD Game Tools and Valve Software
@@ -322,9 +323,13 @@ int mz_compress2(unsigned char *pDest, mz_ulong *pDest_len, const unsigned char 
     mz_stream stream;
     memset(&stream, 0, sizeof(stream));
 
-    /* In case mz_ulong is 64-bits (argh I hate longs). */
+    /* In case mz_ulong is 64-bits (argh I hate longs). On LLP64/32-bit
+       targets this comparison is provably false, so do not compile it and
+       drown useful warning output in -Wtype-limits noise. */
+#if ULONG_MAX > 0xFFFFFFFFUL
     if ((mz_uint64)(source_len | *pDest_len) > 0xFFFFFFFFU)
         return MZ_PARAM_ERROR;
+#endif
 
     stream.next_in = pSource;
     stream.avail_in = (mz_uint32)source_len;
@@ -565,9 +570,11 @@ int mz_uncompress2(unsigned char *pDest, mz_ulong *pDest_len, const unsigned cha
     int status;
     memset(&stream, 0, sizeof(stream));
 
-    /* In case mz_ulong is 64-bits (argh I hate longs). */
+    /* See mz_compress2(): this guard is meaningful only when long is 64-bit. */
+#if ULONG_MAX > 0xFFFFFFFFUL
     if ((mz_uint64)(*pSource_len | *pDest_len) > 0xFFFFFFFFU)
         return MZ_PARAM_ERROR;
+#endif
 
     stream.next_in = pSource;
     stream.avail_in = (mz_uint32)*pSource_len;

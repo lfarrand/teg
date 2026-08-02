@@ -29,6 +29,8 @@ bool captureActive();
 bool captureIsFrozen();
 uint32_t captureSampleCount(); // total samples written since (re)configure
 uint16_t captureLatestRaw();   // 12-bit
+uint32_t captureVoltageMissCount(); // carrier ticks where ADC0/1 was not ready
+uint32_t captureCurrentMissCount(); // paired-current ticks not ready
 uint32_t captureMeanRaw(uint32_t n);
 uint32_t captureRingSamples();
 // Envelope-decimate the most recent `count` samples into `bins` min/max pairs.

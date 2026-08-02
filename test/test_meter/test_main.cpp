@@ -87,6 +87,17 @@ void test_energy_integration() {
   TEST_ASSERT_FLOAT_WITHIN(1e-3f, -1000.0f, static_cast<float>(energyStepMwh(-1000, 3600000)));
 }
 
+void test_calibration_range_and_saturating_conversions() {
+  TEST_ASSERT_TRUE(meterCalibrationValid(1650, 1650, 10000, 240000));
+  TEST_ASSERT_FALSE(meterCalibrationValid(3301, 1650, 10000, 1000));
+  TEST_ASSERT_FALSE(meterCalibrationValid(1650, 1650, 0, 1000));
+  TEST_ASSERT_FALSE(meterCalibrationValid(1650, 1650, 1000000, 1000000));
+  TEST_ASSERT_EQUAL_INT32(INT32_MAX, meterSaturatingRoundI32(1.0e30));
+  TEST_ASSERT_EQUAL_INT32(INT32_MIN, meterSaturatingRoundI32(-1.0e30));
+  TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, meterSaturatingRoundU32(1.0e30));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, energyMwhToCounter(1.0e30));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_scale_factors);
@@ -95,5 +106,6 @@ int main() {
   RUN_TEST(test_reverse_power_flow_is_signed);
   RUN_TEST(test_empty_window_invalid);
   RUN_TEST(test_energy_integration);
+  RUN_TEST(test_calibration_range_and_saturating_conversions);
   return UNITY_END();
 }

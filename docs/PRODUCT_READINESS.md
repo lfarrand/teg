@@ -10,6 +10,14 @@ The companion hardware analysis lives with the switch board
 covers only the **firmware** side and the conclusions that change what should be
 built here.
 
+> **Status update, 2026-08-01:** the six-lane release review in
+> [REVIEW_2026-08-01.md](REVIEW_2026-08-01.md) remains **NO-SHIP** for current
+> inverter use until hardware verification. The hardening branch implements the
+> fail-dark boot, active-level checks, canonical/representable timing, atomic apply,
+> strict schema/pin validation, recoverable persistence, fail-closed PSRAM and bounded
+> network/USB/storage paths. Those fixes make a safer bench controller; they do not
+> supply functional-safety independence, secure transport or product certification.
+
 ## 1. The four firmware facts that constrain the product
 
 ### 1.1 The capture path cannot see an arc
@@ -41,9 +49,11 @@ one 8 s watchdog, in one flash image, on one MCU. That fails freedom-from-
 interference on its face for any functional-safety argument, and it is why the
 recommendation below is two MCUs rather than better scheduling.
 
-The hardware trip path (**CMP → XBARA1 → FlexPWM FAULT0**) is the one piece of
-this architecture that is already right: it is sub-microsecond and has no
-software in it. Keep that shape and extend it; do not move fast trips into code.
+The hardware trip path (**CMP → XBARA1 → FlexPWM FAULT0**) has the right
+architectural shape because no software is in the trip path. It is not yet proven
+on this board. The hardening build forces continuous high-speed comparator mode
+rather than allowing a sampled filter to add uncertain delay. Keep the hardware
+shape, measure pin-to-gate latency, and do not move fast trips into code.
 
 ### 1.4 MPPT as written is structurally string-level
 
@@ -132,18 +142,21 @@ Recorded because these were counter-intuitive and cost real time to establish:
 
 ## 3. Firmware work that would actually be needed
 
-Roughly in dependency order. None of this is started.
+Roughly in dependency order. Items marked hardened are implemented for the bench
+firmware but still require hardware evidence and do not constitute certification.
 
 | # | Work | Why |
 |---|---|---|
 | 1 | Resolve the **QNEthernet AGPL** position | Attaches to any algorithm in the binary; irreversible once disclosed. See [SECURITY.md](SECURITY.md) |
-| 2 | **Signed OTA + anti-rollback** | Unsigned field update is incompatible with any safety listing, and is a remote-code-execution hole today |
-| 3 | **High-rate acquisition path** (ADC_ETC + DMA ring, 250–500 kSPS, external 16-bit ADC) | Precondition for any arc work |
-| 4 | **Split safety from comms** — bare-metal safety MCU with no network stack, comms MCU running this firmware, physically unable to command the switch closed | Freedom from interference; also removes the superloop DoS surface from the safety path |
-| 5 | **Non-volatile event log** | A RAM ring proves nothing after a fire; an evidence trail is what insurers and investigators want |
-| 6 | **Self-test scheduler** (µs open-pulse under MPPT, logged) | The actual moat, and currently one sentence with no hardware behind it |
-| 7 | **Dither/detection interlock** | They cannot coexist; enforce it in validation rather than documentation |
-| 8 | Nuisance-trip dataset: recorded inverter-noise library, MPPT transients, disconnect operations | The discrimination quality *is* the product |
+| 2 | **Fail-dark boot and configuration transaction — hardened, unverified** | Global inhibit, strict schema/pins and protection-before-release are implemented; hardware proof remains |
+| 3 | **Signed A/B OTA + anti-rollback** | Unsigned single-slot field update is both remote-code execution and physical-only recovery after an interrupted/failed copy |
+| 4 | **Recoverable settings + fail-closed memory — hardened, unverified** | Generation/CRC live/tmp/backup recovery and mandatory-PSRAM inhibit are implemented; power-cut/fault-injection proof remains |
+| 5 | **High-rate acquisition path** (ADC_ETC + DMA ring, 250–500 kSPS, external 16-bit ADC) | Precondition for any arc work |
+| 6 | **Split safety from comms** — bare-metal safety MCU with no network stack, comms MCU running this firmware, physically unable to command the switch closed | Freedom from interference; also removes DNS, USB, SD and web stalls from the safety path |
+| 7 | **Non-volatile authenticated event log and trusted time** | A RAM ring plus unauthenticated NTP proves nothing after a fire; an evidence trail is what insurers and investigators want |
+| 8 | **Self-test scheduler** (µs open-pulse under MPPT, logged) | The actual moat, and currently one sentence with no hardware behind it |
+| 9 | **Dither/detection interlock** | They cannot coexist; enforce it in validation rather than documentation |
+| 10 | Nuisance-trip dataset: recorded inverter-noise library, MPPT transients, disconnect operations | The discrimination quality *is* the product |
 
 ## 4. Features worth adding, ranked
 

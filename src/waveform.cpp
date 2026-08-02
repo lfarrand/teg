@@ -3,12 +3,15 @@
 #include "gzip_stream.h"
 #include "stream_ring.h"
 #include "utils.h"
+#include "memory_utils.h"
 #include <SdFat.h>
 
 extern SdFs sd;
 extern bool sdAvailable;
 
 static const char *const WaveformFile = "/waveform.bin";
+static const char *const WaveformStagingFile = "/waveform.tmp";
+static const char *const WaveformBackupFile = "/waveform.bak";
 
 // PSRAM-resident store for waveforms up to MaxWaveSamples; larger files play
 // by streaming from SD through the double buffer below.
@@ -62,7 +65,7 @@ void waveformStreamTask() {
     return;
   }
   for (uint8_t k = 0; k < 2; k++) {
-    if (ring.refillNeeded[k]) {
+    if (ring.beginRefill(k)) {
       fillStreamBuffer(k);
     }
   }
@@ -168,6 +171,10 @@ static void activateFromSd() {
 }
 
 void waveformLoadFromSd() {
+  if (!psramAvailable()) {
+    deactivate();
+    return;
+  }
   activateFromSd();
 }
 
@@ -239,14 +246,17 @@ static bool flushParserStaging() {
 
 static bool openSink(bool binaryWithHeader) {
   if (useSd) {
-    sd.remove(WaveformFile);
-    out = sd.open(WaveformFile, O_RDWR | O_CREAT | O_TRUNC);
+    sd.remove(WaveformStagingFile);
+    out = sd.open(WaveformStagingFile, O_RDWR | O_CREAT | O_TRUNC);
     if (!out) {
       return fail("SD open failed");
     }
     // Placeholder header; rewritten with the real type/count at finish
     uint8_t header[WaveBinaryHeaderSize];
-    waveBinaryHeaderWrite(header, binaryWithHeader ? binType : WaveTypeReference, 2);
+    waveBinaryHeaderWrite(
+        header,
+        binaryWithHeader ? binType : static_cast<uint8_t>(WaveTypeReference),
+        2);
     if (out.write(header, sizeof(header)) != static_cast<int>(sizeof(header))) {
       return fail("SD write failed");
     }
@@ -339,6 +349,9 @@ static bool feedLogical(const uint8_t *data, size_t len) {
         }
         break;
       case BinPayload: {
+        if (payloadGot >= binCount * 2U) {
+          return fail("sample payload exceeds declared count");
+        }
         recBuf[recLen++] = data[i];
         if (recLen == 2) {
           const int16_t s = static_cast<int16_t>(recBuf[0] | (recBuf[1] << 8));
@@ -355,10 +368,16 @@ static bool feedLogical(const uint8_t *data, size_t len) {
         break;
       }
       case BinSeqPayload:
+        if (payloadGot >= binCount * 8U) {
+          return fail("segment payload exceeds declared count");
+        }
         recBuf[recLen++] = data[i];
         if (recLen == 8) {
           recLen = 0;
           const uint32_t idx = payloadGot / 8;
+          if (idx >= binCount || idx >= MaxWaveSegments) {
+            return fail("segment payload exceeds declared count");
+          }
           segLevelsQ15[idx] = static_cast<int16_t>(recBuf[0] | (recBuf[1] << 8));
           segMicros[idx] = static_cast<uint32_t>(recBuf[4]) | (static_cast<uint32_t>(recBuf[5]) << 8) |
                            (static_cast<uint32_t>(recBuf[6]) << 16) |
@@ -381,14 +400,30 @@ static bool gzEmit(void *, const uint8_t *data, size_t len) {
 }
 } // namespace ingest
 
-bool waveformApplyStream(Stream &in, const char **errorOut, void (*progress)()) {
+bool waveformApplyStream(Stream &in, uint32_t expectedBytes, const char **errorOut,
+                         void (*progress)()) {
   using namespace ingest;
 
-  deactivate(); // stop streaming playback before the file is replaced
+  if (!psramAvailable()) {
+    if (errorOut) *errorOut = "PSRAM unavailable";
+    return false;
+  }
+
+  // Atomic replacement needs a second object. With no SD card there is only one
+  // 4 MiB PSRAM store, so a failed upload would necessarily destroy the active
+  // waveform. Refuse that non-recoverable path.
+  if (!sdAvailable) {
+    *errorOut = "an SD card is required for atomic waveform upload";
+    return false;
+  }
+  if (expectedBytes == 0) {
+    *errorOut = "missing or empty Content-Length";
+    return false;
+  }
 
   stage = Detect;
   err = "";
-  useSd = sdAvailable;
+  useSd = true;
   sunkSamples = 0;
   preLen = 0;
   payloadGot = 0;
@@ -401,20 +436,30 @@ bool waveformApplyStream(Stream &in, const char **errorOut, void (*progress)()) 
 
   uint8_t chunk[1024];
   uint32_t chunkLen = 0;
-  uint32_t idleSpins = 0;
+  uint32_t receivedBytes = 0;
+  uint32_t lastByteMs = millis();
+  uint32_t lastServiceMs = lastByteMs;
   bool ok = true;
 
-  for (;;) {
+  while (receivedBytes < expectedBytes) {
     const int c = in.read();
     if (c < 0) {
-      if (++idleSpins < 200000) {
-        continue;
+      const uint32_t now = millis();
+      if (static_cast<uint32_t>(now - lastServiceMs) >= 10U && progress != nullptr) {
+        progress();
+        lastServiceMs = now;
       }
+      if (static_cast<uint32_t>(now - lastByteMs) >= 5000U) {
+        ok = fail("upload timed out waiting for body data");
+        break;
+      }
+      continue;
     } else {
-      idleSpins = 0;
+      receivedBytes++;
+      lastByteMs = millis();
       chunk[chunkLen++] = static_cast<uint8_t>(c);
     }
-    const bool flushNow = chunkLen == sizeof(chunk) || (c < 0 && chunkLen > 0);
+    const bool flushNow = chunkLen == sizeof(chunk) || receivedBytes == expectedBytes;
     if (flushNow) {
       if (!gzDecided && chunkLen >= 2) {
         gz = GzipInflater::looksLikeGzip(chunk);
@@ -429,9 +474,6 @@ bool waveformApplyStream(Stream &in, const char **errorOut, void (*progress)()) 
       if (progress != nullptr) {
         progress();
       }
-    }
-    if (c < 0) {
-      break;
     }
   }
 
@@ -503,6 +545,7 @@ bool waveformApplyStream(Stream &in, const char **errorOut, void (*progress)()) 
     waveBinaryHeaderWrite(header, finalType, finalCount);
     out.seekSet(0);
     out.write(header, sizeof(header));
+    out.flush();
     out.close();
   } else if (out) {
     out.close();
@@ -511,12 +554,40 @@ bool waveformApplyStream(Stream &in, const char **errorOut, void (*progress)()) 
   if (!ok) {
     *errorOut = err[0] != '\0' ? err : "parse error";
     if (useSd) {
-      sd.remove(WaveformFile); // don't leave a half-written file to load at boot
+      if (out) out.close();
+      sd.remove(WaveformStagingFile);
     }
     return false;
   }
 
   if (useSd) {
+    const uint64_t expectedSize = WaveBinaryHeaderSize +
+        static_cast<uint64_t>(finalCount) * (finalType == WaveTypeReference ? 2U : 8U);
+    FsFile verify = sd.open(WaveformStagingFile, O_RDONLY);
+    const bool verified = verify && verify.fileSize() == expectedSize;
+    if (verify) verify.close();
+    if (!verified) {
+      sd.remove(WaveformStagingFile);
+      *errorOut = "staged waveform failed read-back verification";
+      return false;
+    }
+
+    // Stop readers only for the directory swap. The previous waveform remains
+    // active throughout upload and recoverable as .bak at every failure point.
+    deactivate();
+    sd.remove(WaveformBackupFile);
+    const bool hadLive = sd.exists(WaveformFile);
+    if (hadLive && !sd.rename(WaveformFile, WaveformBackupFile)) {
+      *errorOut = "could not preserve previous waveform";
+      activateFromSd();
+      return false;
+    }
+    if (!sd.rename(WaveformStagingFile, WaveformFile)) {
+      if (hadLive) sd.rename(WaveformBackupFile, WaveformFile);
+      *errorOut = "could not activate staged waveform";
+      activateFromSd();
+      return false;
+    }
     activateFromSd();
   } else {
     storedType = finalType;

@@ -8,18 +8,20 @@ extern MainConfig config;
 static MeterReadings lastReadings;
 static double energyMwh = 0.0;
 static uint32_t lastEnergyMs = 0;
+static elapsedMillis cadence;
+static bool flipped = false;
 
 void meterTask() {
   if (!captureMeterActive()) {
     lastReadings = MeterReadings{};
+    lastEnergyMs = 0;
+    cadence = 0;
+    flipped = false;
     return;
   }
 
   // Bank-flip protocol: flip, give the ISR a moment to move to the new bank,
   // then drain the idle one - no locking against the 20kHz ISR needed
-  static elapsedMillis cadence;
-  static bool flipped = false;
-
   if (!flipped && cadence >= 1000) {
     captureMeterFlip();
     flipped = true;
@@ -38,10 +40,14 @@ void meterTask() {
     meterMaPerCount(config.Meter.CurrentMilliampPerVolt));
 
   const uint32_t now = millis();
-  if (lastReadings.valid && lastEnergyMs != 0) {
-    energyMwh += energyStepMwh(lastReadings.powerMw, now - lastEnergyMs);
+  if (lastReadings.valid) {
+    if (lastEnergyMs != 0) {
+      energyMwh += energyStepMwh(lastReadings.powerMw, now - lastEnergyMs);
+    }
+    lastEnergyMs = now;
+  } else {
+    lastEnergyMs = 0;
   }
-  lastEnergyMs = now;
 }
 
 MeterReadings meterReadings() {
@@ -49,5 +55,5 @@ MeterReadings meterReadings() {
 }
 
 uint64_t meterEnergyMwh() {
-  return energyMwh >= 0.0 ? static_cast<uint64_t>(energyMwh) : 0;
+  return energyMwhToCounter(energyMwh);
 }

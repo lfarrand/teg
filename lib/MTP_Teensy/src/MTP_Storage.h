@@ -164,14 +164,14 @@ public:
 	// return the Type of the file system, Used in loop to know type of FS to
 	// determine if maybe something should be done in places like calls to loop()
 	// Currently only FSTYPE_UNKNOWN=0, FSTYPE_SD=1 are defined
-	const mtp_fstype_t get_FSType(uint32_t store) {
+	mtp_fstype_t get_FSType(uint32_t store) {
 		return fstype_[store];
 	}
 
 	// sets the Type of the file system, Used in loop to know type of FS to
 	// determine if maybe something should be done in places like calls to loop()
 	// Currently only FSTYPE_UNKNOWN=0, FSTYPE_SD=1 are defined
-	const void set_FSType(uint32_t store, mtp_fstype_t fstype) {
+	void set_FSType(uint32_t store, mtp_fstype_t fstype) {
 		fstype_[store] = fstype;
 	}
 
@@ -213,10 +213,10 @@ public:
 	bool formatStore(uint32_t store, uint32_t p2) {
 		return fs[store]->format((int)p2, '*')? 1 : 0;
 	}
-	bool readonly(uint32_t storage) {
+	bool readonly(uint32_t) {
 		return false;
 	}
-	bool has_directories(uint32_t storage) {
+	bool has_directories(uint32_t) {
 		return true;
 	}
 	void StartGetObjectHandles(uint32_t storage, uint32_t parent);

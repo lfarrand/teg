@@ -14,7 +14,8 @@
 // failure returns false, sets *errorOut, and leaves the previous waveform
 // in place unless the new one had already partially replaced it (in which
 // case the type resets to none).
-bool waveformApplyStream(Stream &in, const char **errorOut, void (*progress)());
+bool waveformApplyStream(Stream &in, uint32_t expectedBytes, const char **errorOut,
+                         void (*progress)());
 
 void waveformLoadFromSd(); // call once at boot, after the SD card is up
 

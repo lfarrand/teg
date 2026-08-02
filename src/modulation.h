@@ -283,27 +283,39 @@ inline uint32_t triangleIndex(uint32_t counter, uint32_t n) {
   return m < n ? m : 2U * (n - 1) - m;
 }
 
-// Soft-start: per-carrier-cycle Q15 step so the index reaches targetQ15 in
-// roughly rampMs. rampMs == 0 disables ramping (instant, step spans the range).
-constexpr uint32_t softStartStepQ15(uint32_t targetQ15, uint16_t rampMs, uint32_t carrierHz) {
+// Soft-start retains 24 fractional bits. An integer-Q15 step bottoms out at one,
+// limiting any ramp to 32,768 cycles (1.64 s at 20 kHz) regardless of the requested
+// duration. The fractional accumulator preserves minute-long ramps without division
+// in the ISR.
+constexpr uint8_t SoftStartFractionBits = 24;
+constexpr uint64_t SoftStartInstant = UINT64_MAX;
+
+constexpr uint64_t softStartStepQ24(uint32_t targetQ15, uint16_t rampMs,
+                                    uint32_t carrierHz) {
   const uint64_t steps = (static_cast<uint64_t>(rampMs) * carrierHz) / 1000ULL;
   if (steps == 0) {
-    return 1UL << 30;
+    return SoftStartInstant;
   }
-  const uint32_t step = static_cast<uint32_t>(targetQ15 / steps);
+  const uint64_t distance = static_cast<uint64_t>(targetQ15) << SoftStartFractionBits;
+  const uint64_t step = (distance + steps - 1U) / steps;
   return step != 0 ? step : 1;
 }
 
-// Advance the current index one carrier cycle toward the target, slew-limited
-inline uint32_t rampIndexQ15(uint32_t current, uint32_t target, uint32_t step) {
-  if (current < target) {
-    const uint32_t next = current + step;
-    return next > target ? target : next;
+inline uint64_t rampIndexQ24(uint64_t currentQ24, uint32_t targetQ15,
+                             uint64_t stepQ24) {
+  const uint64_t targetQ24 = static_cast<uint64_t>(targetQ15) << SoftStartFractionBits;
+  if (stepQ24 == SoftStartInstant) {
+    return targetQ24;
   }
-  if (current > target) {
-    return (current - target) > step ? current - step : target;
+  if (currentQ24 < targetQ24) {
+    const uint64_t remaining = targetQ24 - currentQ24;
+    return remaining > stepQ24 ? currentQ24 + stepQ24 : targetQ24;
   }
-  return current;
+  if (currentQ24 > targetQ24) {
+    const uint64_t remaining = currentQ24 - targetQ24;
+    return remaining > stepQ24 ? currentQ24 - stepQ24 : targetQ24;
+  }
+  return currentQ24;
 }
 
 // Duty for one cell of a level-shifted (stacked-carrier) modulator: the

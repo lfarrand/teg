@@ -217,14 +217,9 @@ void acmpTask() {
   if (!vCbcEnabled) {
     return;
   }
-  // Fixed-duty mode has no per-cycle ISR: poll here instead. The count is
-  // then a lower bound ("loop passes that observed limiting"), not cycles -
-  // and a trip landing between this read/W1C pair and a concurrent ISR tick
-  // can go uncounted. Telemetry-only imprecision; the hardware chopping is
-  // combinational and unaffected.
-  if (!spwmActive()) {
-    acmpCbcTick();
-  }
+  // The FlexPWM2 reload ISR runs in fixed-duty mode too whenever CBC is
+  // enabled, so trip counts retain their documented unit: limited carrier
+  // cycles, never loop() observations.
   static elapsedMillis sinceRate;
   if (sinceRate >= 1000) {
     sinceRate = 0;
@@ -261,6 +256,10 @@ bool acmpFaultPinActive() {
 
 bool acmpArmedLatched() {
   return vLatchedArmed;
+}
+
+bool acmpCbcEnabled() {
+  return vCbcEnabled;
 }
 
 uint32_t acmpCbcTripCount() {

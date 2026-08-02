@@ -13,6 +13,7 @@
 #include "preset_name.h"
 #include "config_json.h"
 #include "config_serde.h"
+#include "pin_ownership.h"
 #include "pwm_utils.h"
 #include "web_handlers.h" // configSaveNeeded
 #include "utils.h"
@@ -189,17 +190,23 @@ bool configApplyDocument(const JsonDocument &doc, const char **errorOut) {
 
   MainConfig previous;
   memcpy(&previous, &config, sizeof(previous));
-  const bool spwmWasEnabled = spwmActive();
-  if (spwmWasEnabled) {
-    disablePwmInterrupts();
-  }
-  configFromJson(doc, config);
+  MainConfig candidate;
+  configFromJson(doc, candidate);
   // UNCONDITIONAL: a file must never be able to set a credential (see
   // config_serde.h). Only an explicit UI edit can change a secret.
-  restoreSecrets(config, previous);
-  if (validateConfig(config)) {
+  restoreSecrets(candidate, previous);
+  if (validateConfig(candidate)) {
     writeLog("Loaded configuration contained invalid values; corrected");
   }
+  PinValidationResult pinResult;
+  if (!validatePinOwnership(candidate, &pinResult)) {
+    *errorOut = "configuration contains an invalid or conflicting pin assignment";
+    return false;
+  }
+  if (spwmActive()) {
+    disablePwmInterrupts();
+  }
+  memcpy(&config, &candidate, sizeof(config));
   applyPwmConfig(previous);
   // Not while a trip is latched: applyPwmConfig deliberately re-asserts the
   // masking, and the modulation ISR must not drive fault-masked submodules

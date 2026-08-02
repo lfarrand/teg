@@ -34,6 +34,23 @@
 constexpr float PllTwoPi = 6.28318530717958648f;
 constexpr float PllKSogi = 1.4142135f; // zeta = k/2 = 0.707
 constexpr float PllGMax = 0.35f;       // largest tested SOGI step (50Hz @ 1kHz)
+constexpr uint32_t PllMaxDrainSamples = 4096;
+
+inline float pllUnitClamp(float value) {
+  if (!(value > 0.0f)) return 0.0f;
+  return value < 1.0f ? value : 1.0f;
+}
+
+// A sample older than this cannot be paired honestly with the increment that
+// generated it: the firmware keeps only the current DDS increment, not an
+// increment history. It is safer to drop the stale block and reacquire than to
+// feed phase-fiction through the PI loop. The absolute cap also guarantees that
+// one loop() pass can drain every accepted sample.
+inline uint32_t pllBacklogLimit(uint32_t carrierHz) {
+  uint32_t quarterSecond = carrierHz / 4U;
+  if (quarterSecond == 0) quarterSecond = 1;
+  return quarterSecond < PllMaxDrainSamples ? quarterSecond : PllMaxDrainSamples;
+}
 
 struct PllParams {
   float g = 0.0f;         // w0 * Ts (SOGI center at nominal frequency)
@@ -60,6 +77,13 @@ struct PllParams {
 // Natural frequency capped so forward Euler stays valid: wn*Ts <= 0.1
 inline void pllParamsInit(PllParams &p, float carrierHz, float nominalHz, float bandwidthHz,
                           float minHz, float maxHz, uint16_t zeroMv, uint16_t minLevelMv) {
+  if (!(carrierHz >= 1.0f) || !(nominalHz > 0.0f) || !(bandwidthHz > 0.0f)) {
+    p = PllParams{};
+    p.nominalHz = nominalHz > 0.0f ? nominalHz : 50.0f;
+    p.minHz = minHz;
+    p.maxHz = maxHz;
+    return;
+  }
   const float ts = 1.0f / carrierHz;
   float fn = bandwidthHz;
   const float fnMax = 0.1f * carrierHz / PllTwoPi;
@@ -74,9 +98,11 @@ inline void pllParamsInit(PllParams &p, float carrierHz, float nominalHz, float 
     // stable but detuned, never divergent.
     p.g = PllGMax;
   }
-  p.lambdaDc = ts / 1.0f;
-  p.lambdaA = ts / 0.02f;
-  p.lambdaM = ts / 0.1f;
+  // Direct callers and corrupted configs must not turn the one-pole filters
+  // into unstable extrapolators at a very low sampling rate.
+  p.lambdaDc = pllUnitClamp(ts / 1.0f);
+  p.lambdaA = pllUnitClamp(ts / 0.02f);
+  p.lambdaM = pllUnitClamp(ts / 0.1f);
   p.kpHz = 2.0f * 0.7071f * wn / PllTwoPi;    // 2*zeta*wn, output in Hz
   p.kiHzTs = (wn * wn / PllTwoPi) * ts;       // wn^2, per-sample, output in Hz
   p.minHz = minHz;
@@ -85,9 +111,13 @@ inline void pllParamsInit(PllParams &p, float carrierHz, float nominalHz, float 
   p.zeroCounts = static_cast<float>(zeroMv) * 4095.0f / 3300.0f;
   p.puScale = 1.0f / 2047.0f;
   p.aFloor = (static_cast<float>(minLevelMv) * 4095.0f / 3300.0f) * p.puScale;
+  if (p.aFloor < 1.0e-4f) p.aFloor = 1.0e-4f;
   p.lockDwell = static_cast<uint32_t>(0.1f * carrierHz);
   p.unlockDwell = static_cast<uint32_t>(0.05f * carrierHz);
   p.sigLossDwell = static_cast<uint32_t>(0.02f * carrierHz);
+  if (p.lockDwell == 0) p.lockDwell = 1;
+  if (p.unlockDwell == 0) p.unlockDwell = 1;
+  if (p.sigLossDwell == 0) p.sigLossDwell = 1;
   p.mLock = 0.05f * (1.0f + 2.0f * p.g);
   p.mUnlock = 0.15f * (1.0f + 2.0f * p.g);
   p.fStabHz = 0.2f * (1.0f + 2.0f * p.g);
@@ -160,8 +190,8 @@ inline float pllStep(PllState &s, const PllParams &p, uint16_t raw, float theta)
   // PI with clamped-integrator anti-windup; freeze while no signal
   if (sig) {
     s.fHat += static_cast<double>(p.kiHzTs * vqn);
-    if (s.fHat < p.minHz) s.fHat = p.minHz;
-    if (s.fHat > p.maxHz) s.fHat = p.maxHz;
+    if (s.fHat < static_cast<double>(p.minHz)) s.fHat = p.minHz;
+    if (s.fHat > static_cast<double>(p.maxHz)) s.fHat = p.maxHz;
   }
   float fCmd = static_cast<float>(s.fHat) + (sig ? p.kpHz * vqn : 0.0f);
   if (fCmd < p.minHz) fCmd = p.minHz;

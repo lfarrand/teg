@@ -1,202 +1,159 @@
 # Security posture
 
-First audited 2026-07-28; revised through 2026-08-01, with sections dated
-individually. This firmware was built as a
-personal bench instrument and its security model reflects that: it is
-appropriate for an isolated lab LAN and **not** appropriate, as it stands, for
-anything reachable from an untrusted network or sold as a product.
+Updated 2026-08-01 after the six-lane adversarial release review and its
+hardening pass. This firmware remains a **bench instrument for a trusted,
+isolated LAN**. It is not suitable for direct Internet exposure, an untrusted
+shared network, unattended generation, or a commercial product.
 
-This file states the position honestly so the gap is a decision rather than a
-surprise.
+The security controls below reduce accidental and LAN-reachable failure modes;
+they do not turn HTTP bearer authentication into a secure remote-management
+plane. The hardware and power-stage gates remain in
+[BENCH_CHECKS.md](BENCH_CHECKS.md), and the original findings plus their
+remediation status are recorded in
+[REVIEW_2026-08-01.md](REVIEW_2026-08-01.md).
 
-## Threat model today
+## Current threat model
 
-**Assumed:** a trusted, isolated LAN; physical access only by the owner; no
-adversary on the network path; no fleet.
+**Assumed:** trusted operators, an isolated IPv4 subnet, physical access only by
+the owner, no hostile device on the Ethernet path, and no fleet deployment.
 
-**Not defended against:** anyone who can reach TCP/80, anyone who can get the
-operator's browser to issue a request, anyone with physical access, anyone who
-can remove the SD card, and anyone on the network path between browser and
-device.
+**Not defended against:** a network observer who can read or replay cleartext
+HTTP/MQTT/InfluxDB traffic, a malicious device already on the local subnet,
+physical access to USB/SWD/the Program button/removable SD, theft of the shared
+PIN, or compromise of the build/signing environment.
 
-## The three that matter
+## Management API controls
 
-### 1. OTA accepts unsigned firmware — remote, permanent code execution
+All `/api/*` methods, including diagnostic GETs, now pass through one policy:
 
-`otaVerifyImage()` checks image *structure* (FlexSPI config block, IVT, board
-marker, boot data), a project marker string, and a CRC-32 **computed over the
-bytes the uploader supplied**. That proves the flash write did not corrupt the
-upload. It proves nothing about who wrote it. Every check is trivially
-satisfiable by an attacker who compiles their own Teensy 4.1 image with the
-marker string in it.
+- a non-empty `X-Auth-Pin` must match in constant time; an empty or
+  non-persisted first-boot PIN fails closed;
+- the peer must be on the device's own IPv4 subnet;
+- `Host` must be the device IP, its per-device `teg-<serial>` hostname, or the
+  corresponding `.local` name;
+- when a browser sends `Origin`, it must be exactly `http://` plus that `Host`;
+- five failed PIN attempts from one address in 60 seconds block it for 60
+  seconds; the first failure and block event are logged;
+- config, log, crash, capture, spectrum, preset and OTA endpoints receive the
+  same policy; only the static UI assets remain public;
+- secret fields are redacted from JSON responses and exports. Empty secret
+  fields in an update preserve the value already stored on the device.
 
-Consequence: anyone who can reach port 80 can permanently install arbitrary
-firmware on hardware that drives a switching bridge — disabling the comparator
-overcurrent path, driving arbitrary modulation, and bricking the update path so
-there is no remote recovery.
+The PIN is generated from the hardware entropy source on first boot, displayed
+locally, and must be durably written before PWM output release. If its first save
+fails, the in-RAM PIN can authenticate a repair attempt but the provisioning
+interlock stays asserted until the complete document passes read-back verification. The
+configuration parser requires the full versioned schema and validates pin
+ownership, switching limits, safety sections, and metering calibration before
+anything is applied.
 
-**Fix (days, not weeks):** an application-level Ed25519 signature over the image
-body, verified before `verified` is ever set, with the public key compiled in
-and a monotonic version counter to block rollback to an older signed build.
-Verification costs ~15–25 ms on this core against a multi-second flash copy.
+These controls block casual cross-site requests and several DNS-rebinding forms,
+but there is still **no TLS**. The PIN and every credential travel in cleartext.
+Use a physically/logically isolated VLAN with no routed access. If remote access
+is unavoidable, terminate authenticated TLS at a maintained reverse proxy and
+restrict the device-facing leg to that proxy; do not port-forward TCP/80.
 
-**Platform ceiling, worth knowing before it costs you a board spin:** ROM-level
-secure boot (HAB) is *unreachable on a Teensy 4.1*. Closing the part (burning
-SRK_HASH, `SEC_CONFIG=1`) stops PJRC's unsigned HalfKay bootloader from working
-and leaves no recovery path. A signed-boot product needs a custom RT1062 board.
-Until then, an application-level signature stops the *remote* attack; it cannot
-stop someone with physical access from flashing a build with the check removed.
-Do not describe this as "secure boot".
+## Parser and denial-of-service hardening
 
-### 2. No TLS, and authentication defaults to none
+The local aWOT fork is a separate git submodule and carries regression-tested
+changes that:
 
-> **A PIN is generated at first boot (2026-07-30), but treat this as unproven.**
-> `writePinEnsure()` draws 8 symbols from the hardware TRNG, persists them to
-> `/settings.cfg`, and shows the PIN on the OLED and serial console. It runs before
-> the network comes up.
->
-> **Two defects were found in it by adversarial review after it was merged, and both
-> are fixed — but neither the feature nor the fixes have run on hardware:**
->
-> 1. It **logged the PIN into the event log**, which `GET /api/log` serves *without
->    authentication*. Any unauthenticated client could read the credential and then
->    use it to POST an unsigned OTA image. That is a total defeat of the feature, and
->    it made things worse than before, because this document had already recorded the
->    hole as closed. The log now records only that a PIN was generated.
-> 2. It drove the **TRNG registers directly with the clock gate off**. The RT1062 boot
->    ROM leaves `CCM_CCGR6[CG6]` disabled and Teensy's startup never enables it —
->    QNEthernet does, from `Ethernet.begin()`, *two lines after* `writePinEnsure()`
->    ran. So the accesses hit an unclocked peripheral, before the watchdog is armed.
->    Best case no PIN was generated and the device booted fully unauthenticated while
->    claiming otherwise; worst case the access does not terminate and recovery is the
->    physical bootloader button. It now calls QNEthernet's own TRNG driver, which owns
->    the gate, checks `MCTL[ERR]`, and applies the documented ENT0 workaround.
->
-> **Any board that ran the 2026-07-30 firmware before these fixes must be treated as
-> having disclosed its PIN**, and as possibly never having had one.
->
-> **The rest of this section still stands: there is no TLS, no rate limiting, no
-> failed-auth logging and no Origin checking, and every GET is unauthenticated.**
+- reject negative, overflowing, and malformed `Content-Length` values;
+- bound duplicate/maximum-length registered headers without writing past their
+  buffers;
+- enforce both no-progress and absolute header/response deadlines;
+- retry legal short writes, but terminate a stalled peer rather than spinning;
+- service only non-network control work and the watchdog while a request or
+  response is waiting;
+- cap pending silent TCP clients and reap them after a deadline.
 
-`writeAuthorized()` returns `true` unconditionally when the write PIN is empty,
-which was the compiled default. Out of the box every mutating endpoint —
-including OTA — was unauthenticated to anyone who could reach the device.
+Large waveform and OTA bodies use declared-length checks plus elapsed-time
+deadlines. Waveform ingest writes a staging file and atomically rotates
+live/backup names only after complete parsing; live stepped or streamed playback
+cannot share the store with an upload. Raw captures are chunked while control
+tasks continue to run.
 
-With a PIN set it is a single shared ≤15-character bearer secret, sent in
-cleartext on every write, with no rate limiting, no lockout, and no logging of
-failures. There is no Origin or Host validation, so a web page the operator
-merely visits can issue writes.
+No timeout proves hard real-time behavior. A response may still occupy the
+single HTTP service path for up to its absolute budget, and QNEthernet socket
+shutdown has an upstream bounded wait. This is why network isolation and the
+hardware trip path are still required.
 
-**Fix:** refuse to start network writes with an empty PIN (or generate one at
-first boot and show it on the OLED); add failed-attempt rate limiting and log
-failures to the event log; validate `Origin`/`Host` on mutating requests. TLS on
-this stack is a larger piece of work — the realistic near-term answer is to keep
-the device off untrusted networks and put a reverse proxy in front if remote
-access is needed.
+## OTA policy
 
-### 3. Unauthenticated denial of service against a *generating* inverter
+OTA is **compiled out of production builds**. `/api/ota` reports it disabled and
+upload/commit requests are refused unless a developer deliberately builds with
+`TEG_ENABLE_UNSAFE_LAB_OTA`.
 
-Three independent one-request kills, all pre-auth:
+The lab updater stages into unused program flash, validates Intel-HEX bounds,
+the FlexSPI/IVT/boot-data structure, board/project markers and a whole-image
+CRC, then performs read-back verification. Those checks prove integrity and
+compatibility only. They do **not** authenticate the publisher, prevent rollback,
+or provide A/B recovery. A power loss after the live image starts being erased
+can require the physical Program button and Teensy Loader.
 
-- ~~A slow-loris header dribble deterministically trips the 8 s watchdog.~~ —
-  **fixed 2026-07-30** (#42): the header phase is bounded at 4 s and the wait
-  services the control tasks. See `lib/aWOT/PATCHES.md`.
-- ~~`GET /api/capture/raw` freezes every control loop for seconds~~ — **fixed
-  2026-07-30 → 2026-08-01.** The chunk loop calls `serviceControlTasks()` instead of a
-  bare `kickWatchdog()`, and the response write is now bounded as well: all three aWOT
-  write sites (`m_flushBuf` and both `Response::write` overloads) go through
-  `m_writeBounded()`, which services the control tasks on every spin and abandons the
-  response after a 3 s **no-progress** budget. The first version of that patch converted
-  only `m_flushBuf()`, leaving most of any multi-buffer response unbounded; all three are
-  converted now, and host regression tests cover both the no-truncation and the
-  no-spin property. See `lib/aWOT/PATCHES.md` patches 2 and 3. **Behaviour change:** a
-  peer that accepts nothing at all for 3 s has its response abandoned and its socket
-  closed. **Not bench-verified.** That helper runs the
-  interval-gated control tasks (feedback, PLL, thermal, waveform stream, meter,
-  MPPT, ACMP) and deliberately excludes everything touching the network or USB —
-  re-entering the stack mid-response is the one thing it must never do. The same
-  upgrade was applied to the aWOT service callback and to the 401 body-drain in
-  `api_ota_post`.
+Therefore the lab flag must never be used on an unattended or remotely managed
+unit. A deployable updater needs an immutable verifier, an embedded public key,
+signed images, anti-rollback state, and recoverable A/B storage. ROM HAB secure
+boot is not compatible with the stock Teensy 4.1 HalfKay recovery model; a
+closed, signed-boot product requires a custom RT1062 design.
 
-  **Still outstanding here:** the waveform upload (`waveformApplyStream`) keeps a
-  bare watchdog kick. Servicing the control loops there would run
-  `waveformStreamTask()`, which reads the waveform store for playback, while the
-  upload is rewriting it. That upload-versus-playback interaction needs settling
-  before the same change is safe — it is a correctness question about the waveform
-  store, not a security one.
-- ~~`POST /api/ota` with a single junk byte latches `enterOtaSafeState()`~~ —
-  **this was wrong.** `api_ota_post()` calls `writeAuthorized()` first, drains the
-  body and returns 401 before `otaIngestStream()` (and therefore
-  `enterOtaSafeState()`) is reached. The ordering was already correct; the path
-  was only reachable because authentication defaulted to none, which §2 now fixes.
-  Corrected 2026-07-30 after checking the code rather than the finding.
+## Secrets and local storage
 
-**Fix for the remaining two:** a total-request deadline with watchdog service in
-the header loop (this lives in the vendored `lib/aWOT`, which has its own timeout
-machinery worth reading first); chunk the raw download with control-task service
-between chunks — the OTA path already demonstrates the pattern.
+InfluxDB, MQTT and API credentials are stored in plaintext JSON on the removable
+SD card. Configuration persistence now uses generation numbers, CRC-validated
+documents, read-back verification, and live/temporary/backup recovery, but it
+does not encrypt data at rest.
 
-## Everything else found
+Missing/invalid storage is fail-dark rather than a silent fallback: compiled
+defaults select zero duty with modulation/asymmetric operation disabled, and a
+separate provisioning interlock prevents OUTEN reconnection until a complete
+configuration plus PIN has been durably promoted.
 
-| Severity | Issue | Fix effort |
-|---|---|---|
-| High | Secrets (Influx token, MQTT password, write PIN) in plaintext JSON on a removable SD card, also readable over USB MTP | Medium |
-| Medium | No rate limiting or lockout; failed auth never logged | Small |
-| ~~High~~ Fixed | ~~Eight idle TCP connections permanently disable the web server, MQTT and InfluxDB~~ — fixed 2026-07-31. `server.available()` only returned clients that had sent data, so a silent connection was never accepted or stopped and held an lwIP PCB for ever; `MEMP_NUM_TCP_PCB` is 8 and the outbound clients share it. `processWebServer()` now takes ownership with `server.accept()`, holds at most 4 pending connections, and reaps any that go quiet for 5 s. | Done |
-| **High** | **Every GET unauthenticated** — capture waveforms, crash reports, logs, full config topology and the MQTT username. Upgraded from Medium: this is the channel that leaked the generated write PIN, and it composes with anything that ever logs a secret. `api_log`, `api_crash`, `api_config` and `api_config/export` all need an auth check. | Small |
-| Medium | Physical access unrestricted: bootloader button, open SWD, USB serial, removable card | Redesign |
-| Medium | NTP replies accepted with no source/transaction validation — log timestamps are forgeable | Trivial |
-| Medium | The write API does not distinguish operational settings from safety interlocks (`FaultProtection`, `CurrentLimit` are just config) | Medium |
-| Medium | Hardcoded MAC address shared by every unit built from this source | Trivial |
-| Low | An InfluxDB organisation ID is a committed default | Trivial |
-| Low | Crash log grows without bound on the SD card | Trivial |
+USB MTP is read-only, runs only while every PWM output is inhibited, and hides
+the settings and preset trees. This prevents ordinary host browsing from
+exposing those credentials, but it is not a defence against someone removing
+the card or using SWD/serial access. Do not reuse any device credential elsewhere.
 
-## Supply chain
+## Time and logs
 
-Only four libraries are vendored and reviewable in-tree (`lib/aWOT`,
-`lib/eFlexPwm`, `lib/miniz`, `lib/MTP_Teensy`). The rest come from the PlatformIO
-registry.
+NTP replies are associated with a fresh request token and checked for source
+address/port, server mode, stratum, leap state, packet length and epoch bounds.
+This prevents stale or unrelated UDP packets from silently setting the RTC.
+NTP itself remains unauthenticated, and the in-RAM event ring is not tamper-proof
+or non-volatile evidence. Treat timestamps and logs as operational telemetry.
 
-**Fixed 2026-07-29.** Those registry libraries previously used caret ranges
-(`^4.0.6`, `^0.36.0`, …) and so floated within their major version: the same
-commit could build against different library code on different days, with nothing
-in the repo to show it. They are now pinned to exact versions in `platformio.ini`,
-including the two transitive dependencies (`Adafruit BusIO` via SSD1306, `OneWire`
-via DallasTemperature) — an unpinned transitive dependency floats just as freely
-as a direct one. Verified: firmware builds and all 285 native tests pass against
-the pinned set.
+## Network identity and outbound services
 
-The platform, framework and toolchain were already pinned exactly. A commit now
-means one binary.
+QNEthernet obtains the factory-assigned Teensy MAC rather than using a shared
+constant. DHCP and mDNS use a per-device `teg-<serial>` name. NTP, MQTT and
+InfluxDB accept literal IP addresses without DNS; hostname resolution is only
+attempted while outputs are inhibited so a resolver stall cannot freeze active
+supervision. MQTT and InfluxDB are plaintext protocols in this build.
 
-### Licence blocker for any commercial use
+## Supply chain and licensing
 
-**QNEthernet is AGPL-3.0-or-later** (verified: `LICENSE`, `library.json`, and
-SPDX headers throughout its source). Linking it makes the whole firmware a
-derivative work under AGPL, which for a shipped product means offering the
-complete corresponding source — including any proprietary algorithm in the same
-binary — to every recipient.
+`lib/aWOT` and `lib/eFlexPwm` are independent git submodules. Their changes must
+be reviewed, tested, committed and pushed in their own repositories before the
+parent gitlink is updated. `lib/miniz` and `lib/MTP_Teensy` are vendored in the
+parent. Platform, framework, compiler, registry libraries, CI runner, Python,
+PlatformIO, gcovr and GitHub actions are pinned; CI also performs a second clean
+firmware build and compares the resulting image.
 
-The author states other licence options may be available on request. The
-alternatives are: buy a commercial licence, replace the stack (the Teensy
-`NativeEthernet`/FNET route is `Apache-2.0 OR GPL-2.0-or-later`; lwIP alone is
-BSD), or accept AGPL and publish. **Decide this before writing any algorithm you
-intend to keep**, because the obligation attaches to whatever is in the binary.
+QNEthernet is AGPL-3.0-or-later. Shipping a linked firmware image can require
+offering its complete corresponding source. Obtain a commercial licence, replace
+the network stack, or intentionally comply with the AGPL before commercial use.
+This is a licensing constraint, not a runtime security control.
 
-## Recommended order
+## Residual release gates
 
-1. ~~Pin library versions~~ (done 2026-07-29); **decide the QNEthernet licence
-   question** — this is the one that gets harder with time, because the AGPL
-   obligation attaches to whatever ends up in the binary. Enquiry sent
-   2026-07-29, awaiting a reply.
-2. ~~Non-empty PIN enforced~~ (done 2026-07-30 — generated at first boot). Rate
-   limiting, failed-auth logging and Origin checks are still outstanding.
-3. Ed25519-signed OTA with anti-rollback. **Needs a decision first:** where the
-   signing key lives and whether CI signs automatically.
-4. Add rate limiting, failed-auth logging and Origin checking. The two named pre-auth
-   DoS paths (slow-loris header dribble, chunked raw capture download) are both closed
-   as of 2026-08-01; what remains open here is the waveform upload's bare watchdog kick,
-   which is blocked on the upload-versus-playback question rather than on security.
-5. Encrypt secrets at rest, or move them off the removable card.
-6. For a product: custom RT1062 board with HAB, and safety functions on their
-   own MCU (see [PRODUCT_READINESS.md](PRODUCT_READINESS.md)).
+Before this can move beyond an isolated bench:
+
+1. Complete the disconnected-power-stage checklist, including boot/restart,
+   complementary dead time, every fault polarity, ACMP/XBAR latency, ADC overrun,
+   PSRAM failure, I2C recovery, network stalls and MTP maintenance gating.
+2. Add signed, anti-rollback, recoverable updates or keep OTA permanently absent.
+3. Replace cleartext bearer management with an authenticated encrypted channel.
+4. Move or encrypt secrets and create a tamper-evident non-volatile audit trail if
+   logs are intended as evidence.
+5. For a product, separate the safety controller from the network/filesystem MCU
+   and design a hardware inhibit that software cannot override.

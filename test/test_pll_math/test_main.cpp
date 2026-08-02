@@ -89,14 +89,13 @@ void test_sogi_quadrature() {
   Sim sim;
   sim.init(20000, 50.0f, 45.0f, 55.0f);
   sim.run(2000); // 100ms = 5 amplitude-LPF time constants
-  double dotA = 0, dotB = 0, ee = 0;
+  double dotA = 0, dotB = 0;
   for (int i = 0; i < 400; i++) { // one full cycle
     const float sr = sinf(static_cast<float>(sim.refPhase));
     const float cr = cosf(static_cast<float>(sim.refPhase));
     sim.tick();
     dotA += sim.s.va * sr;
     dotB += sim.s.vb * -cr;
-    ee += static_cast<double>(sim.s.va) * sim.s.va + static_cast<double>(sim.s.vb) * sim.s.vb;
   }
   const float ampPu = 1200.0f / 2047.0f;
   // Correlations: each dot ~ amp/2 * 400 samples when aligned
@@ -378,6 +377,24 @@ void test_g_guard_survives_insane_config() {
   }
 }
 
+void test_parameter_and_backlog_guards() {
+  PllParams p;
+  pllParamsInit(p, 18.0f, 1.0f, 1.0f, 0.5f, 2.0f, 1650, 0);
+  TEST_ASSERT_TRUE(p.g <= PllGMax);
+  TEST_ASSERT_TRUE(p.lambdaDc >= 0.0f && p.lambdaDc <= 1.0f);
+  TEST_ASSERT_TRUE(p.lambdaA >= 0.0f && p.lambdaA <= 1.0f);
+  TEST_ASSERT_TRUE(p.lambdaM >= 0.0f && p.lambdaM <= 1.0f);
+  TEST_ASSERT_TRUE(p.aFloor > 0.0f);
+  TEST_ASSERT_TRUE(p.lockDwell >= 1);
+  TEST_ASSERT_TRUE(p.unlockDwell >= 1);
+  TEST_ASSERT_TRUE(p.sigLossDwell >= 1);
+
+  TEST_ASSERT_EQUAL_UINT32(250, pllBacklogLimit(1000));
+  TEST_ASSERT_EQUAL_UINT32(PllMaxDrainSamples, pllBacklogLimit(20000));
+  TEST_ASSERT_EQUAL_UINT32(PllMaxDrainSamples, pllBacklogLimit(200000));
+  TEST_ASSERT_EQUAL_UINT32(1, pllBacklogLimit(0));
+}
+
 void test_nan_injection_recovers() {
   // A non-finite SOGI state must reset and re-acquire, not poison the PLL
   Sim sim;
@@ -409,6 +426,7 @@ int main() {
   RUN_TEST(test_stall_catchup);
   RUN_TEST(test_lut_sign_convention);
   RUN_TEST(test_g_guard_survives_insane_config);
+  RUN_TEST(test_parameter_and_backlog_guards);
   RUN_TEST(test_nan_injection_recovers);
   return UNITY_END();
 }

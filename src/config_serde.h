@@ -6,14 +6,25 @@
 // wrappers live in config_json.cpp.
 
 #include <stdio.h>
+#include <string.h>
 #include <ArduinoJson.h>
 #include "config_json.h"
 #include "acmp_math.h" // pin routing check in validateConfig
 #include "modulation.h" // scheme/dither enums for the PLL exclusion rules
+#include "meter_math.h" // ADC scale/range validation
+#include "power_monitor_math.h" // INA226 CAL plausibility in validateConfig
 
 // Bounded, always-terminated string copy (portable across firmware and the
 // native test host, unlike strlcpy)
 inline void copyConfigString(char *dst, unsigned int dstSize, const char *src) {
+  if (dst == nullptr || dstSize == 0) {
+    return;
+  }
+  // pinMatches() compares the complete fixed-size buffer in constant time.
+  // Clear the tail as well as replacing the visible string, otherwise changing
+  // from a longer PIN to a shorter one leaves invisible bytes that make the new
+  // PIN impossible to authenticate with.
+  memset(dst, 0, dstSize);
   snprintf(dst, dstSize, "%s", src != nullptr ? src : "");
 }
 
@@ -31,7 +42,7 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   JsonObjectConst Config_Pwm_Tm1_Sm13 = Config_Pwm["Tm1"]["Sm13"];
   config.Pwm.Tm1.Sm13.Pair = Config_Pwm_Tm1_Sm13["Pair"] | PairIndependent;
   config.Pwm.Tm1.Sm13.DeadTime = Config_Pwm_Tm1_Sm13["DeadTime"] | MinHalfBridgeDeadTimeNs;
-  config.Pwm.Tm1.Sm13.PwmFrequency = Config_Pwm_Tm1_Sm13["PwmFrequency"] | 1000;
+  config.Pwm.Tm1.Sm13.PwmFrequency = Config_Pwm_Tm1_Sm13["PwmFrequency"] | DefaultPwmFrequencyHz;
   config.Pwm.Tm1.Sm13.ChannelA.DutyCycle = Config_Pwm_Tm1_Sm13["ChannelA"]["DutyCycle"] | 0;
   config.Pwm.Tm1.Sm13.ChannelB.DutyCycle = Config_Pwm_Tm1_Sm13["ChannelB"]["DutyCycle"] | 0;
 
@@ -56,27 +67,27 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   JsonObjectConst Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2["Sm20"];
   config.Pwm.Tm2.Sm20.Pair = Config_Pwm_Tm2_Sm20["Pair"] | PairIndependent;
   config.Pwm.Tm2.Sm20.DeadTime = Config_Pwm_Tm2_Sm20["DeadTime"] | MinHalfBridgeDeadTimeNs;
-  config.Pwm.Tm2.Sm20.PwmFrequency = Config_Pwm_Tm2_Sm20["PwmFrequency"] | 1000;
+  config.Pwm.Tm2.Sm20.PwmFrequency = Config_Pwm_Tm2_Sm20["PwmFrequency"] | DefaultModulationCarrierHz;
   config.Pwm.Tm2.Sm20.ChannelA.DutyCycle = Config_Pwm_Tm2_Sm20["ChannelA"]["DutyCycle"] | 0;
   config.Pwm.Tm2.Sm20.ChannelB.DutyCycle = Config_Pwm_Tm2_Sm20["ChannelB"]["DutyCycle"] | 0;
 
   JsonObjectConst Config_Pwm_Tm2_Sm21 = Config_Pwm_Tm2["Sm21"];
   config.Pwm.Tm2.Sm21.Pair = Config_Pwm_Tm2_Sm21["Pair"] | PairIndependent;
   config.Pwm.Tm2.Sm21.DeadTime = Config_Pwm_Tm2_Sm21["DeadTime"] | MinHalfBridgeDeadTimeNs;
-  config.Pwm.Tm2.Sm21.PwmFrequency = Config_Pwm_Tm2_Sm21["PwmFrequency"] | 1000;
+  config.Pwm.Tm2.Sm21.PwmFrequency = Config_Pwm_Tm2_Sm21["PwmFrequency"] | DefaultModulationCarrierHz;
   config.Pwm.Tm2.Sm21.ChannelA.DutyCycle = Config_Pwm_Tm2_Sm21["ChannelA"]["DutyCycle"] | 0;
 
   JsonObjectConst Config_Pwm_Tm2_Sm22 = Config_Pwm_Tm2["Sm22"];
   config.Pwm.Tm2.Sm22.Pair = Config_Pwm_Tm2_Sm22["Pair"] | PairIndependent;
   config.Pwm.Tm2.Sm22.DeadTime = Config_Pwm_Tm2_Sm22["DeadTime"] | MinHalfBridgeDeadTimeNs;
-  config.Pwm.Tm2.Sm22.PwmFrequency = Config_Pwm_Tm2_Sm22["PwmFrequency"] | 1000;
+  config.Pwm.Tm2.Sm22.PwmFrequency = Config_Pwm_Tm2_Sm22["PwmFrequency"] | DefaultModulationCarrierHz;
   config.Pwm.Tm2.Sm22.ChannelA.DutyCycle = Config_Pwm_Tm2_Sm22["ChannelA"]["DutyCycle"] | 0;
   config.Pwm.Tm2.Sm22.ChannelB.DutyCycle = Config_Pwm_Tm2_Sm22["ChannelB"]["DutyCycle"] | 0;
 
   JsonObjectConst Config_Pwm_Tm2_Sm23 = Config_Pwm_Tm2["Sm23"];
   config.Pwm.Tm2.Sm23.Pair = Config_Pwm_Tm2_Sm23["Pair"] | PairIndependent;
   config.Pwm.Tm2.Sm23.DeadTime = Config_Pwm_Tm2_Sm23["DeadTime"] | MinHalfBridgeDeadTimeNs;
-  config.Pwm.Tm2.Sm23.PwmFrequency = Config_Pwm_Tm2_Sm23["PwmFrequency"] | 1000;
+  config.Pwm.Tm2.Sm23.PwmFrequency = Config_Pwm_Tm2_Sm23["PwmFrequency"] | DefaultModulationCarrierHz;
   config.Pwm.Tm2.Sm23.ChannelA.DutyCycle = Config_Pwm_Tm2_Sm23["ChannelA"]["DutyCycle"] | 0;
   config.Pwm.Tm2.Sm23.ChannelB.DutyCycle = Config_Pwm_Tm2_Sm23["ChannelB"]["DutyCycle"] | 0;
 
@@ -187,6 +198,19 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Thermal.OneWirePin = Config_Thermal["OneWirePin"] | 21;
   config.Thermal.DerateStartC = Config_Thermal["DerateStartC"] | 70;
   config.Thermal.DerateEndC = Config_Thermal["DerateEndC"] | 90;
+
+  JsonObjectConst Config_PowerMon = doc["Config"]["PowerMon"];
+  config.PowerMon.Enabled = Config_PowerMon["Enabled"] | false;
+  config.PowerMon.Address = Config_PowerMon["Address"] | 0x40;
+  config.PowerMon.ShuntMicroOhm = Config_PowerMon["ShuntMicroOhm"] | 10000;
+  config.PowerMon.CurrentLsbMicroAmp = Config_PowerMon["CurrentLsbMicroAmp"] | 50;
+  config.PowerMon.AlertMilliAmp = Config_PowerMon["AlertMilliAmp"] | 1500;
+  config.PowerMon.IntervalMs = Config_PowerMon["IntervalMs"] | 100;
+  config.PowerMon.PgEfusePin = Config_PowerMon["PgEfusePin"] | 14;
+  config.PowerMon.PgBuckPin = Config_PowerMon["PgBuckPin"] | 15;
+  config.PowerMon.AlertPin = Config_PowerMon["AlertPin"] | 20;
+  config.PowerMon.ImonPin = Config_PowerMon["ImonPin"] | 255;
+  config.PowerMon.ImonRimonOhm = Config_PowerMon["ImonRimonOhm"] | 4530;
 }
 
 // Blank out secrets before a config document leaves the device (GET /api/config)
@@ -224,19 +248,6 @@ inline void restoreSecrets(MainConfig &config, const MainConfig &previous) {
   copyConfigString(config.Mqtt.Password, sizeof(config.Mqtt.Password), previous.Mqtt.Password);
 }
 
-// A whole-config document must carry every safety-relevant section: absent
-// keys fall back to compiled defaults, so a truncated or older-firmware
-// file would silently disarm fault protection, the hardware current limit
-// and thermal derating rather than leaving them as configured.
-inline bool configDocComplete(const JsonDocument &doc) {
-  JsonObjectConst c = doc["Config"];
-  if (c.isNull()) {
-    return false;
-  }
-  return !c["Pwm"].isNull() && !c["FaultProtection"].isNull() &&
-         !c["CurrentLimit"].isNull() && !c["Thermal"].isNull();
-}
-
 // Clamps out-of-range values; returns true if anything was corrected.
 inline bool validateConfig(MainConfig &config) {
   bool corrected = false;
@@ -256,25 +267,76 @@ inline bool validateConfig(MainConfig &config) {
   sanitisePair(config.Pwm.Tm1.Sm13.Pair, PairSm13);
   sanitisePair(config.Pwm.Tm3.Sm31.Pair, PairSm31);
 
-  // Per-submodule PwmFrequency was never range-checked either, and one of these clocks
-  // the SPWM ISR. Zero reaches computeAsymmetricTimings() as a divisor; absurdly high
-  // values produce a period of a handful of counter ticks and no usable duty
-  // resolution. 1 Hz to 1 MHz brackets everything the hardware can actually do.
+  // FlexPWM's 16-bit counter and /128 maximum prescaler cannot represent values
+  // below ~17.882 Hz at the 150 MHz bus clock. Rejecting that domain in the wrapper
+  // is essential; clamping here keeps malformed persisted settings fail-safe too.
   const auto clampFreq = [&corrected](uint32_t &hz) {
-    if (hz < 1 || hz > 1000000) {
-      hz = 1000;
+    if (hz < MinRepresentablePwmFrequencyHz || hz > MaxPwmFrequencyHz) {
+      hz = DefaultPwmFrequencyHz;
       corrected = true;
     }
   };
-  clampFreq(config.Pwm.Tm2.Sm20.PwmFrequency);
-  clampFreq(config.Pwm.Tm2.Sm21.PwmFrequency);
-  clampFreq(config.Pwm.Tm2.Sm22.PwmFrequency);
-  clampFreq(config.Pwm.Tm2.Sm23.PwmFrequency);
   clampFreq(config.Pwm.Tm3.Sm31.PwmFrequency);
   clampFreq(config.Pwm.Tm4.Sm40.PwmFrequency);
   clampFreq(config.Pwm.Tm4.Sm41.PwmFrequency);
   clampFreq(config.Pwm.Tm4.Sm42.PwmFrequency);
   // Tm1.Sm13 is clamped by the existing check further down.
+
+  // One source of truth for every timing calculation and every FlexPWM2 cell.
+  // Fixed-duty mode may use the hardware ceiling; interrupt-driven modulation is
+  // deliberately bounded to the release-qualified ISR/ADC rate.
+  const bool carrierInterruptRequired =
+      (config.Pwm.Tm2.UseSpwm && config.Pwm.Tm2.ModulationScheme != ModSchemeFixed) ||
+      config.Capture.Enabled || config.Meter.Enabled || config.Pll.Enabled ||
+      (config.CurrentLimit.Enabled && config.CurrentLimit.CycleByCycle);
+  // Dallas/OneWire masks interrupts for up to ~70us per bit slot. At 20kHz
+  // that exceeds a complete carrier period; at <=10kHz no slot can consume a
+  // whole reload interval. Fixed hardware PWM needs no cap because it runs
+  // without CPU service.
+  const uint32_t carrierCeiling = carrierInterruptRequired
+      ? (config.Thermal.Enabled ? 10000U : MaxModulationCarrierHz)
+      : MaxPwmFrequencyHz;
+  const bool carrierWasInvalid =
+      config.Pwm.Tm2.SpwmCarrierFrequency < MinRepresentablePwmFrequencyHz ||
+      config.Pwm.Tm2.SpwmCarrierFrequency > carrierCeiling;
+  if (carrierWasInvalid) {
+    config.Pwm.Tm2.SpwmCarrierFrequency =
+        carrierCeiling < DefaultModulationCarrierHz ? carrierCeiling
+                                                    : DefaultModulationCarrierHz;
+    corrected = true;
+  }
+  const uint32_t carrier = config.Pwm.Tm2.SpwmCarrierFrequency;
+  uint32_t *const cellFrequencies[] = {
+      &config.Pwm.Tm2.Sm20.PwmFrequency, &config.Pwm.Tm2.Sm21.PwmFrequency,
+      &config.Pwm.Tm2.Sm22.PwmFrequency, &config.Pwm.Tm2.Sm23.PwmFrequency};
+  for (uint32_t *cellFrequency : cellFrequencies) {
+    if (*cellFrequency != carrier) {
+      *cellFrequency = carrier;
+      corrected = true;
+    }
+  }
+
+  // The XBAR-only implementation never started PIT0 or selected EXT_SYNC in
+  // CTRL2[INIT_SEL], so exposing it as a working control was unsafe.
+  if (config.Pwm.SyncPwm) {
+    config.Pwm.SyncPwm = false;
+    corrected = true;
+  }
+
+  // Sequence/sample-step sources do not use DDS phase. Every other sampled
+  // reference must stay at or below Nyquist; an increment at carrier Hz wraps
+  // to zero and values above carrier/2 alias.
+  const bool ddsDriven =
+      config.Pwm.Tm2.ReferenceWaveform != RefWaveSequence &&
+      !(config.Pwm.Tm2.ReferenceWaveform == RefWaveCustom &&
+        config.Pwm.Tm2.WaveformSampleStep);
+  if (config.Pwm.Tm2.UseSpwm && config.Pwm.Tm2.ModulationScheme != ModSchemeFixed &&
+      ddsDriven &&
+      (config.Pwm.Tm2.SpwmModulationFrequency == 0 ||
+       config.Pwm.Tm2.SpwmModulationFrequency > carrier / 2U)) {
+    config.Pwm.Tm2.UseSpwm = false;
+    corrected = true;
+  }
 
   // ModulationCells was never range-checked: a hand-edited settings file or a POST
   // could set 0 or 200, and configureModule2 then silently clamps to a different value
@@ -323,8 +385,9 @@ inline bool validateConfig(MainConfig &config) {
   clampDeadTime(config.Pwm.Tm4.Sm40.DeadTime);
   clampDeadTime(config.Pwm.Tm4.Sm41.DeadTime);
   clampDeadTime(config.Pwm.Tm4.Sm42.DeadTime);
-  if (config.Pwm.Tm1.Sm13.PwmFrequency < 1 || config.Pwm.Tm1.Sm13.PwmFrequency > 1000000) {
-    config.Pwm.Tm1.Sm13.PwmFrequency = 1000;
+  if (config.Pwm.Tm1.Sm13.PwmFrequency < MinRepresentablePwmFrequencyHz ||
+      config.Pwm.Tm1.Sm13.PwmFrequency > MaxPwmFrequencyHz) {
+    config.Pwm.Tm1.Sm13.PwmFrequency = DefaultPwmFrequencyHz;
     corrected = true;
   }
   if (acmpRouteForPin(config.CurrentLimit.Pin).cmp == 0) {
@@ -337,6 +400,16 @@ inline bool validateConfig(MainConfig &config) {
   }
   if (config.CurrentLimit.FilterCount > 7) {
     config.CurrentLimit.FilterCount = 0;
+    corrected = true;
+  }
+  // The hardware PWM-fault path must remain continuous. A sampled comparator
+  // filter adds a configurable, clock-dependent blind interval to the one path
+  // intended to protect SiC switches without software. Use analogue hysteresis
+  // and external filtering instead; retain these fields only for file-format
+  // compatibility.
+  if (config.CurrentLimit.FilterCount != 0 || config.CurrentLimit.FilterPeriod != 0) {
+    config.CurrentLimit.FilterCount = 0;
+    config.CurrentLimit.FilterPeriod = 0;
     corrected = true;
   }
   if (config.Pll.MinHz < 1 || config.Pll.MaxHz > 400 || config.Pll.MinHz >= config.Pll.MaxHz) {
@@ -373,6 +446,10 @@ inline bool validateConfig(MainConfig &config) {
     config.Pll.Enabled = false;
     corrected = true;
   }
+  if (config.Pll.Enabled && carrierWasInvalid) {
+    config.Pll.Enabled = false;
+    corrected = true;
+  }
   if (config.Pll.Enabled &&
       (config.Pwm.Tm2.ReferenceWaveform == RefWaveSequence ||
        (config.Pwm.Tm2.ReferenceWaveform == RefWaveCustom && config.Pwm.Tm2.WaveformSampleStep))) {
@@ -385,8 +462,18 @@ inline bool validateConfig(MainConfig &config) {
     corrected = true;
   }
   if (config.Pll.Enabled &&
-      config.Pwm.Tm2.SpwmCarrierFrequency < 18U * config.Pwm.Tm2.SpwmModulationFrequency) {
+      (config.Pwm.Tm2.SpwmCarrierFrequency < 1000U ||
+       config.Pwm.Tm2.SpwmCarrierFrequency < 18U * config.Pwm.Tm2.SpwmModulationFrequency)) {
     config.Pll.Enabled = false;
+    corrected = true;
+  }
+  // Reference-sign dead-time correction is not a current-sign measurement.
+  // Around reactive zero crossings it applies the wrong sign and can increase
+  // distortion or volt-seconds. Keep the setting readable for compatibility,
+  // but do not advertise or execute compensation until per-leg current polarity
+  // is sampled synchronously.
+  if (config.Pwm.Tm2.DeadTimeCompensation) {
+    config.Pwm.Tm2.DeadTimeCompensation = false;
     corrected = true;
   }
   // Dither: the ISR takes per-cycle increments from tables built at the
@@ -450,10 +537,49 @@ inline bool validateConfig(MainConfig &config) {
                      "homeassistant");
     corrected = true;
   }
+
+  // ADC metering calibration must keep every possible 12-bit sample pair
+  // representable in MeterReadings. The conversion routine also saturates as
+  // a final defence, but an invalid scale must never drive MPPT.
+  if (!meterCalibrationValid(config.Meter.VoltageZeroMillivolts,
+                             config.Meter.CurrentZeroMillivolts,
+                             config.Meter.CurrentMilliampPerVolt,
+                             config.Meter.VoltageRatioMilli)) {
+    config.Meter.VoltageZeroMillivolts = 1650;
+    config.Meter.CurrentZeroMillivolts = 1650;
+    config.Meter.CurrentMilliampPerVolt = 10000;
+    config.Meter.VoltageRatioMilli = 1000;
+    corrected = true;
+  }
+
+  // Aux power monitor: the INA226's 7-bit address space for A0/A1 strapping
+  // is 0x40-0x4F; anything else cannot be that part
+  if (config.PowerMon.Address < 0x40 || config.PowerMon.Address > 0x4F) {
+    config.PowerMon.Address = 0x40;
+    corrected = true;
+  }
+  // Shunt/LSB pairs whose CAL register does not fit 16 bits (or divides to
+  // zero) would program a silently-wrong scale; reset both to the driver
+  // board's values rather than guess which one is wrong
+  if (!ina226CalValid(config.PowerMon.ShuntMicroOhm, config.PowerMon.CurrentLsbMicroAmp)) {
+    config.PowerMon.ShuntMicroOhm = 10000;
+    config.PowerMon.CurrentLsbMicroAmp = 50;
+    corrected = true;
+  }
+  // Below 50 ms the I2C traffic starts to matter in the loop budget; there
+  // is no telemetry value in polling a 35 ms conversion faster than that
+  if (config.PowerMon.IntervalMs < 50) {
+    config.PowerMon.IntervalMs = 100;
+    corrected = true;
+  }
   return corrected;
 }
 
 inline void configToJson(const MainConfig &config, JsonDocument &doc) {
+  // Version 1 is the first schema whose complete shape is enforced before it
+  // can alter hardware. A missing version remains valid for a complete legacy
+  // export; an explicitly unknown version is rejected below.
+  doc["SchemaVersion"] = 1;
   JsonObject Config_AsymmetricInduction = doc["Config"]["AsymmetricInduction"].to<JsonObject>();
   Config_AsymmetricInduction["IsEnabled"] = config.AsymmetricInduction.IsEnabled;
   Config_AsymmetricInduction["PreShiftNanos"] = config.AsymmetricInduction.PreShiftNanos;
@@ -653,6 +779,64 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Thermal["OneWirePin"] = config.Thermal.OneWirePin;
   Config_Thermal["DerateStartC"] = config.Thermal.DerateStartC;
   Config_Thermal["DerateEndC"] = config.Thermal.DerateEndC;
+
+  JsonObject Config_PowerMon = doc["Config"]["PowerMon"].to<JsonObject>();
+  Config_PowerMon["Enabled"] = config.PowerMon.Enabled;
+  Config_PowerMon["Address"] = config.PowerMon.Address;
+  Config_PowerMon["ShuntMicroOhm"] = config.PowerMon.ShuntMicroOhm;
+  Config_PowerMon["CurrentLsbMicroAmp"] = config.PowerMon.CurrentLsbMicroAmp;
+  Config_PowerMon["AlertMilliAmp"] = config.PowerMon.AlertMilliAmp;
+  Config_PowerMon["IntervalMs"] = config.PowerMon.IntervalMs;
+  Config_PowerMon["PgEfusePin"] = config.PowerMon.PgEfusePin;
+  Config_PowerMon["PgBuckPin"] = config.PowerMon.PgBuckPin;
+  Config_PowerMon["AlertPin"] = config.PowerMon.AlertPin;
+  Config_PowerMon["ImonPin"] = config.PowerMon.ImonPin;
+  Config_PowerMon["ImonRimonOhm"] = config.PowerMon.ImonRimonOhm;
+}
+
+// Match the complete object/key/type shape emitted by this firmware. Extra
+// fields are tolerated for forward compatibility, but no current field may be
+// omitted or replaced by a different JSON type. This prevents a truncated or
+// hand-crafted document from silently selecting compiled defaults (which can
+// disable protection or change PWM topology).
+inline bool configShapeMatches(JsonVariantConst actual, JsonVariantConst expected) {
+  if (expected.is<JsonObjectConst>()) {
+    if (!actual.is<JsonObjectConst>()) {
+      return false;
+    }
+    const JsonObjectConst actualObject = actual.as<JsonObjectConst>();
+    for (JsonPairConst member : expected.as<JsonObjectConst>()) {
+      const JsonVariantConst value = actualObject[member.key()];
+      if (value.isNull() || !configShapeMatches(value, member.value())) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (expected.is<bool>()) {
+    return actual.is<bool>();
+  }
+  if (expected.is<const char *>()) {
+    return actual.is<const char *>();
+  }
+  // All remaining persisted leaves are integral. ArduinoJson retains signed
+  // and unsigned numeric representations, so accept either and let the normal
+  // range validator handle the value itself.
+  return actual.is<int64_t>() || actual.is<uint64_t>();
+}
+
+inline bool configDocComplete(const JsonDocument &doc) {
+  const JsonVariantConst version = doc["SchemaVersion"];
+  if (!version.isNull() &&
+      (!(version.is<int64_t>() || version.is<uint64_t>()) ||
+       version.as<uint32_t>() != 1U)) {
+    return false;
+  }
+
+  MainConfig defaults;
+  JsonDocument expected;
+  configToJson(defaults, expected);
+  return configShapeMatches(doc["Config"], expected["Config"]);
 }
 
 #endif

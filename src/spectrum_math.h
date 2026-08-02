@@ -125,24 +125,68 @@ inline float harmonicPeak(const float *mag, uint32_t bins, uint32_t center) {
   return peak;
 }
 
+// Quadratic interpolation around a detected peak. Returning a fractional bin
+// matters because the k-th harmonic sits at k*f1, not at k*round(f1): the
+// integer error otherwise grows with harmonic order and a one-bin search can
+// miss most of a non-coherent Hann-windowed harmonic.
+inline float spectrumFractionalPeakBin(const float *mag, uint32_t bins, uint32_t peakBin) {
+  if (peakBin == 0 || peakBin + 1 >= bins) {
+    return static_cast<float>(peakBin);
+  }
+  const float left = mag[peakBin - 1];
+  const float mid = mag[peakBin];
+  const float right = mag[peakBin + 1];
+  const float denom = left - 2.0f * mid + right;
+  if (!isfinite(denom) || fabsf(denom) < 1.0e-20f) {
+    return static_cast<float>(peakBin);
+  }
+  float offset = 0.5f * (left - right) / denom;
+  if (offset > 0.5f) offset = 0.5f;
+  if (offset < -0.5f) offset = -0.5f;
+  return static_cast<float>(peakBin) + offset;
+}
+
+// Root-sum-square of the complete Hann main lobe around a fractional target.
+// The same width is used for H1 and every harmonic, so the window's coherent
+// gain cancels in the THD ratio. Two bins each side cover the Hann main lobe;
+// very low fundamentals narrow the band to avoid adjacent-harmonic overlap.
+inline float spectrumBandMagnitude(const float *mag, uint32_t bins, float center,
+                                   uint32_t radius) {
+  if (!isfinite(center) || center < 0.0f || bins == 0) return 0.0f;
+  const int32_t nearest = static_cast<int32_t>(floorf(center + 0.5f));
+  const int32_t lo = nearest - static_cast<int32_t>(radius);
+  const int32_t hi = nearest + static_cast<int32_t>(radius);
+  double sumSq = 0.0;
+  for (int32_t i = lo; i <= hi; ++i) {
+    if (i >= 0 && static_cast<uint32_t>(i) < bins) {
+      const double v = mag[i];
+      sumSq += v * v;
+    }
+  }
+  return static_cast<float>(sqrt(sumSq));
+}
+
 // THD as a percentage: sqrt(sum of squared harmonic peaks 2..maxHarmonic)
 // relative to the fundamental peak
 inline float thdPercent(const float *mag, uint32_t bins, uint32_t fundamentalBin,
                         uint32_t maxHarmonic = 20) {
-  const float h1 = harmonicPeak(mag, bins, fundamentalBin);
+  if (fundamentalBin >= bins) return 0.0f;
+  const float fundamental = spectrumFractionalPeakBin(mag, bins, fundamentalBin);
+  const uint32_t radius = fundamentalBin >= 5 ? 2U : 1U;
+  const float h1 = spectrumBandMagnitude(mag, bins, fundamental, radius);
   if (h1 <= 0.0f) {
     return 0.0f;
   }
-  float sumSq = 0.0f;
+  double sumSq = 0.0;
   for (uint32_t k = 2; k <= maxHarmonic; k++) {
-    const uint32_t bin = fundamentalBin * k;
-    if (bin + 1 >= bins) {
+    const float bin = fundamental * static_cast<float>(k);
+    if (bin + static_cast<float>(radius) >= static_cast<float>(bins)) {
       break;
     }
-    const float hk = harmonicPeak(mag, bins, bin);
-    sumSq += hk * hk;
+    const float hk = spectrumBandMagnitude(mag, bins, bin, radius);
+    sumSq += static_cast<double>(hk) * static_cast<double>(hk);
   }
-  return 100.0f * sqrtf(sumSq) / h1;
+  return 100.0f * static_cast<float>(sqrt(sumSq)) / h1;
 }
 
 #endif

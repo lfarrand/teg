@@ -23,7 +23,12 @@ static int16_t hotDeciC = INT16_MIN;
 static int16_t coldDeciC = INT16_MIN;
 static int16_t chipDeciC = INT16_MIN;
 
-// Cached ROM addresses. getTempCByIndex() calls getAddress(), which runs a FULL
+// Cached ROM addresses. The lexicographically lower ROM is probe 1 (reported
+// as "hot" only in the legacy API), the higher ROM is probe 2 (legacy "cold").
+// This is deterministic across reset and bus-search ordering but deliberately
+// makes no claim about physical connector or thermal role. Safety derating uses
+// BOTH probes, so wiring order cannot hide an overtemperature.
+// getTempCByIndex() calls getAddress(), which runs a FULL
 // bus search every time - reset_search() then search() until it reaches the index -
 // and a 1-Wire ROM search reads three bit-slots per ROM bit. Reading two probes by
 // index therefore performs three device searches, roughly 576 bit-slots that exist
@@ -39,6 +44,10 @@ static DeviceAddress coldAddr;
 static bool hotAddrValid = false;
 static bool coldAddrValid = false;
 static uint32_t harvestMissedCycles = 0; // ISR cycles lost to the last harvest
+static elapsedMillis sinceRequest;
+static elapsedMillis sinceRescan;
+static bool conversionPending = false;
+static uint32_t missedAtRequest = 0;
 
 uint32_t thermalHarvestMissedCycles() {
   return harvestMissedCycles;
@@ -46,13 +55,27 @@ uint32_t thermalHarvestMissedCycles() {
 
 // Search the bus and cache whatever is present. Also called periodically while a
 // probe is missing, so one connected later is still picked up.
+static int compareRom(const DeviceAddress a, const DeviceAddress b) {
+  for (uint8_t i = 0; i < 8; ++i) {
+    if (a[i] < b[i]) return -1;
+    if (a[i] > b[i]) return 1;
+  }
+  return 0;
+}
+
 static void cacheProbeAddresses() {
   sensors.begin(); // re-counts devices; getAddress() gates on that count
-  if (!hotAddrValid) {
-    hotAddrValid = sensors.getAddress(hotAddr, 0);
-  }
-  if (!coldAddrValid) {
-    coldAddrValid = sensors.getAddress(coldAddr, 1);
+  DeviceAddress a = {}, b = {};
+  const bool haveA = sensors.getAddress(a, 0);
+  const bool haveB = sensors.getAddress(b, 1);
+  hotAddrValid = haveA;
+  coldAddrValid = haveB;
+  if (haveA && haveB && compareRom(a, b) > 0) {
+    memcpy(hotAddr, b, sizeof(DeviceAddress));
+    memcpy(coldAddr, a, sizeof(DeviceAddress));
+  } else {
+    if (haveA) memcpy(hotAddr, a, sizeof(DeviceAddress));
+    if (haveB) memcpy(coldAddr, b, sizeof(DeviceAddress));
   }
 }
 
@@ -60,6 +83,7 @@ void thermalConfigure() {
   if (!config.Thermal.Enabled) {
     derateMilli = 1000;
     hotDeciC = coldDeciC = chipDeciC = INT16_MIN;
+    conversionPending = false;
     return;
   }
   if (config.Thermal.OneWirePin != activePin) {
@@ -87,10 +111,11 @@ void thermalTask() {
 
   // Non-blocking cadence: request conversions, harvest them 800ms later
   // (a 12-bit DS18B20 conversion takes 750ms)
-  static elapsedMillis sinceRequest;
-  static bool conversionPending = false;
-
   if (!conversionPending && sinceRequest >= 2000) {
+    // Start the measurement before the request itself: OneWire disables
+    // interrupts during bit slots, so counting only the later temperature read
+    // concealed most of the disturbance we are trying to expose.
+    missedAtRequest = vMissedIsrCycles;
     sensors.requestTemperatures();
     conversionPending = true;
     sinceRequest = 0;
@@ -104,7 +129,6 @@ void thermalTask() {
   // Re-scan only while something is missing, and not often. The search is the
   // expensive part of a 1-Wire transaction, so paying it every harvest to detect a
   // probe that is almost never hot-plugged is the wrong trade.
-  static elapsedMillis sinceRescan;
   if ((!hotAddrValid || !coldAddrValid) && sinceRescan >= 30000) {
     sinceRescan = 0;
     cacheProbeAddresses();
@@ -112,19 +136,23 @@ void thermalTask() {
 
   // Attribute the ISR disruption this harvest causes, so the OneWire cost is
   // measurable rather than inferred (see missedIsrCycles in /api/status).
-  const uint32_t missedBefore = vMissedIsrCycles;
-
   // By address, never by index: getTempCByIndex() would re-search the bus.
   hotDeciC = hotAddrValid ? toDeciC(sensors.getTempC(hotAddr)) : INT16_MIN;
   coldDeciC = coldAddrValid ? toDeciC(sensors.getTempC(coldAddr)) : INT16_MIN;
+  if (hotDeciC == INT16_MIN) hotAddrValid = false;
+  if (coldDeciC == INT16_MIN) coldAddrValid = false;
   chipDeciC = toDeciC(InternalTemperature.readTemperatureC());
 
-  harvestMissedCycles = vMissedIsrCycles - missedBefore;
+  harvestMissedCycles = vMissedIsrCycles - missedAtRequest;
 
-  // Derate on the worst of hot-side probe and die temperature
+  // Derate on the worst of BOTH external probes and die temperature. Probe
+  // role assignment affects labels only, never thermal protection.
   float worstC = -1000.0f;
   if (hotDeciC != INT16_MIN) {
     worstC = hotDeciC / 10.0f;
+  }
+  if (coldDeciC != INT16_MIN && coldDeciC / 10.0f > worstC) {
+    worstC = coldDeciC / 10.0f;
   }
   if (chipDeciC != INT16_MIN && chipDeciC / 10.0f > worstC) {
     worstC = chipDeciC / 10.0f;

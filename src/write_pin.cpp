@@ -33,39 +33,40 @@ static bool trngBytes(uint8_t *out, size_t count) {
   return qindesign::entropy::trng_data(out, count) == count;
 }
 
-void writePinEnsure(const char *settingsFile) {
+bool writePinEnsure(const char *settingsFile, bool configurationPersisted) {
   if (config.Security.WritePin[0] != '\0') {
-    return; // already set, by the operator or by a previous boot
+    // A non-empty RAM value is not enough: only one loaded from a complete,
+    // integrity-checked document may unlock the provisioning interlock.
+    return configurationPersisted;
   }
 
   uint8_t entropy[WritePinLength];
   if (!trngBytes(entropy, sizeof(entropy))) {
-    // Say exactly what the consequence is. A quiet "TRNG failed" would leave an
-    // operator with no idea their device is accepting unauthenticated writes.
+    // Fail closed: without a provisioned credential every API endpoint returns
+    // 401. Physical serial/OLED access is required to recover safely.
     writeLogLevel(EventError,
-                  "TRNG unavailable: no write PIN generated. API writes are UNAUTHENTICATED "
-                  "- set Security.WritePin before connecting to any untrusted network.");
-    return;
+                  "TRNG unavailable: no access PIN generated. Network API is LOCKED; "
+                  "set Security.WritePin using a trusted configuration path.");
+    return false;
   }
 
   char pin[WritePinLength + 1];
   writePinFromEntropy(entropy, pin, sizeof(pin));
   copyConfigString(config.Security.WritePin, sizeof(config.Security.WritePin), pin);
 
-  saveConfiguration(settingsFile);
+  const bool persisted = saveConfiguration(settingsFile);
 
   // Three places, because each fails differently: the OLED needs someone present, the
   // serial log needs someone attached, and the event log needs the device to still be
   // reachable. Without an SD card the save is lost and a new PIN appears next boot -
   // which the message has to make obvious, or the operator will note down a PIN that
   // stops working.
-  const bool persisted = config.Security.WritePin[0] != '\0';
   Serial.println();
   Serial.println("========================================");
   Serial.print("  WRITE PIN GENERATED: ");
   Serial.println(pin);
-  Serial.println("  Needed for every API write, including");
-  Serial.println("  firmware updates. Note it down.");
+  Serial.println("  Needed for every API request, including");
+  Serial.println("  diagnostics and firmware updates.");
   if (!persisted) {
     Serial.println("  NOT SAVED - a new PIN will be issued");
     Serial.println("  at the next boot (no SD card?).");
@@ -73,11 +74,9 @@ void writePinEnsure(const char *settingsFile) {
   Serial.println("========================================");
   Serial.println();
 
-  // NOT the PIN itself. The event log is served by GET /api/log, which is
-  // unauthenticated - logging the value would publish the credential to anyone who
-  // can reach the device, defeating the entire point of generating one. The serial
-  // console and the OLED are physical-access channels, which is the trade this
-  // feature already accepts; the network is not.
+  // NOT the PIN itself. The event log is API-authenticated now, but credentials do
+  // not belong in reusable diagnostics, crash reports or exported support data. The
+  // serial console and OLED are deliberate physical-access bootstrap channels.
   writeLogLevel(EventWarn,
                 "Write PIN generated (shown on the display and serial console). "
                 "Change it via the Security settings.");
@@ -85,4 +84,5 @@ void writePinEnsure(const char *settingsFile) {
   // Hold the display long enough to actually be read - the 1Hz memory report would
   // otherwise overwrite it within a second.
   setStatusNotice(String("PIN ") + pin, 120000);
+  return persisted;
 }

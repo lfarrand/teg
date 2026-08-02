@@ -138,9 +138,10 @@ constexpr bool pairAllowsComplementary(uint8_t submodule) {
 // corrupt or hand-edited settings file degrades to the safe, always-valid mode
 // rather than to a plausible-looking wrong one.
 constexpr uint8_t pairModeSanitised(uint8_t requested, uint8_t submodule) {
-  return requested >= PairModeCount                                    ? PairIndependent
-         : (pairIsComplementary(requested) && !pairAllowsComplementary(submodule)) ? PairIndependent
-                                                                       : requested;
+  return requested >= PairModeCount ? static_cast<uint8_t>(PairIndependent)
+         : (pairIsComplementary(requested) && !pairAllowsComplementary(submodule))
+             ? static_cast<uint8_t>(PairIndependent)
+             : requested;
 }
 
 // True when the requested mode survives sanitising unchanged. Callers use this to
@@ -158,6 +159,6 @@ constexpr bool pairModeValid(uint8_t requested, uint8_t submodule) {
 constexpr uint8_t pairModeSanitisedForScheme(uint8_t requested, uint8_t submodule,
                                              bool schemeNeedsInversion) {
   return (schemeNeedsInversion && pairIsComplementary(pairModeSanitised(requested, submodule)))
-             ? PairIndependent
+             ? static_cast<uint8_t>(PairIndependent)
              : pairModeSanitised(requested, submodule);
 }

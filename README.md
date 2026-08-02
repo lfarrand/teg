@@ -66,9 +66,9 @@ both software and hardware fault protection.
   unsafe-lab build flag is enabled
 - **Modern web UI** — single-page app with automatic dark mode, live telemetry,
   and scheme-aware forms, served gzip-compressed from flash
-- **Tested core logic** — 317 native unit tests across 27 suites cover the selected
+- **Tested core logic** — 319 native unit tests across 27 suites cover the selected
   hardware-independent headers (modulation, metering, PLL, MPPT, OTA verification,
-  config mapping and related helpers): 94.6% lines, 100% functions and 63.9%
+  config mapping and related helpers): 94.4% lines, 100% functions and 64.0%
   branches in that scope, gated at 90% lines and 60% branches in CI. The native environment
   builds no firmware `.cpp` files, so this is not whole-firmware coverage and cannot
   validate registers, ISRs, boot order or the network path
@@ -285,6 +285,9 @@ playback modes:
   PSRAM allocation.
 
 Text format: `#` starts a comment; the first content line declares the type:
+each text line is limited to 127 bytes, and every numeric field must be
+complete within that line. Malformed, overflowing, embedded-NUL, or truncated
+values are rejected rather than partially accepted.
 
 ```
 # teg-wave v1 — arbitrary reference (AWG-style)

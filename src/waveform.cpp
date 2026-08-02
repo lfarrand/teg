@@ -204,7 +204,7 @@ static uint32_t payloadGot;    // bytes of binary payload consumed
 static uint8_t recBuf[8];
 static uint32_t recLen;
 static WaveParser parser;
-static char line[128];
+static char line[MaxWaveTextLineLength + 1];
 static uint32_t lineLen;
 static void (*progressFn)();
 
@@ -266,11 +266,13 @@ static bool openSink(bool binaryWithHeader) {
 
 static bool feedTextByte(uint8_t c) {
   if (c != '\n') {
-    if (lineLen < sizeof(line) - 1) {
-      line[lineLen++] = static_cast<char>(c);
+    if (lineLen >= MaxWaveTextLineLength) {
+      return fail("text line exceeds 127 bytes");
     }
+    line[lineLen++] = static_cast<char>(c);
     return true;
   }
+  line[lineLen] = '\0';
   const int32_t lineErr = waveParseLine(parser, line, line + lineLen);
   lineLen = 0;
   if (lineErr != 0) {
@@ -279,6 +281,7 @@ static bool feedTextByte(uint8_t c) {
       case WaveErrBadValue: return fail("unparseable level value");
       case WaveErrTooMany: return fail("too many points/segments");
       case WaveErrBadDuration: return fail("bad or zero duration_us");
+      case WaveErrLineTooLong: return fail("text line exceeds 127 bytes");
       default: return fail("parse error");
     }
   }

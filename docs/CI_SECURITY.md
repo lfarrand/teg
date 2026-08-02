@@ -81,5 +81,18 @@ private `teg` repository because the current account plan does not provide that
 feature. The workflow checks therefore cannot yet be made server-enforced merge
 requirements. Treat a fully green PR as a manual release gate, do not push
 directly to `main`, and enable branch protection immediately if the plan changes
-or the repository becomes public. The public aWOT and eFlexPwm repositories can
-and should enforce their own required checks.
+or the repository becomes public.
+
+The public aWOT and eFlexPwm repositories now protect `master`: changes require
+an up-to-date pull request, every applicable CI context, linear history and
+resolved conversations; force pushes and branch deletion are disabled. The
+required approval count is zero because the owner cannot approve their own pull
+request, but direct pushes remain blocked and administrator enforcement is on.
+
+Both submodules use CodeQL's `manual` C/C++ build mode so analysis sees the
+actual host/Teensy compilation surface. GitHub may annotate those successful jobs
+to say that its pull-request overlay optimization supports only
+`build-mode: none`; the action then builds a normal full database. This is an intentional
+accuracy-over-speed choice: GitHub documents manual mode as the most accurate
+compiled-language option. See [CodeQL for compiled
+languages](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/manage-your-configuration/codeql-for-compiled-languages).

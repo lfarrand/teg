@@ -55,6 +55,21 @@ void test_short_line() {
   TEST_ASSERT_EQUAL_UINT8(HexErrFormat, parse(":1001000021460136"));
 }
 
+void test_hex_byte_requires_two_digits() {
+  TEST_ASSERT_EQUAL_INT(-1, hexByteAt(""));
+  TEST_ASSERT_EQUAL_INT(-1, hexByteAt("0"));
+  TEST_ASSERT_EQUAL_INT(0x00, hexByteAt("00"));
+  TEST_ASSERT_EQUAL_INT(0xFF, hexByteAt("fF"));
+}
+
+void test_minimal_truncated_records() {
+  p = HexParser{};
+  TEST_ASSERT_EQUAL_UINT8(HexErrFormat, parse(":"));
+  TEST_ASSERT_EQUAL_UINT8(HexErrFormat, parse(":0"));
+  TEST_ASSERT_EQUAL_UINT8(HexErrFormat, parse(":00"));
+  TEST_ASSERT_EQUAL_UINT8(HexErrFormat, parse(":000"));
+}
+
 void test_trailing_garbage() {
   p = HexParser{};
   TEST_ASSERT_EQUAL_UINT8(HexErrFormat, parse(":00000001FFxyz"));
@@ -115,6 +130,8 @@ int main() {
   RUN_TEST(test_bad_checksum);
   RUN_TEST(test_bad_hex_digit);
   RUN_TEST(test_short_line);
+  RUN_TEST(test_hex_byte_requires_two_digits);
+  RUN_TEST(test_minimal_truncated_records);
   RUN_TEST(test_trailing_garbage);
   RUN_TEST(test_eof_and_after_eof);
   RUN_TEST(test_blank_lines_and_whitespace);

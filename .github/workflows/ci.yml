@@ -76,6 +76,9 @@ jobs:
       - name: Coverage report (tested units, line coverage gated at 80%)
         run: gcovr --root . --filter 'src/' --print-summary --fail-under-line 80
 
+      - name: Run native tests with ASan and UBSan
+        run: pio test -e native-sanitize --verbose
+
   submodule-tests:
     name: Forked-library native tests
     runs-on: ubuntu-24.04

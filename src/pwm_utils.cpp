@@ -14,6 +14,7 @@
 #include "utils.h"
 #include <QNEthernet.h>
 #include "config_json.h"
+#include "config_compare.h"
 
 extern qindesign::network::EthernetServer server;
 extern void kickWatchdog();
@@ -540,13 +541,13 @@ bool clearFaultTrip(bool operatorRequest) {
 
 void applyPwmConfig(const MainConfig &previous) {
   const bool pwmChanged =
-      memcmp(&previous.Pwm, &config.Pwm, sizeof(config.Pwm)) != 0 ||
-      memcmp(&previous.AsymmetricInduction, &config.AsymmetricInduction,
-             sizeof(config.AsymmetricInduction)) != 0;
-  const bool protectionChanged =
-      memcmp(&previous.CurrentLimit, &config.CurrentLimit, sizeof(config.CurrentLimit)) != 0 ||
-      memcmp(&previous.FaultProtection, &config.FaultProtection,
-             sizeof(config.FaultProtection)) != 0;
+      !configValuesEqual(previous.Pwm, config.Pwm) ||
+      !configValuesEqual(previous.AsymmetricInduction, config.AsymmetricInduction);
+  const bool currentLimitChanged =
+      !configValuesEqual(previous.CurrentLimit, config.CurrentLimit);
+  const bool faultProtectionChanged =
+      !configValuesEqual(previous.FaultProtection, config.FaultProtection);
+  const bool protectionChanged = currentLimitChanged || faultProtectionChanged;
   if (pwmChanged || protectionChanged) {
     maskAllOutputsSafely();
     NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
@@ -555,10 +556,10 @@ void applyPwmConfig(const MainConfig &previous) {
   // Current-limit config first: the clear below must judge refusal against
   // the NEW protection state, so that disabling the limiter while tripped
   // clears in one action instead of refusing against the outgoing config
-  if (memcmp(&previous.CurrentLimit, &config.CurrentLimit, sizeof(config.CurrentLimit)) != 0) {
+  if (currentLimitChanged) {
     acmpConfigure();
   }
-  if (memcmp(&previous.FaultProtection, &config.FaultProtection, sizeof(config.FaultProtection)) != 0) {
+  if (faultProtectionChanged) {
     configureFaultProtection();
   }
   // Re-arms capture (and clears a freeze) on every apply - covers the
@@ -576,17 +577,17 @@ void applyPwmConfig(const MainConfig &previous) {
   // After the module reconfigures (buildSpwmLut resets the increment): the
   // PLL re-steers from its held estimate for a bumpless re-entry
   pllConfigure();
-  if (memcmp(&previous.Mppt, &config.Mppt, sizeof(config.Mppt)) != 0 ||
-      memcmp(&previous.Feedback, &config.Feedback, sizeof(config.Feedback)) != 0 ||
-      memcmp(&previous.Pwm.Tm2, &config.Pwm.Tm2, sizeof(config.Pwm.Tm2)) != 0) {
+  if (!configValuesEqual(previous.Mppt, config.Mppt) ||
+      !configValuesEqual(previous.Feedback, config.Feedback) ||
+      !configValuesEqual(previous.Pwm.Tm2, config.Pwm.Tm2)) {
     // Reseed from the (freshly applied) index target - a Tm2 change rewrote
     // it via buildSpwmLut, and stale P&O state would yank the output back
     mpptConfigure();
   }
-  if (memcmp(&previous.Mqtt, &config.Mqtt, sizeof(config.Mqtt)) != 0) {
+  if (!configValuesEqual(previous.Mqtt, config.Mqtt)) {
     mqttConfigure(); // reconnect with the new broker settings
   }
-  if (memcmp(&previous.PowerMon, &config.PowerMon, sizeof(config.PowerMon)) != 0) {
+  if (!configValuesEqual(previous.PowerMon, config.PowerMon)) {
     powerMonitorConfigure(); // re-probe the INA226 with the new settings
   }
   // A refused clear leaves the trip latched, but the reconfigures above may

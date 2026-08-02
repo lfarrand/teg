@@ -2,6 +2,7 @@
 
 #include <unity.h>
 #include <string>
+#include <config_compare.h>
 #include <config_serde.h>
 
 void setUp() {}
@@ -465,32 +466,79 @@ void test_validate_is_idempotent_over_pair_modes() {
 }
 
 void test_pair_change_is_visible_to_the_reconfigure_gates() {
-  // applyPwmConfig() only reconfigures a timer when
-  // memcmp(&previous.Pwm.TmN, &config.Pwm.TmN, sizeof(...)) differs. A previous
-  // attempt put the pair setting at Pwm. level, outside all four gates, so
-  // changing it reconfigured nothing while the UI reported success. This test
-  // replicates the comparison so that moving the field out again fails here
-  // rather than silently going inert on hardware.
+  // applyPwmConfig() only reconfigures a timer when its semantic comparison
+  // differs. A previous attempt put the pair setting at Pwm. level, outside all
+  // four gates, so changing it reconfigured nothing while the UI reported
+  // success. Exercise the production comparator so moving it out again fails
+  // here rather than silently going inert on hardware.
   MainConfig before, after;
   after.Pwm.Tm2.Sm20.Pair = PairHalfBridge;
-  TEST_ASSERT_TRUE(memcmp(&before.Pwm.Tm2, &after.Pwm.Tm2, sizeof(after.Pwm.Tm2)) != 0);
+  TEST_ASSERT_FALSE(configValuesEqual(before.Pwm, after.Pwm));
 
   MainConfig b1, a1;
   a1.Pwm.Tm1.Sm13.Pair = PairDifferential;
-  TEST_ASSERT_TRUE(memcmp(&b1.Pwm.Tm1, &a1.Pwm.Tm1, sizeof(a1.Pwm.Tm1)) != 0);
+  TEST_ASSERT_FALSE(configValuesEqual(b1.Pwm, a1.Pwm));
 
   MainConfig b3, a3;
   a3.Pwm.Tm3.Sm31.Pair = PairHalfBridge;
-  TEST_ASSERT_TRUE(memcmp(&b3.Pwm.Tm3, &a3.Pwm.Tm3, sizeof(a3.Pwm.Tm3)) != 0);
+  TEST_ASSERT_FALSE(configValuesEqual(b3.Pwm, a3.Pwm));
 
   MainConfig b4, a4;
   a4.Pwm.Tm4.Sm42.Pair = PairDifferential;
-  TEST_ASSERT_TRUE(memcmp(&b4.Pwm.Tm4, &a4.Pwm.Tm4, sizeof(a4.Pwm.Tm4)) != 0);
+  TEST_ASSERT_FALSE(configValuesEqual(b4.Pwm, a4.Pwm));
 
-  // And an identical pair of configs must compare equal, so the gate does not fire
-  // on every apply for no reason.
+  // Independently constructed defaults must compare equal even when their
+  // indeterminate padding bytes do not.
   MainConfig same1, same2;
-  TEST_ASSERT_EQUAL_INT(0, memcmp(&same1.Pwm.Tm2, &same2.Pwm.Tm2, sizeof(same2.Pwm.Tm2)));
+  TEST_ASSERT_TRUE(configValuesEqual(same1.Pwm, same2.Pwm));
+}
+
+void test_reconfigure_gates_compare_values_not_object_bytes() {
+  JsonDocument firstDoc;
+  JsonDocument secondDoc;
+  MainConfig first;
+  MainConfig second;
+  configFromJson(firstDoc, first);
+  configFromJson(secondDoc, second);
+
+  TEST_ASSERT_TRUE(configValuesEqual(first.Pwm, second.Pwm));
+  TEST_ASSERT_TRUE(configValuesEqual(first.AsymmetricInduction, second.AsymmetricInduction));
+  TEST_ASSERT_TRUE(configValuesEqual(first.CurrentLimit, second.CurrentLimit));
+  TEST_ASSERT_TRUE(configValuesEqual(first.FaultProtection, second.FaultProtection));
+  TEST_ASSERT_TRUE(configValuesEqual(first.Mppt, second.Mppt));
+  TEST_ASSERT_TRUE(configValuesEqual(first.Feedback, second.Feedback));
+  TEST_ASSERT_TRUE(configValuesEqual(first.Mqtt, second.Mqtt));
+  TEST_ASSERT_TRUE(configValuesEqual(first.PowerMon, second.PowerMon));
+  TEST_ASSERT_TRUE(configValuesEqual(first.Pll, second.Pll));
+
+  // Bytes after a string terminator are not part of the configuration value.
+  first.Mqtt.Host[sizeof(first.Mqtt.Host) - 1] = 'x';
+  TEST_ASSERT_TRUE(configValuesEqual(first.Mqtt, second.Mqtt));
+
+  MainConfig changed = second;
+  changed.AsymmetricInduction.PreShiftNanos++;
+  TEST_ASSERT_FALSE(configValuesEqual(first.AsymmetricInduction, changed.AsymmetricInduction));
+  changed = second;
+  changed.CurrentLimit.FilterPeriod++;
+  TEST_ASSERT_FALSE(configValuesEqual(first.CurrentLimit, changed.CurrentLimit));
+  changed = second;
+  changed.FaultProtection.ActiveHigh = !changed.FaultProtection.ActiveHigh;
+  TEST_ASSERT_FALSE(configValuesEqual(first.FaultProtection, changed.FaultProtection));
+  changed = second;
+  changed.Mppt.RestartDeltaMw++;
+  TEST_ASSERT_FALSE(configValuesEqual(first.Mppt, changed.Mppt));
+  changed = second;
+  changed.Feedback.LoopHz++;
+  TEST_ASSERT_FALSE(configValuesEqual(first.Feedback, changed.Feedback));
+  changed = second;
+  copyConfigString(changed.Mqtt.Host, sizeof(changed.Mqtt.Host), "broker.lan");
+  TEST_ASSERT_FALSE(configValuesEqual(first.Mqtt, changed.Mqtt));
+  changed = second;
+  changed.PowerMon.ImonRimonOhm++;
+  TEST_ASSERT_FALSE(configValuesEqual(first.PowerMon, changed.PowerMon));
+  changed = second;
+  changed.Pll.BandwidthDeciHz++;
+  TEST_ASSERT_FALSE(configValuesEqual(first.Pll, changed.Pll));
 }
 
 void test_validate_preserves_pair_intent_under_an_inverting_scheme() {
@@ -918,6 +966,7 @@ int main() {
   RUN_TEST(test_validate_clamps_dead_time_to_a_representable_value);
   RUN_TEST(test_validate_is_idempotent_over_pair_modes);
   RUN_TEST(test_pair_change_is_visible_to_the_reconfigure_gates);
+  RUN_TEST(test_reconfigure_gates_compare_values_not_object_bytes);
   RUN_TEST(test_validate_preserves_pair_intent_under_an_inverting_scheme);
   RUN_TEST(test_validate_still_enforces_the_permanent_hardware_facts);
   RUN_TEST(test_validate_leaves_non_cell_submodules_ungated_by_scheme);

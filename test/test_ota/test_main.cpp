@@ -17,6 +17,7 @@ namespace {
 constexpr uint32_t ImgSize = 0x2100; // > 0x2000 header minimum, spans 3 sectors
 uint8_t fakeFlash[0x4000];
 uint32_t eraseCount;
+uint32_t writeCount;
 
 void fakeErase(uint32_t addr) {
   const uint32_t off = addr - OtaBufferBase;
@@ -27,6 +28,7 @@ void fakeErase(uint32_t addr) {
 }
 
 void fakeWrite(uint32_t addr, const uint8_t *data, uint32_t len) {
+  writeCount++;
   const uint32_t off = addr - OtaBufferBase;
   for (uint32_t i = 0; i < len && off + i < sizeof(fakeFlash); i++) {
     fakeFlash[off + i] &= data[i]; // flash programs 1 -> 0 only
@@ -216,6 +218,27 @@ void test_truncated_upload_rejected() {
   TEST_ASSERT_NOT_NULL(strstr(s.error, "truncated"));
 }
 
+void test_max_length_truncated_record_is_rejected_without_flash_callbacks() {
+  OtaIngest s;
+  otaIngestInit(s);
+  eraseCount = 0;
+  writeCount = 0;
+
+  // Fill the largest accepted line with whitespace followed by ':'. The
+  // terminator lands at line[599], so the parser must not inspect line[600].
+  for (uint32_t i = 0; i < sizeof(s.line) - 2; i++) {
+    TEST_ASSERT_TRUE(otaFeedByte(s, ' ', ops));
+  }
+  TEST_ASSERT_TRUE(otaFeedByte(s, ':', ops));
+  TEST_ASSERT_EQUAL_UINT32(sizeof(s.line) - 1, s.lineLen);
+
+  TEST_ASSERT_FALSE(otaIngestFinish(s, ops));
+  TEST_ASSERT_EQUAL_STRING("malformed hex record", s.error);
+  TEST_ASSERT_EQUAL_UINT32(0, eraseCount);
+  TEST_ASSERT_EQUAL_UINT32(0, writeCount);
+  TEST_ASSERT_EQUAL_UINT64(0, s.bytesWritten);
+}
+
 void test_corrupt_ivt_rejected() {
   uint8_t img[ImgSize];
   buildImage(img);
@@ -371,6 +394,7 @@ int main() {
   RUN_TEST(test_record_below_flash_base_rejected);
   RUN_TEST(test_image_beyond_buffer_rejected);
   RUN_TEST(test_truncated_upload_rejected);
+  RUN_TEST(test_max_length_truncated_record_is_rejected_without_flash_callbacks);
   RUN_TEST(test_boot_data_length_mismatch_rejected);
   RUN_TEST(test_boot_data_pointer_near_wraparound_rejected);
   RUN_TEST(test_boot_data_pointer_just_past_the_end_rejected);

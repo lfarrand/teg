@@ -76,18 +76,16 @@ and branch deletion; keep the default Actions token read-only; and rotate any
 secret ever committed to history. A clean current-tree Gitleaks result does not
 make an old credential safe again.
 
-At the time of this review, GitHub's API rejected branch protection for the
-private `teg` repository because the current account plan does not provide that
-feature. The workflow checks therefore cannot yet be made server-enforced merge
-requirements. Treat a fully green PR as a manual release gate, do not push
-directly to `main`, and enable branch protection immediately if the plan changes
-or the repository becomes public.
+`main` is branch-protected: changes require an up-to-date pull request, every
+CI job (firmware build, native tests and coverage, forked-library tests, host
+microbenchmarks, parser fuzzing, and secrets/SBOM/vulnerability scanning),
+linear history and resolved conversations; force pushes and branch deletion are
+disabled. The required approval count is zero because the owner cannot approve
+their own pull request, but direct pushes remain blocked and administrator
+enforcement is on.
 
-The public aWOT and eFlexPwm repositories now protect `master`: changes require
-an up-to-date pull request, every applicable CI context, linear history and
-resolved conversations; force pushes and branch deletion are disabled. The
-required approval count is zero because the owner cannot approve their own pull
-request, but direct pushes remain blocked and administrator enforcement is on.
+The public aWOT and eFlexPwm repositories protect `master` the same way, with
+their own CI contexts as required checks.
 
 Both submodules use CodeQL's `manual` C/C++ build mode so analysis sees the
 actual host/Teensy compilation surface. GitHub may annotate those successful jobs

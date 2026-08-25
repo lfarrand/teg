@@ -16,7 +16,10 @@ class SbomTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first["specVersion"], "1.6")
         names = {item["name"] for item in first["components"]}
-        self.assertTrue({"aWOT", "eFlexPwm", "QNEthernet", "MTP_Teensy", "miniz"} <= names)
+        self.assertTrue({"aWOT", "eFlexPwm", "QNEthernet", "MTP_Teensy", "mtp_wdog", "miniz"} <= names)
+        mtp = next(item for item in first["components"] if item["name"] == "MTP_Teensy")
+        self.assertEqual(mtp["properties"][0]["value"], "patched-core-mtp")
+        self.assertEqual(len(mtp["version"]), 40)
         self.assertTrue({"tool-teensy", "tool-scons", "native", "OSV-Scanner", "platformio", "gcovr"} <= names)
         python_tools = [item for item in first["components"] if
                         item["properties"][0]["value"] == "ci-python-tool"]
@@ -35,7 +38,7 @@ class SbomTests(unittest.TestCase):
                             for item in submodules))
         source_locks = [item for item in first["components"] if
                         item["properties"][0]["value"] == "upstream-source-lock"]
-        self.assertGreaterEqual(len(source_locks), 19)
+        self.assertGreaterEqual(len(source_locks), 18)
         self.assertTrue(all(len(item["version"]) == 40 for item in source_locks))
 
     def test_serial_changes_with_commit(self):

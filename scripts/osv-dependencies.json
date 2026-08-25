@@ -109,12 +109,6 @@
             "name": "github.com/richgel999/miniz",
             "commit": "293d4db1b7d0ffee9756d035b9ac6f7431ef8492"
           }
-        },
-        {
-          "package": {
-            "name": "github.com/KurtE/MTP_Teensy",
-            "commit": "13ae26f39f6d9f3b690950dfb96ed0f79ee436d1"
-          }
         }
       ]
     }

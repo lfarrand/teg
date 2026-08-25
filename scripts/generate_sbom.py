@@ -122,12 +122,15 @@ def build_sbom(root: Path, commit: str | None = None) -> dict:
 
     source_lock = root / "scripts" / "osv-dependencies.json"
     source_packages = json.loads(source_lock.read_text(encoding="utf-8"))["results"][0]["packages"]
+    cores_commit = None
     for entry in source_packages:
         package = entry["package"]
         repository = package["name"]
         revision = package["commit"]
         if not repository.startswith("github.com/") or not re.fullmatch(r"[0-9a-f]{40}", revision):
             raise ValueError(f"invalid OSV source lock: {repository}@{revision}")
+        if repository == "github.com/PaulStoffregen/cores":
+            cores_commit = revision
         components.append(_component(repository.rsplit("/", 1)[-1], revision,
                                      "upstream-source-lock",
                                      external_url=f"https://{repository}.git"))
@@ -144,13 +147,23 @@ def build_sbom(root: Path, commit: str | None = None) -> dict:
         name = _library_property(root / path / "library.properties", "name") or Path(path).name
         components.append(_component(name, revision, "git-submodule", external_url=_vcs_url(url)))
 
-    for path, fallback_name, fallback_version in (
-        (root / "lib" / "MTP_Teensy" / "library.properties", "MTP_Teensy", "1.0.0"),
-        (root / "lib" / "miniz" / "miniz.h", "miniz", "3.0.2"),
-    ):
-        name = _library_property(path, "name") if path.name == "library.properties" else fallback_name
-        version = _library_property(path, "version") if path.name == "library.properties" else fallback_version
-        components.append(_component(name or fallback_name, version or fallback_version, "vendored"))
+    if cores_commit is None:
+        raise ValueError("OSV source lock is missing github.com/PaulStoffregen/cores")
+    patched_mtp = root / "scripts" / "mtp_core162" / "MTP_Teensy.cpp"
+    if not patched_mtp.is_file():
+        raise ValueError(f"missing {patched_mtp}")
+    components.append(_component("MTP_Teensy", cores_commit, "patched-core-mtp",
+                                 external_url="https://github.com/PaulStoffregen/cores.git"))
+
+    miniz = root / "lib" / "miniz" / "miniz.h"
+    if not miniz.is_file():
+        raise ValueError(f"missing {miniz}")
+    components.append(_component("miniz", "3.0.2", "vendored"))
+
+    wdog = root / "lib" / "MTP_Teensy" / "src" / "mtp_wdog.h"
+    if not wdog.is_file():
+        raise ValueError(f"missing {wdog}")
+    components.append(_component("mtp_wdog", None, "vendored"))
 
     by_ref = {item["bom-ref"]: item for item in components}
     components = sorted(by_ref.values(), key=lambda item: item["bom-ref"])

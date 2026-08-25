@@ -5,9 +5,9 @@ Dependabot has no platformio.ini ecosystem. This script reads `pio pkg outdated`
 rewrites exact pins, and refreshes the matching OSV source-lock commits. A weekly
 workflow opens one pull request when anything allowed has a newer registry version.
 
-The Teensy platform, framework, toolchain and tool-teensy pins stay skipped:
-teensy@5.2.0 passes a linker flag this toolchain rejects, and Teensyduino 1.60+
-ships an MTP implementation that collides with lib/MTP_Teensy.
+The Teensy platform, framework, toolchain and tool-teensy pins stay skipped.
+teensy@5.2.0 is already selected with 1.159.0 overrides; its defaults pull
+Teensyduino 1.62 / GCC 15, which collide with lib/MTP_Teensy and reject imxrt.h.
 """
 
 from __future__ import annotations

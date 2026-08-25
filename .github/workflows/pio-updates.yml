@@ -67,7 +67,7 @@ jobs:
             gh pr create --head "$slug" --title "Bump PlatformIO registry packages" --body "$(cat <<'EOF'
           Weekly PlatformIO registry check. Dependabot cannot watch `platformio.ini`.
 
-          The Teensy platform, framework, toolchain, and `tool-teensy` pins are left alone: teensy@5.2.0 breaks the pinned linker, and Teensyduino 1.60+ collides with `lib/MTP_Teensy`.
+          The Teensy platform, framework, toolchain, and `tool-teensy` pins are left alone. teensy@5.2.0 is already taken with the 1.159.0 overrides; its defaults would pull Teensyduino 1.62 / GCC 15 and collide with `lib/MTP_Teensy`.
           EOF
           )"
           fi

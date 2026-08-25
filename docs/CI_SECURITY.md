@@ -41,10 +41,10 @@ and Google Benchmark archive are likewise checksum verified. Dependabot opens
 weekly Action, git-submodule, and CI Python (`requirements-ci.txt`) update PRs.
 PlatformIO registry packages are not a Dependabot ecosystem; the Monday
 `PlatformIO updates` workflow runs `pio pkg outdated` and opens a PR when a
-non-skipped pin has a newer registry version. The Teensy platform, framework,
-toolchain and `tool-teensy` stay skipped: teensy@5.2.0 is incompatible with the
-pinned linker, and Teensyduino 1.60+ collides with `lib/MTP_Teensy`. Review
-those PRs and keep a clean firmware/bench validation
+non-skipped pin has a newer registry version. The Teensy platform, framework, toolchain and `tool-teensy` stay skipped.
+teensy@5.2.0 is used only with the 1.159.0 framework/toolchain pins; taking its
+defaults would pull Teensyduino 1.62 / GCC 15 and collide with `lib/MTP_Teensy`.
+Review those PRs and keep a clean firmware/bench validation
 before merging a library bump onto an energised power stage.
 
 The generated SBOM is deterministic for a commit and dependency declaration: it

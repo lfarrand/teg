@@ -155,8 +155,8 @@ OUTEN, OCTRL, MCTRL or the pin mux, and a timeout must leave every pin dark.
 ## 0b. Before anything else
 
 - [ ] **Build reproducibility.** `platformio.ini` pins the platform, framework
-      and toolchain (`teensy@5.0.0`, `framework-arduinoteensy@1.159.0`,
-      `toolchain-gccarmnoneeabi-teensy@1.110301.0`). The pins are load-bearing,
+      and toolchain (`teensy@5.2.0`, `framework-arduinoteensy@1.162.0`,
+      `toolchain-gccarmnoneeabi-teensy@1.150201.0`). The pins are load-bearing,
       not tidiness — see the comment in that file before bumping anything.
 - [ ] **Free RAM.** `pio run -e teensy41` reports
       `RAM1: … free for local variables: N`. **That figure is the stack.**

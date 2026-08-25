@@ -10,7 +10,7 @@ are cancelled, and every job has an explicit timeout.
 
 | Job | What it establishes | Deliberate boundary |
 |---|---|---|
-| Build Teensy 4.1 firmware | Exact PlatformIO 6.1.18 and pinned platform, framework, compiler, Teensy post-build tool, and SCons package produce two byte-identical HEX files; firmware ELF, HEX, SHA-256, build logs, section report, largest-symbol report and parsed memory budget are retained | Reproducible in the selected Ubuntu 24.04 runner family at the time of the run; the runner image itself is mutable and cross-OS identity is not claimed |
+| Build Teensy 4.1 firmware | Exact PlatformIO 6.1.19 and pinned platform, framework, compiler, Teensy post-build tool, and SCons package produce two byte-identical HEX files; firmware ELF, HEX, SHA-256, build logs, section report, largest-symbol report and parsed memory budget are retained | Reproducible in the selected Ubuntu 24.04 runner family at the time of the run; the runner image itself is mutable and cross-OS identity is not claimed |
 | Native tests and coverage | All hardware-independent suites pass under the coverage build and again under ASan/UBSan; tested-source lines stay at or above 90% and branches at or above 60% | `src/*.cpp`, registers, ISR timing, networking and physical outputs are not represented by these figures |
 | Forked-library tests | The exact aWOT and eFlexPwm gitlink commits pass their native suites | Does not validate Teensy pin mux, reload timing or electrical behaviour |
 | Host microbenchmarks | Google Benchmark 1.9.5 exercises the real modulation duty pipeline, portable FFT, PLL sample step and waveform parser; JSON is retained for trend analysis | Shared runners are noisy and x86 timing is not Cortex-M7 timing, so CI has no absolute-time pass/fail threshold |
@@ -38,9 +38,18 @@ Benchmark, Gitleaks, OSV-Scanner and all Actions are exact-version or
 commit pinned. The actionlint and Gitleaks archives are verified against pinned
 SHA-256 values taken from their publishers' checksum files; the OSV-Scanner binary
 and Google Benchmark archive are likewise checksum verified. Dependabot opens
-weekly Action and git-submodule update PRs. PlatformIO registry packages are not
-a Dependabot ecosystem, so their deliberate pins in `platformio.ini` still need
-manual review and a clean firmware/bench validation before upgrade.
+weekly Action, git-submodule, and CI Python (`requirements-ci.txt`) update PRs.
+PlatformIO registry packages are not a Dependabot ecosystem; the Monday
+`PlatformIO updates` workflow runs `pio pkg outdated` for every
+`platformio.ini` environment and refreshes a stable `deps/platformio-updates`
+branch (lease-aware force-push) when a non-skipped pin has a newer registry
+version. That job then dispatches `CI` on the branch because `GITHUB_TOKEN`
+pushes do not start `pull_request` workflows. The Teensy platform, framework, toolchain and `tool-teensy` stay skipped.
+They already track Teensyduino 1.62 / GCC 15.2.1 together; `skip_core_mtp.py`
+compiles patched 1.62 MTP sources from `scripts/mtp_core162/`. A later core
+bump can re-break that remap or the framework/compiler pairing.
+Review those PRs and keep a clean firmware/bench validation
+before merging a library bump onto an energised power stage.
 
 The generated SBOM is deterministic for a commit and dependency declaration: it
 omits a wall-clock timestamp and derives its serial UUID from the commit and
@@ -64,6 +73,9 @@ an unknown package and therefore matched nothing. OSV-Scanner is used instead
 because its C/C++ mode accepts exact repository commits. `scripts/osv-dependencies.json`
 maps the pinned registry, framework, and vendored sources to reviewed upstream
 commits, while recursive source scanning must also discover both gitlink commits.
+The two `requirements-ci.txt` pins are scanned as declared versions only
+(`--no-resolve`); resolving that file invents transitive lower bounds that are
+not the installed CI tree.
 The sentinel scan is intentionally vulnerable and CI fails if OSV stops detecting
 it; the real scan fails on any reported vulnerability. Public commit-level data is
 still incomplete, and locally patched vendored code can differ from its upstream

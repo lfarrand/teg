@@ -686,8 +686,9 @@ state says **all outputs are inhibited**; OTA also excludes it. A host operation
 can run to completion inside one `MTP.loop()` pass, so this strict maintenance
 gate prevents USB filesystem work from freezing control while any bridge is live.
 
-The library is vendored and patched in `lib/MTP_Teensy` — see
-`lib/MTP_Teensy/PATCHES.md` for exactly what diverges from upstream and why.
+Teensyduino 1.62's core MTP is compiled from patched copies in
+`scripts/mtp_core162/` — see `lib/MTP_Teensy/PATCHES.md` for exactly what
+diverges from the 1.62 sources and why.
 
 ## Thermal monitoring and derating
 
@@ -845,10 +846,11 @@ device's config file on the SD card, never in firmware source or this repository
 - True N-cell phase-shifted PWM needs RT1170 silicon — the analysis and migration
   checklist are in `docs/RT1170_PSPWM.md`.
 - **The platform, framework and toolchain are pinned** in `platformio.ini`, and
-  the pins are load-bearing rather than tidiness: Teensyduino 1.60+ bundles an
-  MTP implementation that collides with the patched `lib/MTP_Teensy`, and the
-  framework and compiler must move together or the core's own `imxrt.h` fails to
-  build. Read the comment there before bumping anything. Library/gitlink pins improve
+  the pins are load-bearing rather than tidiness: Teensyduino 1.60+ compiles a
+  core MTP (`scripts/skip_core_mtp.py` compiles the patched 1.62 sources),
+  and the framework and compiler must move together or the core's own
+  `imxrt.h` fails to build. Read the comment there before bumping anything.
+  Library/gitlink pins improve
   repeatability. CI selects the Ubuntu 24.04 runner family and pins actions,
   PlatformIO and gcovr, canonicalises
   gzip metadata, runs both submodule suites, and compares two clean firmware builds

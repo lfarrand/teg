@@ -78,14 +78,14 @@ class OsvReportTests(unittest.TestCase):
     def test_repository_lock_covers_runtime_sources_and_gitlinks(self):
         keys = required_lock_keys(ROOT / "scripts" / "osv-dependencies.json")
         names = {name for name, _ in keys}
-        self.assertGreaterEqual(len(keys), 19)
+        self.assertGreaterEqual(len(keys), 18)
         self.assertTrue({
             "github.com/bblanchon/ArduinoJson",
             "github.com/ssilverman/QNEthernet",
             "github.com/PaulStoffregen/cores",
             "github.com/richgel999/miniz",
-            "github.com/KurtE/MTP_Teensy",
         } <= names)
+        self.assertNotIn("github.com/KurtE/MTP_Teensy", names)
         commits = gitlink_commits(ROOT)
         self.assertEqual(len(commits), 2)
         self.assertTrue(all(len(commit) == 40 for commit in commits))

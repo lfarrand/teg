@@ -15,6 +15,7 @@
 // single service call and because the card holds /settings.cfg, /presets
 // and uploaded waveforms. Writes go through the authenticated HTTP API.
 
+#include <Arduino.h>
 #include <FS.h>
 #include <SdFat.h>
 #include "mtp_wdog.h"

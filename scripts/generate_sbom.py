@@ -111,6 +111,15 @@ def build_sbom(root: Path, commit: str | None = None) -> dict:
         name, version = spec.rsplit("@", 1)
         components.append(_component(name, version, "ci-build-tool", component_type="application"))
 
+    requirements = root / "requirements-ci.txt"
+    for raw in requirements.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "==" not in line:
+            continue
+        name, version = line.split("==", 1)
+        components.append(_component(name.strip(), version.strip(), "ci-python-tool",
+                                     component_type="application"))
+
     source_lock = root / "scripts" / "osv-dependencies.json"
     source_packages = json.loads(source_lock.read_text(encoding="utf-8"))["results"][0]["packages"]
     for entry in source_packages:

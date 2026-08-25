@@ -10,7 +10,7 @@ are cancelled, and every job has an explicit timeout.
 
 | Job | What it establishes | Deliberate boundary |
 |---|---|---|
-| Build Teensy 4.1 firmware | Exact PlatformIO 6.1.18 and pinned platform, framework, compiler, Teensy post-build tool, and SCons package produce two byte-identical HEX files; firmware ELF, HEX, SHA-256, build logs, section report, largest-symbol report and parsed memory budget are retained | Reproducible in the selected Ubuntu 24.04 runner family at the time of the run; the runner image itself is mutable and cross-OS identity is not claimed |
+| Build Teensy 4.1 firmware | Exact PlatformIO 6.1.19 and pinned platform, framework, compiler, Teensy post-build tool, and SCons package produce two byte-identical HEX files; firmware ELF, HEX, SHA-256, build logs, section report, largest-symbol report and parsed memory budget are retained | Reproducible in the selected Ubuntu 24.04 runner family at the time of the run; the runner image itself is mutable and cross-OS identity is not claimed |
 | Native tests and coverage | All hardware-independent suites pass under the coverage build and again under ASan/UBSan; tested-source lines stay at or above 90% and branches at or above 60% | `src/*.cpp`, registers, ISR timing, networking and physical outputs are not represented by these figures |
 | Forked-library tests | The exact aWOT and eFlexPwm gitlink commits pass their native suites | Does not validate Teensy pin mux, reload timing or electrical behaviour |
 | Host microbenchmarks | Google Benchmark 1.9.5 exercises the real modulation duty pipeline, portable FFT, PLL sample step and waveform parser; JSON is retained for trend analysis | Shared runners are noisy and x86 timing is not Cortex-M7 timing, so CI has no absolute-time pass/fail threshold |
@@ -38,9 +38,14 @@ Benchmark, Gitleaks, OSV-Scanner and all Actions are exact-version or
 commit pinned. The actionlint and Gitleaks archives are verified against pinned
 SHA-256 values taken from their publishers' checksum files; the OSV-Scanner binary
 and Google Benchmark archive are likewise checksum verified. Dependabot opens
-weekly Action and git-submodule update PRs. PlatformIO registry packages are not
-a Dependabot ecosystem, so their deliberate pins in `platformio.ini` still need
-manual review and a clean firmware/bench validation before upgrade.
+weekly Action, git-submodule, and CI Python (`requirements-ci.txt`) update PRs.
+PlatformIO registry packages are not a Dependabot ecosystem; the Monday
+`PlatformIO updates` workflow runs `pio pkg outdated` and opens a PR when a
+non-skipped pin has a newer registry version. The Teensy platform, framework,
+toolchain and `tool-teensy` stay skipped: teensy@5.2.0 is incompatible with the
+pinned linker, and Teensyduino 1.60+ collides with `lib/MTP_Teensy`. Review
+those PRs and keep a clean firmware/bench validation
+before merging a library bump onto an energised power stage.
 
 The generated SBOM is deterministic for a commit and dependency declaration: it
 omits a wall-clock timestamp and derives its serial UUID from the commit and

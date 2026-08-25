@@ -17,7 +17,16 @@ class SbomTests(unittest.TestCase):
         self.assertEqual(first["specVersion"], "1.6")
         names = {item["name"] for item in first["components"]}
         self.assertTrue({"aWOT", "eFlexPwm", "QNEthernet", "MTP_Teensy", "miniz"} <= names)
-        self.assertTrue({"tool-teensy", "tool-scons", "native", "OSV-Scanner"} <= names)
+        self.assertTrue({"tool-teensy", "tool-scons", "native", "OSV-Scanner", "platformio", "gcovr"} <= names)
+        python_tools = [item for item in first["components"] if
+                        item["properties"][0]["value"] == "ci-python-tool"]
+        expected = {}
+        for raw in (ROOT / "requirements-ci.txt").read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if line and not line.startswith("#") and "==" in line:
+                name, version = line.split("==", 1)
+                expected[name.strip()] = version.strip()
+        self.assertEqual({item["name"]: item["version"] for item in python_tools}, expected)
         submodules = [item for item in first["components"] if
                       item["properties"][0]["value"] == "git-submodule"]
         self.assertEqual(len(submodules), 2)

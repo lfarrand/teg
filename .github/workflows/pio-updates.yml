@@ -1,0 +1,73 @@
+name: PlatformIO updates
+
+on:
+  schedule:
+    - cron: "15 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pio-updates
+  cancel-in-progress: false
+
+jobs:
+  open-update-pr:
+    name: Open PlatformIO update PR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.13"
+
+      - name: Install pinned PlatformIO
+        run: python -m pip install --disable-pip-version-check -r requirements-ci.txt
+
+      - name: Rewrite outdated PlatformIO pins
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/pio_package_updates.py --apply --json-out /tmp/pio-updates.json
+
+      - name: Open or refresh the update pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("/tmp/pio-updates.json").read_text(encoding="utf-8"))
+          Path("/tmp/pio-update-slug").write_text(report.get("slug") or "", encoding="utf-8")
+          Path("/tmp/pio-update-count").write_text(str(len(report.get("applied") or [])), encoding="utf-8")
+          PY
+          slug="$(cat /tmp/pio-update-slug)"
+          count="$(cat /tmp/pio-update-count)"
+          if [ "$count" = "0" ] || [ -z "$slug" ]; then
+            echo "No allowed PlatformIO updates"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$slug"
+          git add platformio.ini scripts/osv-dependencies.json
+          if git diff --cached --quiet; then
+            echo "Pins already current"
+            exit 0
+          fi
+          git commit -m "Bump PlatformIO registry packages"
+          git push -u origin HEAD
+          if gh pr list --head "$slug" --state open --json number --jq 'length' | grep -qx 0; then
+            gh pr create --head "$slug" --title "Bump PlatformIO registry packages" --body "$(cat <<'EOF'
+          Weekly PlatformIO registry check. Dependabot cannot watch `platformio.ini`.
+
+          The Teensy platform, framework, toolchain, and `tool-teensy` pins are left alone: teensy@5.2.0 breaks the pinned linker, and Teensyduino 1.60+ collides with `lib/MTP_Teensy`.
+          EOF
+          )"
+          fi

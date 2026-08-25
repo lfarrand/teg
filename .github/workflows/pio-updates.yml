@@ -20,6 +20,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -62,7 +63,8 @@ jobs:
             exit 0
           fi
           git commit -m "Bump PlatformIO registry packages"
-          git push -u origin HEAD
+          git fetch origin "$slug" || true
+          git push --force-with-lease -u origin HEAD
           if gh pr list --head "$slug" --state open --json number --jq 'length' | grep -qx 0; then
             gh pr create --head "$slug" --title "Bump PlatformIO registry packages" --body "$(cat <<'EOF'
           Weekly PlatformIO registry check. Dependabot cannot watch `platformio.ini`.
@@ -71,3 +73,6 @@ jobs:
           EOF
           )"
           fi
+          # GITHUB_TOKEN pushes do not start pull_request workflows; dispatch CI
+          # explicitly so the generated PR still gets firmware and test gates.
+          gh workflow run ci.yml --ref "$slug"

@@ -24,11 +24,14 @@
 
 // modified for SDFS by WMXZ
 
-#if defined(USB_MTPDISK) || defined(USB_MTPDISK_SERIAL)
+#include "usb_desc.h"
+#if defined(MTP_INTERFACE)
+
+#define USE_DISK_BUFFER // only currently on T4.x
 
 #include "MTP_Teensy.h"
-#include "mtp_wdog.h" // LOCAL PATCH: watchdog service inside long operations
 #include "MTP_Const.h"
+#include "mtp_wdog.h" // LOCAL PATCH: watchdog service inside long operations
 #undef USB_DESC_LIST_DEFINE
 #include "usb_desc.h"
 
@@ -38,6 +41,7 @@
 #endif
 
 #include "usb_names.h"
+extern struct usb_string_descriptor_struct usb_string_serial_number;
 
 // define global mtpd object;
 MTP_class MTP;
@@ -50,7 +54,7 @@ Stream *MTP_class::printStream_ = &Serial;
 DMAMEM uint8_t MTP_class::disk_buffer_[DISK_BUFFER_SIZE] __attribute__((aligned(32)));
 #endif
 
-//#define DEBUG 2
+#define DEBUG 0
 #if DEBUG > 0
 #define printf(...) printStream_->printf(__VA_ARGS__)
 #else
@@ -96,15 +100,6 @@ int MTP_class::begin() {
   return usb_init_events();
 }
 
-uint32_t MTP_class::addFilesystem(FS &disk, const char *diskname, mtp_fstype_t fstype) {
-  //printStream_->println("Add **FS** file system");
-  uint32_t store = storage_.addFilesystem(disk, diskname, fstype);
-  if (store != 0xFFFFFFFF) {
-    send_StoreAddedEvent(store);
-  }
-  return store; // TODO: let's change this to bool for success / fail
-}
-
 void MTP_class::loop(void) {
   if (g_pmtpd_interval) {
     g_pmtpd_interval = nullptr; // clear out timer.
@@ -142,20 +137,7 @@ void MTP_class::loop(void) {
       if (container.type == MTP_CONTAINER_TYPE_COMMAND) {
         // LOCAL PATCH: read-only device. Every mutating operation is refused
         // here, at the single point where the host's request is dispatched.
-        //
-        // This is a safety measure, not a policy preference. The operations
-        // below reach code paths that walk the filesystem or copy bytes
-        // without bound, entirely under host control, inside this one call:
-        // recursive removeFile(), the 4KB-at-a-time CompleteCopyFile() and
-        // CopyByPathNames() loops, and the recursive CopyFiles()/moveDir()
-        // tree walks. On this board that means either an 8s watchdog reset
-        // of a running inverter, or - once a watchdog kick is added to a
-        // loop whose termination the host controls - a hang the watchdog can
-        // no longer rescue. Refusing them makes all of that unreachable and
-        // leaves exactly the paths this feature needs: browse and read.
-        //
-        // It also means a host can never damage /settings.cfg, /presets or
-        // an uploaded waveform. Writes go through the authenticated HTTP API.
+        // See lib/MTP_Teensy/PATCHES.md.
         switch (container.op) {
         case 0x100B: // DeleteObject
         case 0x100C: // SendObjectInfo
@@ -164,12 +146,6 @@ void MTP_class::loop(void) {
         case 0x1019: // moveObject
         case 0x101A: // copyObject
         case 0x9804: // SetObjectPropValue - renames via storage_.rename()
-          // 0x9804 was missed by the original read-only patch, and it was the only
-          // surviving write path: setObjectPropValue() calls storage_.rename() on
-          // MTP_PROPERTY_OBJECT_FILE_NAME. A host could therefore rename
-          // /settings.cfg or a preset on a device documented as read-only. It was
-          // also still being advertised in the supported-operations list, so hosts
-          // were actively told rename would work.
           return_code = MTP_RESPONSE_OBJECT_WRITE_PROTECTED;
           break;
         default:
@@ -318,10 +294,8 @@ void MTP_class::loop(void) {
     usb_mtp_status = 0x01;
   }
 
-  // See if Storage needs to do anything - it now returns true if it thinks we should reset the device.
-  if (storage_.loop()) {
-    send_DeviceResetEvent();
-  }
+  // Storage loop() handles removable media insert / remove
+  storage_.loop();
 }
 
 
@@ -361,7 +335,7 @@ void MTP_class::processIntervalTimer() {
           return_code = GetStorageIDs(container);
           break;
         case 0x1005: // GetStorageInfo
-          return_code = GetStorageInfo(container);
+          return_code = GetStorageInfo(container, false); // media access not allowed for ISR
           break;
         case 0x9801: // GetObjectPropsSupported
           return_code = GetObjectPropsSupported(container);
@@ -459,9 +433,12 @@ uint32_t MTP_class::SendObjectInfo(struct MTPContainer &cmd) { // MTP 1.1 spec, 
     return MTP_RESPONSE_INVALID_DATASET;
   }
   // Lets see if we have enough room to store this file:
-  uint32_t free_space = storage_.totalSize(store) - storage_.usedSize(store);
+  uint64_t free_space = storage_.totalSize(store) - storage_.usedSize(store);
+  if (file_size == 0xFFFFFFFFUL) {
+    printf("Size of object == 0xffffffff - Indicates >= 4GB file!\n \t?TODO: query real size? FS supports this - FAT32 no?\n");
+  }
   if (file_size > free_space) {
-    printf("Size of object:%u is > free space: %u\n", file_size, free_space);
+    printf("Size of object:%u is > free space: %llu\n", file_size, free_space);
     return MTP_RESPONSE_STORAGE_FULL;
   }
   const bool dir = (oformat == 0x3001);
@@ -492,26 +469,163 @@ uint32_t MTP_class::SendObjectInfo(struct MTPContainer &cmd) { // MTP 1.1 spec, 
 //   Command: no parameters
 //   Data: PC->Teensy: Binary Data
 //   Response: no parameters
+#if defined(__IMXRT1062__) && defined(USE_DISK_BUFFER)
 uint32_t MTP_class::SendObject(struct MTPContainer &cmd) {
   MTPHeader header;
   if (!readDataPhaseHeader(&header)) return MTP_RESPONSE_PARAMETER_NOT_SUPPORTED;
-  uint32_t size = header.len - sizeof(header);
-  printf("SendObject: %u bytes, id=%x\n", size, object_id_);
+  uint64_t size = header.len - sizeof(header);
+  printf("SendObject: %llu(0x%llx) bytes, id=%x\n", size, size, object_id_);
   // TODO: check size matches file_size from SendObjectInfo
   // TODO: check if object_id_
   // TODO: should we do storage_.Create() here?  Can we preallocate file size?
   uint32_t ret = MTP_RESPONSE_OK;
-  uint32_t pos = 0;
+  uint64_t pos = 0;
+
+  // index into our disk buffer.
+
+  bool huge_file = (size == 0xfffffffful);
+  if (huge_file) size = (uint64_t)-1;
+  uint64_t cb_left = size;
+
+  #if DEBUG
+  elapsedMillis em_send;
+  elapsedMillis emPrint;
+  uint32_t count_reads = 0;
+  uint32_t to_copy_prev = 0;
+  #endif
+
+  // lets go ahead and copy the rest of the first receive buffer into
+  // our disk buffer, so we don't have to play with starting index and the like...
+  uint16_t disk_buffer_index = receive_buffer.len - receive_buffer.index;
+  memcpy((char*)disk_buffer_, (char *)&receive_buffer.data[receive_buffer.index], disk_buffer_index);
+  pos = disk_buffer_index;
+  free_received_bulk();
+
+
+  while (huge_file || (pos < size)) {
+    mtpKickWatchdog(); // LOCAL PATCH
+    if (!receive_bulk(100)) {
+      if (pos <= 0xfffffffful) {
+        printf("SO: receive failed pos:%llu size:%llu\n", pos, size);
+        ret = MTP_RESPONSE_OPERATION_NOT_SUPPORTED;
+      } else {
+        printf("SO: receive failed pos:%llu large file EOF\n", pos);
+      }
+      break;
+    }
+
+
+    uint32_t to_copy = receive_buffer.len;
+
+    #if DEBUG
+    count_reads++;
+    if ((to_copy != to_copy_prev) || (emPrint > 15000)) {
+      printf("SO RC:%u CB:%u pos:%llu\n", count_reads, to_copy, pos);
+      to_copy_prev = to_copy;
+      emPrint = 0;
+    }
+    #endif
+
+    uint16_t cb_buffer_avail = sizeof(disk_buffer_) - disk_buffer_index;
+    // See if this will fill the buffer;
+    if (cb_buffer_avail <= to_copy) {
+      memcpy(&disk_buffer_[disk_buffer_index], (char*)&receive_buffer.data[receive_buffer.index], cb_buffer_avail);
+      disk_buffer_index = 0;
+      if (storage_.write((char*)disk_buffer_, sizeof(disk_buffer_)) != sizeof(disk_buffer_)) {
+        ret = MTP_RESPONSE_OPERATION_NOT_SUPPORTED; // TODO: best response for write error??
+        // maybe send MTP_EVENT_CANCEL_TRANSACTION event??
+        break;
+      }
+      if (cb_buffer_avail != to_copy) {
+        // copy in the remaining.
+        disk_buffer_index = to_copy - cb_buffer_avail;
+        memcpy(disk_buffer_, (char*)&receive_buffer.data[cb_buffer_avail], disk_buffer_index);
+      }
+    } else {
+      memcpy(&disk_buffer_[disk_buffer_index], (char*)receive_buffer.data, to_copy);
+      disk_buffer_index += to_copy;  
+    }
+
+    pos += to_copy;
+    cb_left -= to_copy; // 
+
+    free_received_bulk();
+    if ((to_copy < 512) && (size == (uint64_t)-1) && (pos > 0xfffffffful)){
+      printf("SendObject large EOF Detected: %lluu\n", pos);
+      break;
+    }
+  }
+
+
+  // clear out any trailing. 
+
+
   while (pos < size) {
+    mtpKickWatchdog(); // LOCAL PATCH
+    // consume remaining incoming data, if we aborted for any reason
+    if (receive_buffer.data == NULL && !receive_bulk(250)) break; 
+    uint16_t cb_packet = receive_buffer.len - receive_buffer.index;   
+    pos += cb_packet;
+    free_received_bulk();
+    if (cb_packet < 512) break;
+  }
+  // write out anything left in our disk buffer... 
+  if (disk_buffer_index) {
+    if (storage_.write((char*)disk_buffer_, disk_buffer_index) != disk_buffer_index) {
+      ret = MTP_RESPONSE_OPERATION_NOT_SUPPORTED; // TODO: best response for write error??
+      // maybe send MTP_EVENT_CANCEL_TRANSACTION event??
+    }
+
+  }
+
+  // TODO: check no lingering buffered data, and ZLP is present if expected
+  #if DEBUG
+  printf("SendObject complete pos:%u dt:%u\n", pos, (uint32_t)em_send / 1000);
+  #endif
+
+  storage_.updateDateTimeStamps(object_id_, dtCreated_, dtModified_);
+  storage_.close();
+
+  if (ret == MTP_RESPONSE_OK) object_id_ = 0; // SendObjectInfo can not be reused after success
+  return ret;
+}
+
+#else
+uint32_t MTP_class::SendObject(struct MTPContainer &cmd) {
+  MTPHeader header;
+  if (!readDataPhaseHeader(&header)) return MTP_RESPONSE_PARAMETER_NOT_SUPPORTED;
+  uint64_t size = header.len - sizeof(header);
+  printf("SendObject: %llu(0x%llx) bytes, id=%x\n", size, size, object_id_);
+  // TODO: check size matches file_size from SendObjectInfo
+  // TODO: check if object_id_
+  // TODO: should we do storage_.Create() here?  Can we preallocate file size?
+  uint32_t ret = MTP_RESPONSE_OK;
+  uint64_t pos = 0;
+  uint32_t count_reads = 0;
+  uint32_t to_copy_prev = 0;
+  bool huge_file = (size == 0xfffffffful);
+  if (huge_file) size = (uint64_t)-1;
+  uint64_t cb_left = size;
+  while (huge_file || (pos < size)) {
     mtpKickWatchdog(); // LOCAL PATCH
     if (receive_buffer.data == NULL) {
       if (!receive_bulk(100)) {
+        printf("SO: receive failed pos:%llu size:%llu\n", pos, size);
         ret = MTP_RESPONSE_OPERATION_NOT_SUPPORTED;
         break;
       }
     }
     uint32_t to_copy = receive_buffer.len - receive_buffer.index;
-    if (to_copy > size) to_copy = size;
+    count_reads++;
+    if (to_copy != to_copy_prev) {
+      printf("SO RC:%u CB:%u pos:%llu\n", count_reads, to_copy, pos);
+      to_copy_prev = to_copy;;
+    }
+
+
+    //if (to_copy > size) to_copy = size;  // did not make sense to me
+    if (to_copy > cb_left) to_copy = cb_left;
+
     //printf("SendObject, pos=%u, write=%u, size=%u\n", pos, to_copy, size);
     bool ok = storage_.write((char *)(receive_buffer.data + receive_buffer.index), to_copy);
     if (!ok) {
@@ -520,12 +634,19 @@ uint32_t MTP_class::SendObject(struct MTPContainer &cmd) {
       break;
     }
     pos += to_copy;
+    cb_left -= to_copy; // 
     receive_buffer.index += to_copy;
     if (receive_buffer.index >= receive_buffer.len) {
       free_received_bulk();
+    #if 1
+      if ((to_copy < 512) && (pos > 0xfffffffful)) {
+        printf(">4gb file EOF detected pos:%llu\n", pos);
+        break;
+      }
+    #endif    
     }
   }
-  while (pos < size) {
+  while ((pos < size) && (pos <  0xfffffffful)) {
     mtpKickWatchdog(); // LOCAL PATCH
     // consume remaining incoming data, if we aborted for any reason
     if (receive_buffer.data == NULL && !receive_bulk(250)) break;
@@ -540,7 +661,7 @@ uint32_t MTP_class::SendObject(struct MTPContainer &cmd) {
   if (ret == MTP_RESPONSE_OK) object_id_ = 0; // SendObjectInfo can not be reused after success
   return ret;
 }
-
+#endif
 
 
 // When the host (your PC) wants to put a read a file from any of Teensy's drives
@@ -553,7 +674,8 @@ uint32_t MTP_class::SendObject(struct MTPContainer &cmd) {
 //   Response: no parameters
 uint32_t MTP_class::GetObjectInfo(struct MTPContainer &cmd) {
   uint32_t handle = cmd.params[0];
-  uint32_t size, parent, dt;
+  uint32_t parent, dt;
+  uint64_t size;
   char filename[MTP_MAX_FILENAME_LEN], ctimebuf[16], mtimebuf[16];
   DateTimeFields dtf;
   uint16_t store;
@@ -584,9 +706,13 @@ uint32_t MTP_class::GetObjectInfo(struct MTPContainer &cmd) {
     + writestringlen(filename) + writestringlen(ctimebuf)
     + writestringlen(mtimebuf) + writestringlen(""));
 
+  // if size is > 4gb we need to send the size 0xfffffffful and it may then ask us for real size.
+  bool is_directory = (size == (uint64_t)-1);
+  if (size > 0xfffffffful) size = 0xfffffffful;
+
   uint32_t storage = Store2Storage(store);
   write32(storage);                                // storage
-  write16(size == 0xFFFFFFFFUL ? 0x3001 : 0x0000); // format
+  write16(is_directory ? 0x3001 : 0x0000);         // format
   write16(0);                                      // protection
   write32(size);                                   // size
   write16(0);                                      // thumb format
@@ -597,7 +723,7 @@ uint32_t MTP_class::GetObjectInfo(struct MTPContainer &cmd) {
   write32(0);                                      // pix height
   write32(0);                                      // bit depth
   write32(parent);                                 // parent
-  write16(size == 0xFFFFFFFFUL ? 1 : 0);           // association type
+  write16(is_directory ? 1 : 0);                   // association type
   write32(0);                                      // association description
   write32(0);                                      // sequence number
   writestring(filename);                           // filename
@@ -613,26 +739,88 @@ uint32_t MTP_class::GetObjectInfo(struct MTPContainer &cmd) {
 //   Command: 1 parameter: ObjectHandle
 //   Data: Teensy->PC: Binary Data
 //   Response: no parameters
+#if defined(__IMXRT1062__) && defined(USE_DISK_BUFFER)
+// experiment again on T4.x use 4k buffer disk_buffer_
+uint32_t MTP_class::GetObject(struct MTPContainer &cmd) {
+  uint16_t cb_read = 0;
+  uint64_t disk_pos = 0;
+  uint64_t pos = 0;
+
+  const int object_id = cmd.params[0];
+  uint64_t size = storage_.GetSize(object_id);
+  uint64_t count_remaining = size;
+
+  writeDataPhaseHeader(cmd, (size > 0xfffffffful)?  0xfffffffful : size);
+
+  printf("GetObject, size=%llu\n", size);
+  #if DEBUG
+  elapsedMillis emTotal;
+  elapsedMillis emPrint;
+  #endif
+  while (count_remaining) {
+    mtpKickWatchdog(); // LOCAL PATCH
+    if (usb_mtp_status != 0x01) {
+      printf("GetObject, abort status:%x\n", usb_mtp_status);
+      return 0;
+    }
+
+    // Lets make it real simple for now.
+    cb_read = storage_.read(object_id, disk_pos, (char*)disk_buffer_, sizeof(disk_buffer_));
+    if (cb_read == 0) {
+      break;
+    }
+    size_t cb_written = write(disk_buffer_, cb_read);
+    if (cb_written != cb_read) {
+      printf("GetObject, write count error: %u != %u\n", cb_written, cb_read);
+      break;
+    }
+    count_remaining -= cb_read;
+    pos += cb_read;
+    disk_pos += cb_read;
+
+    #if DEBUG
+    if (emPrint >= 15000) {
+      uint32_t percent_done = (pos * 100ull) / size;
+      printf("\tdt:%u, pos:%llu %u%%\n", (uint32_t)emTotal/1000, pos, percent_done);
+      emPrint = 0;
+    }
+    #endif
+  }
+  write_finish();
+  printf("GetObject, done pos:%llu size:%llu dt:%u\n", pos, size, (uint32_t)emTotal/1000);
+  return MTP_RESPONSE_OK;
+}
+
+#else
 uint32_t MTP_class::GetObject(struct MTPContainer &cmd) {
   const int object_id = cmd.params[0];
-  uint32_t size = storage_.GetSize(object_id);
-  //printf("GetObject, size=%u\n", size);
-  writeDataPhaseHeader(cmd, size);
-  uint32_t pos = 0;
+  uint64_t size = storage_.GetSize(object_id);
+  printf("GetObject, size=%llu\n", size);
+  writeDataPhaseHeader(cmd, (size > 0xfffffffful)?  0xfffffffful : size);
+  uint64_t pos = 0;
+  #if DEBUG
+  elapsedMillis emPrint;
+  #endif
   while (pos < size) {
-    mtpKickWatchdog(); // LOCAL PATCH: whole transfer runs in one loop() call
+    mtpKickWatchdog(); // LOCAL PATCH
     if (usb_mtp_status != 0x01) {
-      //printf("GetObject, abort\n");
+      printf("GetObject, abort status:%x\n", usb_mtp_status);
       return 0;
     }
     if (transmit_buffer.data == NULL) allocate_transmit_bulk();
     uint32_t avail = transmit_buffer.size - transmit_buffer.len;
-    uint32_t to_copy = size - pos;
+    uint64_t to_copy = size - pos;
     if (to_copy > avail) to_copy = avail;
-    //printf("GetObject, read=%u, pos=%u\n", to_copy, pos);
     // Read directly from storage into usb buffer.
-    storage_.read(object_id, pos,
+    uint32_t cb_read = storage_.read(object_id, pos,
                    (char *)(transmit_buffer.data + transmit_buffer.len), to_copy);
+    #if DEBUG
+    if ((emPrint >= 15000) || (cb_read != 512)) {
+      printf("\tGO: read=%u, pos=%llu, Read:%u\n", to_copy, pos, cb_read);
+      emPrint = 0;
+    }
+    #endif
+    if (cb_read == 0) break;
     pos += to_copy;
     transmit_buffer.len += to_copy;
     if (transmit_buffer.len >= transmit_buffer.size) {
@@ -640,10 +828,10 @@ uint32_t MTP_class::GetObject(struct MTPContainer &cmd) {
     }
   }
   write_finish();
-  //printf("GetObject, done\n");
+  printf("GetObject, done pos:%llu size:%llu\n", pos, size);
   return MTP_RESPONSE_OK;
 }
-
+#endif
 
 //  GetPartialObject, MTP 1.1 spec, page 240
 //   Command: 3 parameters: ObjectHandle, Offset in bytes, Maximum number of bytes
@@ -652,23 +840,29 @@ uint32_t MTP_class::GetObject(struct MTPContainer &cmd) {
 uint32_t MTP_class::GetPartialObject(struct MTPContainer &cmd) {
   uint32_t object_id = cmd.params[0];
   uint32_t offset = cmd.params[1];
-  uint32_t NumBytes = cmd.params[2];
-  uint32_t size = storage_.GetSize(object_id);
-  size -= offset;
-  if (NumBytes < size) {
-    size = NumBytes;
+  uint64_t NumBytes = cmd.params[2];
+  if (NumBytes == 0xfffffffful) NumBytes = (uint64_t)-1;
+  uint64_t size = storage_.GetSize(object_id);
+  printf("GetPartialObject: %x Of:%u NB:%u CB:%llu, FS:%llu\n", object_id, offset, cmd.params[2], NumBytes, size);
+  if (offset >= size) {
+    // writeDataPhaseHeader(cmd, 0); ???
+    return MTP_RESPONSE_INVALID_PARAMETER;
   }
-  writeDataPhaseHeader(cmd, size);
+  if (NumBytes > size - offset) {
+    NumBytes = size - offset;
+  }
+  writeDataPhaseHeader(cmd, NumBytes);
   uint32_t pos = offset; // into data
-  while (pos < size) {
+  uint32_t end = offset + NumBytes;
+  while (pos < end) {
     mtpKickWatchdog(); // LOCAL PATCH
     if (usb_mtp_status != 0x01) {
-      //printf("GetPartialObject, abort\n");
+      printf("GetPartialObject, abort\n");
       return 0;
     }
     if (transmit_buffer.data == NULL) allocate_transmit_bulk();
     uint32_t avail = transmit_buffer.size - transmit_buffer.len;
-    uint32_t to_copy = size - pos;
+    uint32_t to_copy = end - pos;
     if (to_copy > avail) to_copy = avail;
     storage_.read(object_id, pos,
                    (char *)(transmit_buffer.data + transmit_buffer.len), to_copy);
@@ -679,7 +873,7 @@ uint32_t MTP_class::GetPartialObject(struct MTPContainer &cmd) {
     }
   }
   write_finish();
-  cmd.params[0] = size;
+  cmd.params[0] = (NumBytes < 0xfffffffful)? NumBytes : 0xfffffffful;
   return MTP_RESPONSE_OK + (1<<28);
 }
 
@@ -761,27 +955,31 @@ uint32_t MTP_class::formatStore(struct MTPContainer &cmd) {
 
 // GetStorageIDs, MTP 1.1 spec, page 213
 //   Command: no parameters
-//   Data: Teensy->PC: StorageID array
+//   Data: Teensy->PC: StorageID array (page 45)
 //   Response: no parameters
 uint32_t MTP_class::GetStorageIDs(struct MTPContainer &cmd) {
   uint32_t num = storage_.get_FSCount();
-  // Quick and dirty, we maybe allow some storages to be removed, lets loop
-  // through and see if there are any...
-  printf("MTP_class::GetStorageIDs: cnt:%u\n", num);
+  // first count the number of filesystems
   uint32_t num_valid = 0;
-  const char *sz;
-  for (uint32_t ii = 0; ii < num; ii++) {
-
-    if ((sz = storage_.get_FSName(ii)) != nullptr) {
-      num_valid++; // storage id
-      printf("\t%u(%s) %u\n", ii, sz, num_valid);
-    }
+  for (uint32_t store = 0; store < num; store++) {
+    FS *fs = storage_.getStoreFS(store);
+    if (fs && storage_.isMediaPresent(store)) num_valid++;
   }
   writeDataPhaseHeader(cmd, 4 + num_valid * 4);
   write32(num_valid); // number of storages (disks)
-  for (uint32_t ii = 0; ii < num; ii++) {
-    if (storage_.get_FSName(ii))
-      write32(Store2Storage(ii)); // storage id
+  for (uint32_t store = 0; store < num; store++) {
+    FS *fs = storage_.getStoreFS(store);
+    if (fs && storage_.isMediaPresent(store)) {
+      // page 213 says "Removable storages with no inserted media shall be returned
+      // in the dataset returned by this operation as well, though they would contain
+      // a value of 0x0000 in the lower 16 bits indicating that they are not present"
+      // However, Linux seems to get confused by these StorageIDs.  Because Windows
+      // just hides them anyway, we'll not send these StorageID for removed media.
+      uint32_t StorageID = Store2Storage(store);
+      printf("\t%u(%s %s) StorageID=%08X\n", store, // FIXME: printing maybe ISR unsafe? // FIXME: printing maybe ISR unsafe?
+        storage_.get_FSName(store), fs->name(), StorageID);
+      write32(StorageID); // storage id
+    }
   }
   write_finish();
   storage_ids_sent_ = true;
@@ -790,20 +988,29 @@ uint32_t MTP_class::GetStorageIDs(struct MTPContainer &cmd) {
 
 // GetStorageInfo, MTP 1.1 spec, page 214
 //   Command: 1 parameter: StorageID
-//   Data: Teensy->PC: StorageInfo
+//   Data: Teensy->PC: StorageInfo (page 46)
 //   Response: no parameters
-uint32_t MTP_class::GetStorageInfo(struct MTPContainer &cmd) {
+uint32_t MTP_class::GetStorageInfo(struct MTPContainer &cmd, bool mediaAccessAllowed) {
   uint32_t storage = cmd.params[0];
   uint32_t store = Storage2Store(storage);
-  const char *name = storage_.get_FSName(store);
-  // const char *volumeID = storage_.get_volumeID(store);
-  if (name == nullptr) {
-    printf("MTP_class::GetStorageInfo %u is not valid (Nullptr name)\n");
+  FS *fs = storage_.getStoreFS(store);
+  if (fs == nullptr) {
+    printf("MTP_class::GetStorageInfo %u is not valid (FS nullptr)\n", store);
     return MTP_RESPONSE_STORE_NOT_AVAILABLE;
   }
-  static const char _volumeID[] = "";
-
-  uint32_t size = 2 + 2 + 2 + 8 + 8 + 4 + writestringlen(name) + writestringlen(_volumeID);
+  if (!storage_.isMediaPresent(store)) {
+    printf("MTP_class::GetStorageInfo %u(%s) removable media not present\n", store, name);
+    // TODO: is this correct response for removable media not present?
+    return MTP_RESPONSE_STORE_NOT_AVAILABLE;
+  }
+  const char *name = storage_.get_FSName(store);
+  const char *volname = fs->name(); // assume no media access if previously called
+  if (volname) {
+    name = volname;
+  } else if (!name) {
+    name = "Untitled";
+  }
+  uint32_t size = 2 + 2 + 2 + 8 + 8 + 4 + writestringlen(name) + writestringlen("");
   writeDataPhaseHeader(cmd, size);
   // StorageInfo, MTP 1.1 spec, page 46
   write16(storage_.readonly(store) ? 0x0001
@@ -814,16 +1021,16 @@ uint32_t MTP_class::GetStorageInfo(struct MTPContainer &cmd) {
   write16(0x0000);       // access capability (read-write)
 
   //elapsedMillis em;
-  uint64_t ntotal = storage_.totalSize(store);
+  uint64_t ntotal = storage_.totalSize(store, mediaAccessAllowed);
   write64(ntotal); // max capacity
-  uint64_t nused = storage_.usedSize(store);
+  uint64_t nused = storage_.usedSize(store, mediaAccessAllowed);
   write64((ntotal - nused)); // free space (100M)
   //printf("GetStorageInfo dt:%u tot:%lu, used: %lu\n", (uint32_t)em, ntotal, nused);
   write32(0xFFFFFFFFUL); // free space (objects)
   writestring(name); // storage descriptor
-  writestring(_volumeID); // volume identifier
+  writestring(""); // volume identifier (neither Windows nor Linux seem to use this)
   write_finish();
-  printf("%d %d name:%s\n", storage, store, name);
+  printf("\t%x name:%s\n", storage, name);
   return MTP_RESPONSE_OK;
 }
 
@@ -838,11 +1045,13 @@ uint32_t MTP_class::GetNumObjects(struct MTPContainer &cmd) {
   if (format) {
     return MTP_RESPONSE_SPECIFICATION_BY_FORMAT_UNSUPPORTED;
   }
+  unsigned int num = 0;
   uint32_t store = Storage2Store(storage);
-  storage_.StartGetObjectHandles(store, parent);
-  int num = 0;
-  while (storage_.GetNextObjectHandle(store)) {
-    num++;
+  if (storage_.isMediaPresent(store)) {
+    storage_.StartGetObjectHandles(store, parent);
+    while (storage_.GetNextObjectHandle(store)) {
+      num++;
+    }
   }
   cmd.params[0] = num;
   return MTP_RESPONSE_OK | (1<<28);
@@ -862,19 +1071,23 @@ uint32_t MTP_class::GetObjectHandles(struct MTPContainer &cmd) {
     write_finish();
     return MTP_RESPONSE_SPECIFICATION_BY_FORMAT_UNSUPPORTED;
   }
-  uint32_t store = Storage2Store(storage);
+  const uint32_t store = Storage2Store(storage);
   uint32_t num_handles = 0;
-  storage_.StartGetObjectHandles(store, parent);
-  while (storage_.GetNextObjectHandle(store)) {
-    num_handles++;
+  if (storage_.isMediaPresent(store)) {
+    storage_.StartGetObjectHandles(store, parent);
+    while (storage_.GetNextObjectHandle(store)) {
+      num_handles++;
+    }
   }
   writeDataPhaseHeader(cmd, 4 + num_handles*4);
-  // ObjectHandle array, page 23 (ObjectHandle), page 20 (array)
-  write32(num_handles);
-  uint32_t handle;
-  storage_.StartGetObjectHandles(store, parent);
-  while ((handle = storage_.GetNextObjectHandle(store)) != 0) {
-      write32(handle);
+  if (storage_.isMediaPresent(store)) {
+    // ObjectHandle array, page 23 (ObjectHandle), page 20 (array)
+    write32(num_handles);
+    uint32_t handle;
+    storage_.StartGetObjectHandles(store, parent);
+    while ((handle = storage_.GetNextObjectHandle(store)) != 0) {
+        write32(handle);
+    }
   }
   write_finish();
   return MTP_RESPONSE_OK;
@@ -1045,7 +1258,7 @@ uint32_t MTP_class::GetObjectPropValue(struct MTPContainer &cmd) {
   const uint32_t property = cmd.params[1];
   uint32_t data_size = 0;
   char name[MTP_MAX_FILENAME_LEN];
-  uint32_t file_size;
+  uint64_t file_size;
   uint32_t parent;
   uint16_t store;
   uint32_t dt;
@@ -1125,14 +1338,16 @@ uint32_t MTP_class::GetObjectPropValue(struct MTPContainer &cmd) {
     write32(storage);
     break;
   case MTP_PROPERTY_OBJECT_FORMAT: // 0xDC02:
-    write16((file_size == 0xFFFFFFFF) ? 0x3001 /*directory*/ : 0x3000 /*file*/);
+    write16((file_size == (uint64_t)-1) ? 0x3001 /*directory*/ : 0x3000 /*file*/);
     break;
   case MTP_PROPERTY_PROTECTION_STATUS: // 0xDC03:
     write16(0);
     break;
   case MTP_PROPERTY_OBJECT_SIZE: // 0xDC04:
-    write32(file_size);
-    write32(0);
+    write64(file_size);
+    printf("\tMTP_PROPERTY_OBJECT_SIZE: %s %llx\n", name, file_size);
+    //write32(file_size & 0xfffffffful);
+    //write32(file_size >> 32);
     break;
   case MTP_PROPERTY_OBJECT_FILE_NAME: // 0xDC07:
   case MTP_PROPERTY_NAME: // 0xDC44:
@@ -1258,11 +1473,9 @@ uint32_t MTP_class::GetDeviceInfo(struct MTPContainer &cmd) {
     MTP_OPERATION_GET_PARTIAL_OBJECT, // 0x101B
     MTP_OPERATION_GET_OBJECT_PROPS_SUPPORTED, // 0x9801
     MTP_OPERATION_GET_OBJECT_PROP_DESC,       // 0x9802
-    MTP_OPERATION_GET_OBJECT_PROP_VALUE       // 0x9803
-    // MTP_OPERATION_SET_OBJECT_PROP_VALUE               ,//0x9804
-    // Deliberately NOT advertised: the dispatcher refuses it (read-only device), and
-    // advertising an operation that always answers OBJECT_WRITE_PROTECTED just makes
-    // hosts offer a rename that cannot work. See PATCHES.md.
+    MTP_OPERATION_GET_OBJECT_PROP_VALUE,      // 0x9803
+    // LOCAL PATCH: do not advertise rename; dispatcher always write-protects it
+    // MTP_OPERATION_SET_OBJECT_PROP_VALUE       // 0x9804
     // MTP_OPERATION_GET_OBJECT_PROP_LIST                   ,//0x9805
     // MTP_OPERATION_GET_OBJECT_REFERENCES                  ,//0x9810
     // MTP_OPERATION_SET_OBJECT_REFERENCES                  ,//0x9811
@@ -1535,9 +1748,15 @@ uint32_t MTP_class::writestringlen(const char *str) {
   return len*2 + 2 + 1;
 }
 
-void MTP_class::write(const void *ptr, int len) {
+size_t MTP_class::write(const void *ptr, size_t len) {
+  size_t len_in = len;
   const char *data = (const char *)ptr;
   while (len > 0) {
+    if (usb_mtp_status != 0x01) {
+      printf("write, abort\n");
+      return 0;
+    }
+
     if (transmit_buffer.data == NULL) allocate_transmit_bulk();
     unsigned int avail = transmit_buffer.size - transmit_buffer.len;
     unsigned int to_copy = len;
@@ -1550,6 +1769,7 @@ void MTP_class::write(const void *ptr, int len) {
       transmit_bulk();
     }
   }
+  return len_in; // for now we are not detecting errors.
 }
 
 void MTP_class::write_finish() {
@@ -1631,7 +1851,10 @@ uint8_t MTP_class::usb_mtp_status = 0x01;
 #elif defined(__IMXRT1062__)
 
 bool MTP_class::receive_bulk(uint32_t timeout) { // T4
-  if (usb_mtp_status != 0x01) return false;
+  if (usb_mtp_status != 0x01) {
+    receive_buffer.data = NULL;
+    return false;
+  }
   receive_buffer.index = 0;
   receive_buffer.size = MTP_RX_SIZE;
   receive_buffer.usb = NULL;
@@ -1662,8 +1885,7 @@ void MTP_class::allocate_transmit_bulk() { // T4
 int MTP_class::transmit_bulk() { // T4
   int r = 0;
   if (usb_mtp_status == 0x01) {
-    write_transfer_open = (transmit_buffer.len > 0 &&
-      (transmit_buffer.len & transmit_packet_size_mask) == 0);
+    write_transfer_open = (transmit_buffer.len > 0 && (transmit_buffer.len & transmit_packet_size_mask) == 0);
     usb_mtp_send(transmit_buffer.data, transmit_buffer.len, 50);
   }
   transmit_buffer.len = 0;
@@ -1928,6 +2150,34 @@ bool MTP_class::send_removeObjectEvent(uint32_t store, const char *pathname) {
 //  Debug printing
 //***************************************************************************
 
+
+void MTP_class::printFilesystemsInfo(Stream &stream) {
+  unsigned int count = storage_.get_FSCount();
+  stream.println();
+  stream.print("Storage List, ");
+  stream.print(count);
+  stream.println(" Filesystems");
+  for (unsigned int i=0; i < count; i++) {
+    FS *fs = storage_.getStoreFS(i);
+    if (fs != nullptr) {
+      stream.print("  store:");
+      stream.print(i);
+      stream.print(" storage:");
+      stream.print(Store2Storage(i), HEX);
+      stream.print(" present:");
+      stream.print(storage_.isMediaPresent(i) ? "Yes" : "No ");
+      stream.print(" fs:");
+      stream.print((uint32_t)fs, HEX);
+      stream.print(" name:\"");
+      stream.print(storage_.get_FSName(i));
+      stream.print("\" fsname:\"");
+      const char *volname = fs->name(); // requires updated core lib
+      if (!volname) volname = "Untitled";
+      stream.print(volname);
+      stream.println("\"");
+    }
+  }
+}
 
 void MTP_class::printContainer(const void *container, const char *msg) {
   const struct MTPContainer *c = (const struct MTPContainer *)container;
@@ -2333,4 +2583,4 @@ void MTP_class::printContainer(const void *container, const char *msg) {
 
 
 
-#endif // USB_MTPDISK
+#endif // MTP_INTERFACE

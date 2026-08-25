@@ -5,8 +5,9 @@
 // this a maintenance-mode feature rather than an always-on one:
 //
 //  1. A whole transfer, directory scan or delete runs inside ONE MTP.loop()
-//     call. Our vendored copy services the watchdog inside those loops (see
-//     lib/MTP_Teensy/PATCHES.md) so a large copy can no longer reset the
+//     call. The Teensyduino 1.62 sources we compile (see
+//     lib/MTP_Teensy/PATCHES.md) service the watchdog inside those loops so a
+//     large copy can no longer reset the
 //     board - but the call still does not return for the duration, so every
 //     control task in the superloop is stalled meanwhile.
 //  2. Because of (1), MTP is withheld entirely while a waveform is being
@@ -63,10 +64,13 @@ void mtpBegin() {
   if (!flashFSAvailable()) {
     writeLogLevel(EventWarn, "MTP: QSPI flash unavailable; index kept in RAM");
   }
-  const uint32_t qspiStore = MTP.addFilesystem(flashFS, "TEG-QSPI");
-  MTP.useFileSystemIndexFileStore(qspiStore);
-  if (sdAvailable) {
-    MTP.addFilesystem(sdAdapter, "TEG-SD");
+  if (!MTP.addFilesystem(flashFS, "TEG-QSPI")) {
+    writeLogLevel(EventWarn, "MTP: QSPI store failed");
+  } else if (!MTP.useFilesystemForIndexList(flashFS)) {
+    writeLogLevel(EventWarn, "MTP: index not stored on QSPI");
+  }
+  if (sdAvailable && !MTP.addFilesystem(sdAdapter, "TEG-SD")) {
+    writeLogLevel(EventWarn, "MTP: SD store failed");
   }
   MTP.begin();
   started = true;

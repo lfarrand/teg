@@ -40,10 +40,14 @@ SHA-256 values taken from their publishers' checksum files; the OSV-Scanner bina
 and Google Benchmark archive are likewise checksum verified. Dependabot opens
 weekly Action, git-submodule, and CI Python (`requirements-ci.txt`) update PRs.
 PlatformIO registry packages are not a Dependabot ecosystem; the Monday
-`PlatformIO updates` workflow runs `pio pkg outdated` and opens a PR when a
-non-skipped pin has a newer registry version. The Teensy platform, framework, toolchain and `tool-teensy` stay skipped.
-teensy@5.2.0 is used only with the 1.159.0 framework/toolchain pins; taking its
-defaults would pull Teensyduino 1.62 / GCC 15 and collide with `lib/MTP_Teensy`.
+`PlatformIO updates` workflow runs `pio pkg outdated` for every
+`platformio.ini` environment and refreshes a stable `deps/platformio-updates`
+branch (lease-aware force-push) when a non-skipped pin has a newer registry
+version. That job then dispatches `CI` on the branch because `GITHUB_TOKEN`
+pushes do not start `pull_request` workflows. The Teensy platform, framework, toolchain and `tool-teensy` stay skipped.
+They already track Teensyduino 1.62 / GCC 15.2.1 together; `skip_core_mtp.py`
+compiles patched 1.62 MTP sources from `scripts/mtp_core162/`. A later core
+bump can re-break that remap or the framework/compiler pairing.
 Review those PRs and keep a clean firmware/bench validation
 before merging a library bump onto an energised power stage.
 
@@ -69,6 +73,9 @@ an unknown package and therefore matched nothing. OSV-Scanner is used instead
 because its C/C++ mode accepts exact repository commits. `scripts/osv-dependencies.json`
 maps the pinned registry, framework, and vendored sources to reviewed upstream
 commits, while recursive source scanning must also discover both gitlink commits.
+The two `requirements-ci.txt` pins are scanned as declared versions only
+(`--no-resolve`); resolving that file invents transitive lower bounds that are
+not the installed CI tree.
 The sentinel scan is intentionally vulnerable and CI fails if OSV stops detecting
 it; the real scan fails on any reported vulnerability. Public commit-level data is
 still incomplete, and locally patched vendored code can differ from its upstream

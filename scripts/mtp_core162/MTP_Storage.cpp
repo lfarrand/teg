@@ -25,13 +25,16 @@
 // modified for SDFS by WMXZ
 // Nov 2020 adapted to SdFat-beta / SD combo
 
+#include "usb_desc.h"
+#if defined(MTP_INTERFACE)
+
 #include "core_pins.h"
 #include "usb_dev.h"
 #include "usb_serial.h"
 
 #include "MTP_Teensy.h"
 #include "MTP_Storage.h"
-#include "mtp_wdog.h" // LOCAL PATCH: watchdog service inside long operations
+#include "mtp_wdog.h" // LOCAL PATCH: watchdog service inside directory walks
 #include <limits.h>
 #if defined __has_include
 #if __has_include(<MemoryHexDump.h>)
@@ -46,9 +49,6 @@
 MTPStorage::RecordBlock MTPStorage::recordBlocks_[MTP_RECORD_BLOCKS] DMAMEM;
 MTPStorage::RecordBlockInfo MTPStorage::recordBlocksInfo_[MTP_RECORD_BLOCKS] = {{0}};
 #endif
-
-STORAGE_LOOP_CB *MTPStorage:: s_loop_fstype_cbs[MTP_FSTYPE_MAX] = {nullptr};
-bool MTPStorage::s_loop_fstypes_per_instance[] = {false};
 
 #define DEBUG 0
 
@@ -810,12 +810,13 @@ uint16_t MTPStorage::ConstructFilename(int i, char *out, int len)
 	}
 }
 
-void MTPStorage::OpenFileByIndex(uint32_t i, uint32_t mode)
+// returns true if same file same mode...
+bool MTPStorage::OpenFileByIndex(uint32_t i, uint32_t mode)
 {
 	//DBGPrintf("*** OpenFileIndex(%u, %x)\n", i, mode); DBGFlush();
 	bool file_is_open = file_;  // check to see if file is open
 	if (file_is_open && (open_file_ == i) && (mode_ == mode)) {
-		return;
+		return true;
 	}
 	char filename[MTP_MAX_PATH_LEN];
 	uint16_t store = ConstructFilename(i, filename, MTP_MAX_PATH_LEN);
@@ -836,6 +837,7 @@ void MTPStorage::OpenFileByIndex(uint32_t i, uint32_t mode)
 		mode_ = mode;
 	}
 	mtp_lock_storage(false);
+	return false;
 }
 
 
@@ -860,7 +862,7 @@ void MTPStorage::GenerateIndex(uint32_t store)
 		remove(index_file_storage_, indexFile);
 	}
 	mtp_lock_storage(false);
-	//num_storage = getFSCount();
+	//num_storage = get_FSCount();
 	index_entries_ = 0;
 	Record r;
 	// BugBug - will generate index for max file systems count...
@@ -895,10 +897,7 @@ void MTPStorage::ScanDir(uint32_t store, uint32_t i)
 		if (!file_) return;
 		int sibling = 0;
 		while (true) {
-			// LOCAL PATCH: a directory with many entries (this card holds
-			// captures and waveforms) can outlast the 8s watchdog in this
-			// single scan, which runs entirely inside one MTP.loop() call
-			mtpKickWatchdog();
+			mtpKickWatchdog(); // LOCAL PATCH
 			mtp_lock_storage(true);
 			child_ = file_.openNextFile();
 			//DBGPrintf("\t>>After openNextFile\n"); DBGFlush();
@@ -909,7 +908,7 @@ void MTPStorage::ScanDir(uint32_t store, uint32_t i)
 			r.parent = i;
 			r.sibling = sibling;
 			r.isdir = child_.isDirectory();
-			r.child = r.isdir ? 0 : (uint32_t)child_.size();
+			r.child = r.isdir ? 0 : child_.size();
 			r.scanned = false;
 			strlcpy(r.name, child_.name(), MTP_MAX_FILENAME_LEN);
 			DateTimeFields dtf;
@@ -938,7 +937,7 @@ void MTPStorage::ScanAll(uint32_t store)
 	all_scanned_ = true;
 	GenerateIndex(store);
 	for (uint32_t i = 0; i < index_entries_; i++) {
-		mtpKickWatchdog(); // LOCAL PATCH: full recursive walk in one call
+		mtpKickWatchdog(); // LOCAL PATCH
 		ScanDir(store, i);
 	}
 }
@@ -983,18 +982,18 @@ uint32_t MTPStorage::GetNextObjectHandle(uint32_t store)
 }
 
 
-void MTPStorage::GetObjectInfo(uint32_t handle, char *name, uint32_t *size,
+void MTPStorage::GetObjectInfo(uint32_t handle, char *name, uint64_t *size,
                                uint32_t *parent, uint16_t *store)
 {
 	Record r = ReadIndexRecord(handle);
 	strcpy(name, r.name);
 	*parent = r.parent;
-	*size = r.isdir ? 0xFFFFFFFFUL : r.child;
+	*size = r.isdir ? (uint64_t)-1 : r.child;
 	*store = r.store;
 }
 
 
-uint32_t MTPStorage::GetSize(uint32_t handle) {
+uint64_t MTPStorage::GetSize(uint32_t handle) {
 	return ReadIndexRecord(handle).child;
 }
 
@@ -1066,13 +1065,24 @@ bool MTPStorage::updateDateTimeStamps(uint32_t handle, uint32_t dtCreated, uint3
 	return true;
 }
 
-void MTPStorage::read(uint32_t handle, uint32_t pos, char *out, uint32_t bytes)
+uint32_t MTPStorage::read(uint32_t handle, uint64_t pos, char *out, uint32_t bytes)
 {
-	OpenFileByIndex(handle);
+	// some real hack, to bypass doing seek unless we have to.
+	static uint64_t last_pos = (uint64_t)-1;
+	// if the file was not te same or the like clear last position.
+	if (!OpenFileByIndex(handle)) {
+		//Serial.write('@');
+		last_pos = (uint64_t)-1; 
+	}
 	mtp_lock_storage(true);
-	file_.seek(pos, SeekSet);
-	file_.read(out, bytes);
+	if (pos != last_pos) {
+		file_.seek(pos, SeekSet);
+		//Serial.write("$");
+	}
+	uint32_t cb_read = file_.read(out, bytes);
+	last_pos = pos + cb_read;
 	mtp_lock_storage(false);
+	return cb_read;
 }
 
 
@@ -1082,8 +1092,11 @@ void MTPStorage::removeFile(uint32_t store, const char *file)
 
 	File f1 = open(store, file, 0);
 	if (f1.isDirectory()) {
-		File f2;
-		while (f2 = f1.openNextFile()) {
+		//File f2;
+		//while (f2 = f1.openNextFile()) {
+		while (1) {
+			File f2 = f1.openNextFile();
+			if (!f2) break;
 			snprintf(tname, sizeof(tname), "%s/%s", file, f2.name());
 			if (f2.isDirectory()) {
 				removeFile(store, tname);
@@ -1126,13 +1139,6 @@ bool MTPStorage::DeleteObject(uint32_t object)
 		// find younger sibling
 		uint32_t is = t.child;
 		Record x = ReadIndexRecord(is);
-		// LOCAL PATCH: deliberately NOT watchdog-serviced. This loop's only
-		// exit is finding `object` in the sibling chain; a stale or damaged
-		// index (ReadIndexRecord synthesises sibling=0 for index 0, and
-		// zeroes a record on a short read) makes it spin forever. Feeding
-		// the watchdog here would turn a recoverable reset into a permanent
-		// hang with the PWM free-running. DeleteObject is refused at the
-		// dispatcher (see MTP_Teensy.cpp), so this is unreachable anyway.
 		while ((x.sibling != object)) {
 			is = x.sibling;
 			x = ReadIndexRecord(is);
@@ -1156,6 +1162,7 @@ uint32_t MTPStorage::Create(uint32_t store, uint32_t parent, bool folder, const 
 	Record r;
 
 	// See if the name already exists in the parent
+	// 32 bits is probably sufficient for index child is now 64 bits 
 	uint32_t index = p.child;
 	while (index) {
 		r = ReadIndexRecord(index);
@@ -1263,7 +1270,7 @@ size_t MTPStorage::write(const char *data, uint32_t bytes)
 void MTPStorage::close()
 {
 	mtp_lock_storage(true);
-	uint32_t size = (uint32_t)file_.size();
+	uint64_t size = file_.size();
 	file_.close();
 	mtp_lock_storage(false);
 	// update record with file size
@@ -1301,10 +1308,10 @@ bool MTPStorage::rename(uint32_t handle, const char *name)
 	return false;
 }
 
-void MTPStorage::dumpIndexList(void)
+void MTPStorage::dumpIndexList(Stream &stream)
 {
 	if (index_entries_ == 0) return;
-	uint32_t fsCount = getFSCount();
+	uint32_t fsCount = get_FSCount();
 	uint32_t skip_start_index = 0;
 	for (uint32_t ii = 0; ii < index_entries_; ii++) {
 		if ((ii < fsCount) || (ii >= MTPD_MAX_FILESYSTEMS)) {
@@ -1314,30 +1321,30 @@ void MTPStorage::dumpIndexList(void)
 				if (skip_start_index == 0) skip_start_index = ii;
 			} else {
 				if (skip_start_index) {
-					MTP_class::PrintStream()->printf("< Skipped %u - %u >\n", skip_start_index, ii-1);
+					stream.printf("< Skipped %u - %u >\n", skip_start_index, ii-1);
 					skip_start_index = 0;
 				}
-				MTP_class::PrintStream()->printf("%d: %d %d %u %d %d %d %u %u %s\n",
-			                                 ii, p.store, p.isdir, p.scanned, p.parent, p.sibling, p.child,
-			                                 p.dtCreate, p.dtModify, p.name);
+				stream.printf("%d: %d %d %u %d %d %lld %u %u %s\n",
+			                       ii, p.store, p.isdir, p.scanned, p.parent, p.sibling, p.child,
+			                       p.dtCreate, p.dtModify, p.name);
 			}
 		}
 	}
 	if (skip_start_index) {  // not likely to happen but
-		MTP_class::PrintStream()->printf("< Skipped %u - %u >\n", skip_start_index, index_entries_-1);
+		stream.printf("< Skipped %u - %u >\n", skip_start_index, index_entries_-1);
 	}
 }
 
 
 void MTPStorage::printRecord(int h, Record *p)
 {
-	MTP_class::PrintStream()->printf("%d: %d %d %d %d %d\n", h, p->store, p->isdir,
+	MTP_class::PrintStream()->printf("%d: %d %d %d %d %ld\n", h, p->store, p->isdir,
 	                                 p->parent, p->sibling, p->child);
 }
 
 void MTPStorage::printRecordIncludeName(int h, Record *p)
 {
-	MTP_class::PrintStream()->printf("%d: %u %u %u %u %u %u %u %u %s\n", h, p->store,
+	MTP_class::PrintStream()->printf("%d: %u %u %u %u %u %lu %u %u %s\n", h, p->store,
 	                                 p->isdir, p->scanned, p->parent, p->sibling,
 	                                 p->child, p->dtModify, p->dtCreate, p->name);
 }
@@ -1708,32 +1715,38 @@ bool MTPStorage::CopyByPathNames(uint32_t store0, char *oldfilename, uint32_t st
 }
 #endif
 
-uint32_t MTPStorage::addFilesystem(FS &disk, const char *diskname, mtp_fstype_t fstype)
+bool MTPStorage::addFilesystem(FS &disk, const char *diskname)
 {
+	int store;
 	if (fsCount < MTPD_MAX_FILESYSTEMS) {
-		name[fsCount] = diskname;
-		fs[fsCount] = &disk;
-		fstype_[fsCount] = fstype;
-		if (fstype != MTP_FSTYPE_UNKNOWN) loop_check_known_fstypes_changed_ = true;
-		store_storage_minor_index_[fsCount] = 1; // start off with 1
-		DBGPrintf("addFilesystem: %d %s %x\n", fsCount, diskname, (uint32_t)fs[fsCount]);
-		return fsCount++;
+		store = fsCount++;
 	} else {
-		// See if we can reuse index
-		for (uint32_t store = 0; store < MTPD_MAX_FILESYSTEMS; store++) {
-			if (fs[store] == nullptr) {
-				// found one to reuse.
-				name[store] = diskname;
-				fs[store] = &disk;
-				store_first_child_[store] = 0;
-				store_scanned_[store] = false;
-				store_storage_minor_index_[store]++;
-				DBGPrintf("addFilesystem(%u): %d %s %x\n", store_storage_minor_index_[store], store, diskname, (uint32_t)fs[store]);
-				return store;
+		// See if we can reuse store
+		bool found = false;
+		for (int i=0; i < MTPD_MAX_FILESYSTEMS; i++) {
+			if (fs[i] == nullptr) {
+				store = i;
+				found = true;
+				break;
 			}
 		}
+		if (!found) return false; // no room left
 	}
-	return 0xFFFFFFFFUL; // no room left
+	if (!diskname) diskname = ""; // TODO: get volume name?
+	name[store] = diskname;
+	fs[store] = &disk;
+	store_first_child_[store] = 0;
+	store_scanned_[store] = false;
+	totalSize(store); // update totalSize & usedSize for interrupt-safe GetStorageInfo
+	usedSize(store);
+	const char *volname = fs[store]->name();
+        if (!volname) volname = "Untitled";
+	DBGPrintf("addFilesystem: %d %s %x %s\n", fsCount, diskname, (uint32_t)fs[store], volname);
+	media_present[store] = disk.mediaPresent();
+	if (media_present[store]) {
+		MTP.send_StoreAddedEvent(store);
+	}
+	return true;
 }
 
 
@@ -1841,7 +1854,7 @@ uint32_t MTPStorage::MapFileNameToIndex(uint32_t storage, const char *pathname,
 			if (file_) {
 				r.isdir = file_.isDirectory();
 				if (!r.isdir) {
-					r.child = (uint32_t)file_.size();
+					r.child = (uint64_t)file_.size();
 				}
 				mtp_lock_storage(true);
 				file_.close();
@@ -1867,74 +1880,58 @@ uint32_t MTPStorage::MapFileNameToIndex(uint32_t storage, const char *pathname,
 bool MTPStorage::setIndexStore(uint32_t storage) {
 	Serial.printf(" MTPStorage::setIndexStore: %d\n", (int)storage); 	// hard coded, dont care just give me the file
 	#if MTP_RECORD_BLOCKS
-	if ((storage != INDEX_STORE_MEM_FILE) && (storage >= getFSCount()))
+	if ((storage != INDEX_STORE_MEM_FILE) && (storage >= get_FSCount()))
 		return false; // out of range
 	#else
-	if (storage >= getFSCount())
+	if (storage >= get_FSCount())
 		return false; // out of range
 	#endif	
 	CloseIndex();
-  index_file_storage_ = storage;
+	index_file_storage_ = storage;
 	user_index_file_ = false;
 	return true;
 }
 
 
 //=============================================================================
-// Quick attempt to check if devices changed state...
-// Experiment - put into here as going to try calling some MTP functions... 
-// Should probably be extracted to own file... 
-// 
+// check for removable drives inserted or removed
 //=============================================================================
 
-bool MTPStorage::registerClassLoopCallback(mtp_fstype_t fstype, 
-			STORAGE_LOOP_CB *loop_cb, bool per_instance)
-{
-	if (fstype < MTP_FSTYPE_MAX) {
-		s_loop_fstype_cbs[fstype] = loop_cb;
-		s_loop_fstypes_per_instance[fstype] = per_instance;
-		if (!per_instance) loop_check_known_fstypes_changed_ = true;
-		return true;
-	}
-	return false;
-}
+void MTPStorage::loop() {
+  if (time_between_device_checks_ms_ == (uint32_t)-1) return;
+  if ((uint32_t)(millis() - millis_atlast_device_check_) < time_between_device_checks_ms_) return;
+  millis_atlast_device_check_ = millis();
+#if 0
+  static unsigned int count=0;
+  MTP_class::PrintStream()->printf("media change check #%u\n", ++count);
+#endif
+  for (unsigned int store = 0; store < fsCount; store++) {
+    if (fs[store] == nullptr) continue;
+    bool media_present_now = fs[store]->mediaPresent();
+    bool media_present_before = media_present[store];
+    if (media_present_now && !media_present_before) {
+      const char *volname = fs[store]->name();
+      if (!volname) volname = "Untitled";
+      MTP_class::PrintStream()->printf("\nMedia inserted \"%s\"(%u) \"%s\"\n",
+	get_FSName(store), store, volname);
+      totalSize(store); // update totalSize & usedSize for interrupt-safe GetStorageInfo
+      usedSize(store);
+      MTP.send_StoreAddedEvent(store); // page 275
+      media_present[store] = true;
+    }
+    if (!media_present_now && media_present_before) {
+      clearStoreIndexItems(store);
+      MTP_class::PrintStream()->printf("\nMedia removed \"%s\"(%u)\n", get_FSName(store), store);
+      MTP.send_StoreRemovedEvent(store); // page 276
+      //MTP.send_StorageInfoChangedEvent(store); // page 278 - do not use
+      //MTP.send_DeviceResetEvent(); // page 277 - definitely do not use!
 
-
-bool MTPStorage::loop() {
-  bool storage_changed = false;
-  if (!loop_check_known_fstypes_changed_) return false;
-  if (time_between_device_checks_ms_ == (uint32_t)-1) return false; 
-  if ((uint32_t)(millis() - millis_atlast_device_check_) < time_between_device_checks_ms_) return false;
-  millis_atlast_device_check_ = millis(); 
-
-  static bool first_time = true;
-  if (first_time && Serial) {
-  	Serial.printf("&&&&& Dump MTPStorage Loop Data &&&&&\n\tCallback Data:");
-	  for (uint8_t i = 0; i < MTP_FSTYPE_MAX; i++)
-	  	Serial.printf("\t\t%u\t%p\t%u\n", i, s_loop_fstype_cbs[i], s_loop_fstypes_per_instance[i]);
-	  Serial.println("\tFile Systems:");	
-	
-	  for (uint8_t i = 0; i < fsCount; i++)
-	  	Serial.printf("\t\t%u\t%p\t%u\n", i,  fs[i], fstype_[i]);
-	  first_time = false;	
-  }
-
-  // Check for any class level callbacks.
-  for (uint8_t i = 0; i < MTP_FSTYPE_MAX; i++) {
-  	if (s_loop_fstype_cbs[i] && !s_loop_fstypes_per_instance[i]) {
-  		storage_changed |= (*s_loop_fstype_cbs[i])(0xff, nullptr);
-  	}
-  }
-
-  for (uint8_t i = 0; i < fsCount; i++) {
-  	uint8_t fstype = fstype_[i];
-
-  	// See if there is a callback and it is a perinstance and call it
-  	if (fstype && (fstype < MTP_FSTYPE_MAX) && s_loop_fstype_cbs[fstype] 
-  				&& s_loop_fstypes_per_instance[fstype]) {
-  		storage_changed |= (*s_loop_fstype_cbs[(uint8_t)fstype])(i, fs[i]);
+      // TODO: how to forget info about files in mtpindex.dat?
+      // TODO: how to forget info about files memory index?
+      // TODO: what if the removed media had the mtpindex.dat file for other drives?
+      media_present[store] = false;
     }
   }
-  
-  return storage_changed;
 }
+
+#endif // MTP_INTERFACE

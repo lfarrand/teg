@@ -8,8 +8,8 @@ the stable `deps/platformio-updates` branch when anything allowed has a newer
 registry version.
 
 The Teensy platform, framework, toolchain and tool-teensy pins stay skipped.
-teensy@5.2.0 is already selected with 1.159.0 overrides; its defaults pull
-Teensyduino 1.62 / GCC 15, which collide with lib/MTP_Teensy and reject imxrt.h.
+They already track Teensyduino 1.62 / GCC 15.2.1 together; a later platform
+or core bump can re-break MTP exclusion or the imxrt.h/compiler pairing.
 """
 
 from __future__ import annotations

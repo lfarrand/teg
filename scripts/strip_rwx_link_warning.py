@@ -1,5 +1,6 @@
 # PlatformIO post-build-env hook: teensy@5.2.0 adds --no-warn-rwx-segments.
-# The pinned toolchain-gccarmnoneeabi-teensy 1.110301.0 linker rejects it.
+# GCC 15's linker accepts it; older Teensy linkers (11.3) reject it. Stripping
+# is harmless either way and keeps a downgrade of the toolchain buildable.
 
 Import("env")  # noqa: F821
 

@@ -129,12 +129,30 @@ def apply_ini_pins(text: str, updates: list[OutdatedPackage]) -> str:
     return rewritten
 
 
+def _with_and_without_v(tag: str) -> list[str]:
+    if tag.startswith("v") and len(tag) > 1:
+        return [tag, tag[1:]]
+    return [tag, f"v{tag}"]
+
+
+def _without_trailing_patch_zero(tag: str) -> str | None:
+    if not tag.endswith(".0"):
+        return None
+    shortened = tag[:-2]
+    if not shortened or not shortened[-1].isdigit():
+        return None
+    return shortened
+
+
 def github_tag_candidates(template: str, version: str) -> list[str]:
     primary = template.format(version=version)
-    candidates = [primary]
-    alternate = primary[1:] if primary.startswith("v") and len(primary) > 1 else f"v{primary}"
-    if alternate and alternate not in candidates:
-        candidates.append(alternate)
+    candidates: list[str] = []
+    for value in (primary, _without_trailing_patch_zero(primary)):
+        if not value:
+            continue
+        for tag in _with_and_without_v(value):
+            if tag not in candidates:
+                candidates.append(tag)
     return candidates
 
 

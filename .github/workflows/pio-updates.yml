@@ -16,7 +16,7 @@ jobs:
   open-update-pr:
     name: Open PlatformIO update PR
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: write
       pull-requests: write
@@ -30,6 +30,16 @@ jobs:
 
       - name: Install pinned PlatformIO
         run: python -m pip install --disable-pip-version-check -r requirements-ci.txt
+
+      - name: Install project PlatformIO packages
+        run: |
+          python - <<'PY'
+          import subprocess
+          from pathlib import Path
+          from scripts.pio_package_updates import pio_environments
+          for environment in pio_environments(Path("platformio.ini").read_text(encoding="utf-8")):
+              subprocess.check_call(["pio", "pkg", "install", "-e", environment])
+          PY
 
       - name: Rewrite outdated PlatformIO pins
         env:
@@ -63,8 +73,11 @@ jobs:
             exit 0
           fi
           git commit -m "Bump PlatformIO registry packages"
-          git fetch origin "$slug" || true
-          git push --force-with-lease -u origin HEAD
+          if git fetch origin "refs/heads/${slug}:refs/remotes/origin/${slug}"; then
+            git push --force-with-lease -u origin HEAD
+          else
+            git push -u origin HEAD
+          fi
           if gh pr list --head "$slug" --state open --json number --jq 'length' | grep -qx 0; then
             gh pr create --head "$slug" --title "Bump PlatformIO registry packages" --body "$(cat <<'EOF'
           Weekly PlatformIO registry check. Dependabot cannot watch `platformio.ini`.

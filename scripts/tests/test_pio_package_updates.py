@@ -107,6 +107,13 @@ class PioPackageUpdateTests(unittest.TestCase):
         self.assertEqual(github_tag_candidates("v{version}", "7.4.3"), ["v7.4.3", "7.4.3"])
         self.assertEqual(github_tag_candidates("{version}", "1.12.4"), ["1.12.4", "v1.12.4"])
 
+    def test_pubsubclient_tag_drops_trailing_patch_zero(self):
+        self.assertEqual(GITHUB_LOCKS["PubSubClient"], ("knolleary/pubsubclient", "v{version}"))
+        self.assertEqual(
+            github_tag_candidates("v{version}", "2.8.0"),
+            ["v2.8.0", "2.8.0", "v2.8", "2.8"],
+        )
+
     def test_missing_ini_pin_is_an_error(self):
         with self.assertRaises(ValueError):
             apply_ini_pins("lib_deps =\n", [OutdatedPackage("QNEthernet", "0.36.0", "0.37.0", "Library")])

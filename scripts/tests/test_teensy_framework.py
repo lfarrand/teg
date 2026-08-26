@@ -78,25 +78,34 @@ class TeensyFrameworkTests(unittest.TestCase):
             self.assertEqual((src / "cores" / "teensy4" / "WProgram.h").read_text(encoding="utf-8"), WPROGRAM)
 
     def test_rewrite_and_remap(self):
-        installed = Path("C:/Users/lee/.platformio/packages/framework-arduinoteensy")
-        copy = Path("D:/git/teg/.pio") / COPY_DIRNAME
-        core = str(installed / "cores" / "teensy4")
-        self.assertEqual(rewrite_abs_path(core, installed, copy), str(copy / "cores" / "teensy4"))
-        self.assertEqual(rewrite_abs_path("/other", installed, copy), "/other")
-        self.assertEqual(
-            rewrite_path_list([core, "/other"], installed, copy),
-            [str(copy / "cores" / "teensy4"), "/other"],
-        )
-        self.assertEqual(
-            rewrite_compiler_flags(["-I" + core, "-O2"], installed, copy),
-            ["-I" + str(copy / "cores" / "teensy4"), "-O2"],
-        )
-        mtp = str(installed / "cores" / "teensy4" / "MTP_Teensy.cpp")
-        remapped = remap_compile_path(mtp, "D:/git/teg", installed, copy)
-        self.assertTrue(remapped.replace("\\", "/").endswith("scripts/mtp_core162/MTP_Teensy.cpp"))
-        other = remap_compile_path(str(installed / "cores" / "teensy4" / "delay.c"), "D:/git/teg", installed, copy)
-        self.assertTrue(other.replace("\\", "/").endswith("cores/teensy4/delay.c"))
-        self.assertIn(COPY_DIRNAME, other.replace("\\", "/"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            installed = self.package(root)
+            project = root / "project"
+            copy = framework_copy_dir(project)
+            core = str(installed / "cores" / "teensy4")
+            rewritten_core = str((copy / "cores" / "teensy4").resolve())
+            self.assertEqual(rewrite_abs_path(core, installed, copy), rewritten_core)
+            self.assertEqual(rewrite_abs_path("/other", installed, copy), "/other")
+            self.assertEqual(
+                rewrite_path_list([core, "/other"], installed, copy),
+                [rewritten_core, "/other"],
+            )
+            self.assertEqual(
+                rewrite_compiler_flags(["-I" + core, "-O2"], installed, copy),
+                ["-I" + rewritten_core, "-O2"],
+            )
+            mtp = str(installed / "cores" / "teensy4" / "MTP_Teensy.cpp")
+            remapped = remap_compile_path(mtp, str(project), installed, copy)
+            self.assertEqual(Path(remapped), project / "scripts" / "mtp_core162" / "MTP_Teensy.cpp")
+            other = remap_compile_path(
+                str(installed / "cores" / "teensy4" / "delay.c"),
+                str(project),
+                installed,
+                copy,
+            )
+            self.assertEqual(Path(other), (copy / "cores" / "teensy4" / "delay.c").resolve())
+            self.assertIn(COPY_DIRNAME, Path(other).as_posix())
 
 
 if __name__ == "__main__":

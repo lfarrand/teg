@@ -1018,7 +1018,7 @@ uint32_t MTP_class::GetStorageInfo(struct MTPContainer &cmd, bool mediaAccessAll
   write16(storage_.has_directories(store)
               ? 0x0002
               : 0x0001); // filesystem type (generic hierarchical)
-  write16(0x0000);       // access capability (read-write)
+  write16(0x0001);       // LOCAL PATCH: read-only without object deletion
 
   //elapsedMillis em;
   uint64_t ntotal = storage_.totalSize(store, mediaAccessAllowed);
@@ -1460,21 +1460,21 @@ uint32_t MTP_class::GetDeviceInfo(struct MTPContainer &cmd) {
     MTP_OPERATION_GET_OBJECT_INFO,    // 0x1008
     MTP_OPERATION_GET_OBJECT,         // 0x1009
     // MTP_OPERATION_GET_THUMB                              ,//0x100A
-    MTP_OPERATION_DELETE_OBJECT,         // 0x100B
-    MTP_OPERATION_SEND_OBJECT_INFO,      // 0x100C
-    MTP_OPERATION_SEND_OBJECT,           // 0x100D
-    MTP_OPERATION_FORMAT_STORE,          // 0x100F
+    // LOCAL PATCH: do not advertise writes; dispatcher always write-protects them
+    // MTP_OPERATION_DELETE_OBJECT,         // 0x100B
+    // MTP_OPERATION_SEND_OBJECT_INFO,      // 0x100C
+    // MTP_OPERATION_SEND_OBJECT,           // 0x100D
+    // MTP_OPERATION_FORMAT_STORE,          // 0x100F
     MTP_OPERATION_GET_DEVICE_PROP_DESC,  // 0x1014
     MTP_OPERATION_GET_DEVICE_PROP_VALUE, // 0x1015
     // MTP_OPERATION_SET_DEVICE_PROP_VALUE                  ,//0x1016
     // MTP_OPERATION_RESET_DEVICE_PROP_VALUE                ,//0x1017
-    MTP_OPERATION_MOVE_OBJECT,        // 0x1019
-    MTP_OPERATION_COPY_OBJECT,        // 0x101A
+    // MTP_OPERATION_MOVE_OBJECT,        // 0x1019
+    // MTP_OPERATION_COPY_OBJECT,        // 0x101A
     MTP_OPERATION_GET_PARTIAL_OBJECT, // 0x101B
     MTP_OPERATION_GET_OBJECT_PROPS_SUPPORTED, // 0x9801
     MTP_OPERATION_GET_OBJECT_PROP_DESC,       // 0x9802
     MTP_OPERATION_GET_OBJECT_PROP_VALUE,      // 0x9803
-    // LOCAL PATCH: do not advertise rename; dispatcher always write-protects it
     // MTP_OPERATION_SET_OBJECT_PROP_VALUE       // 0x9804
     // MTP_OPERATION_GET_OBJECT_PROP_LIST                   ,//0x9805
     // MTP_OPERATION_GET_OBJECT_REFERENCES                  ,//0x9810

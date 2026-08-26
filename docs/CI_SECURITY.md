@@ -43,8 +43,16 @@ PlatformIO registry packages are not a Dependabot ecosystem; the Monday
 `PlatformIO updates` workflow runs `pio pkg outdated` for every
 `platformio.ini` environment and refreshes a stable `deps/platformio-updates`
 branch (lease-aware force-push) when a non-skipped pin has a newer registry
-version. That job then dispatches `CI` on the branch because `GITHUB_TOKEN`
-pushes do not start `pull_request` workflows. The Teensy platform, framework, toolchain and `tool-teensy` stay skipped.
+version. `main` requires the `CI` job names on the commit GitHub evaluates.
+A `GITHUB_TOKEN` pull request parks that `pull_request` run for write-access
+approval and reports it on the test-merge commit. The updater therefore
+dispatches `CI` on the head SHA and waits until the run exists, which is
+enough when the merge commit has no usable status. To get a normal
+`pull_request` event on the merge commit, store a fine-grained PAT or GitHub
+App installation token as `PIO_UPDATES_TOKEN` with contents and pull-request
+write on this repository only; the updater then uses it for push and PR
+create and skips the dispatch. Do not give that token workflow-write on
+`pio-updates.yml` itself. The Teensy platform, framework, toolchain and `tool-teensy` stay skipped.
 They already track Teensyduino 1.62 / GCC 15.2.1 together; `skip_core_mtp.py`
 compiles patched 1.62 MTP sources from `scripts/mtp_core162/`. A later core
 bump can re-break that remap or the framework/compiler pairing.

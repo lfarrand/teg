@@ -47,7 +47,7 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio
-          key: pio-build-${{ runner.os }}-${{ hashFiles('platformio.ini', 'requirements-ci.txt', '.gitmodules', 'lib/aWOT/library.properties', 'lib/eFlexPwm/library.properties') }}
+          key: pio-build-${{ runner.os }}-${{ hashFiles('platformio.ini', 'requirements-ci.txt', '.gitmodules', 'lib/aWOT/library.properties', 'lib/eFlexPwm/library.properties', 'scripts/patch_wprogram_mtp.py', 'scripts/skip_core_mtp.py', 'scripts/teensy_framework.py', 'scripts/teensy_mtp.py', 'scripts/wprogram_mtp.py', 'scripts/mtp_core162/**') }}
 
       - name: Install exact PlatformIO version
         run: python -m pip install --disable-pip-version-check -r requirements-ci.txt

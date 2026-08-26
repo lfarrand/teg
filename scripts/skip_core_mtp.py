@@ -1,6 +1,6 @@
-# PlatformIO post-build-env hook: WProgram.h includes cores/teensy4/MTP_Teensy.h,
-# so the KurtE library cannot share the compile. Compile the 1.62 sources with
-# our read-only + watchdog patches instead of the unpatched core .cpp files.
+# PlatformIO post-build-env hook: compile against the project-local framework
+# copy (patched WProgram.h) and replace cores/teensy4/MTP_*.cpp with the
+# read-only + watchdog sources in scripts/mtp_core162.
 
 Import("env")  # noqa: F821
 
@@ -8,28 +8,34 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(env["PROJECT_DIR"])))  # noqa: F821
-from scripts.teensy_mtp import (
-    is_framework_core_mtp_source,
-    patched_core_mtp_source,
-    project_mtp_include_dir,
+from scripts.teensy_framework import (
+    apply_framework_copy_paths,
+    ensure_framework_copy,
+    framework_copy_dir,
+    remap_compile_path,
 )
+from scripts.teensy_mtp import project_mtp_include_dir
 
-mtp_include = project_mtp_include_dir(env["PROJECT_DIR"])  # noqa: F821
+project_dir = env["PROJECT_DIR"]  # noqa: F821
+installed = Path(env.PioPlatform().get_package_dir("framework-arduinoteensy"))  # noqa: F821
+copy = ensure_framework_copy(installed, framework_copy_dir(project_dir))
+mtp_include = project_mtp_include_dir(project_dir)
 env.Prepend(CPPPATH=[mtp_include])  # noqa: F821
+apply_framework_copy_paths(env, installed, copy)  # noqa: F821
 
 
-def remap_core_mtp(node):
+def remap_framework_node(node):
     try:
         path = node.srcnode().get_abspath()
     except Exception:
         return node
-    if not is_framework_core_mtp_source(str(path)):
+    replacement = remap_compile_path(str(path), project_dir, installed, copy)
+    if replacement is None:
         return node
-    replacement = patched_core_mtp_source(env["PROJECT_DIR"], Path(path).name)  # noqa: F821
     return env.File(replacement)  # noqa: F821
 
 
-env.AddBuildMiddleware(remap_core_mtp)  # noqa: F821
+env.AddBuildMiddleware(remap_framework_node)  # noqa: F821
 
 try:
     Import("projenv")  # noqa: F821
@@ -37,3 +43,4 @@ except Exception:
     pass
 else:
     projenv.Prepend(CPPPATH=[mtp_include])  # noqa: F821
+    apply_framework_copy_paths(projenv, installed, copy)  # noqa: F821

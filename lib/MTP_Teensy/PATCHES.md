@@ -12,11 +12,13 @@ nodes. `lib/MTP_Teensy/src` now holds only `mtp_wdog.h`.
 Do not put the old KurtE headers back on the include path — they redefine
 `MTP_class` after `WProgram.h` has already included the core header.
 
-`scripts/patch_wprogram_mtp.py` removes `#include "MTP_Teensy.h"` from the
-**installed** `cores/teensy4/WProgram.h`. 1.62 added that include, which
-makes `FS.h` → `Arduino.h` → `WProgram.h` → MTP → `FS.h` re-enter `FS.h`
-while `class FS` is still incomplete. Firmware includes `MTP_Teensy.h`
-after `Arduino.h`. The edit is idempotent.
+`scripts/patch_wprogram_mtp.py` copies the installed `framework-arduinoteensy`
+package into `.pio/framework-arduinoteensy-teg` and removes
+`#include "MTP_Teensy.h"` from **that copy's** `cores/teensy4/WProgram.h`.
+1.62 added that include, which makes `FS.h` → `Arduino.h` → `WProgram.h` → MTP
+→ `FS.h` re-enter `FS.h` while `class FS` is still incomplete. Firmware
+includes `MTP_Teensy.h` after `Arduino.h`. The global PlatformIO package is
+left untouched. `scripts/skip_core_mtp.py` points the compile at the copy.
 
 ## Patch 1: the device is read-only
 
@@ -24,14 +26,15 @@ after `Arduino.h`. The edit is idempotent.
 `SendObject` (`0x100D`), `FormatStore` (`0x100F`), `moveObject` (`0x1019`),
 `copyObject` (`0x101A`) and `SetObjectPropValue` (`0x9804`) with
 `MTP_RESPONSE_OBJECT_WRITE_PROTECTED`, at the single point where a host
-request is dispatched. `src/sd_fs_adapter.h` independently refuses every
-mutating filesystem call, so the two layers agree.
+request is dispatched. Those opcodes are also omitted from the GetDeviceInfo
+supported-operations list, and `GetStorageInfo` reports AccessCapability
+`0x0001` (read-only without object deletion). `src/sd_fs_adapter.h` independently
+refuses every mutating filesystem call, so the three layers agree.
 
 **`0x9804` was missed by the first version of this patch and added 2026-07-31**,
 after an adversarial review found it. It was the only surviving write path:
 `setObjectPropValue()` calls `storage_.rename()` for
-`MTP_PROPERTY_OBJECT_FILE_NAME`. It is also commented out of the
-supported-operations descriptor.
+`MTP_PROPERTY_OBJECT_FILE_NAME`.
 
 If you add operations to the supported list, check them against this refusal list.
 

@@ -23,6 +23,11 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Optional PAT/App token so git push and gh pr create are not the
+          # default GITHUB_TOKEN. A non-GITHUB_TOKEN push starts a normal
+          # pull_request CI run on the test-merge commit.
+          token: ${{ secrets.PIO_UPDATES_TOKEN || github.token }}
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -48,7 +53,8 @@ jobs:
 
       - name: Open or refresh the update pull request
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PIO_UPDATES_TOKEN || github.token }}
+          PIO_UPDATES_USE_PAT: ${{ secrets.PIO_UPDATES_TOKEN != '' }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -86,6 +92,4 @@ jobs:
           EOF
           )"
           fi
-          # GITHUB_TOKEN pushes do not start pull_request workflows; dispatch CI
-          # explicitly so the generated PR still gets firmware and test gates.
-          gh workflow run ci.yml --ref "$slug"
+          python scripts/start_updater_ci.py --ref "$slug" --sha "$(git rev-parse HEAD)"

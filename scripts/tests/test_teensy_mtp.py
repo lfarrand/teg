@@ -21,6 +21,9 @@ class TeensyMtpTests(unittest.TestCase):
     def test_ignores_project_copies(self):
         path = "D:/git/teg/scripts/mtp_core162/MTP_Teensy.cpp"
         self.assertFalse(is_framework_core_mtp_source(path))
+        self.assertTrue(is_framework_core_mtp_source(
+            "D:/git/teg/.pio/framework-arduinoteensy-teg/cores/teensy4/MTP_Teensy.cpp"
+        ))
 
     def test_replacement_and_wdog_paths(self):
         self.assertTrue(

@@ -49,6 +49,16 @@ static bool firstLoopDone = false;
 static bool paused = false;
 static uint32_t pausedPasses = 0;
 
+// MTP.begin() arms a 20 Hz FS-from-IRQ timer until the first MTP.loop().
+static bool mtpFinishStartup() {
+  if (firstLoopDone || !pwmOutputInhibited() || otaInProgress()) {
+    return false;
+  }
+  firstLoopDone = true;
+  MTP.loop();
+  return true;
+}
+
 void mtpBegin() {
   if (!config.Mtp.Enabled || started) {
     return;
@@ -74,6 +84,7 @@ void mtpBegin() {
   }
   MTP.begin();
   started = true;
+  mtpFinishStartup();
   writeLog(sdAvailable ? "MTP: USB file access enabled (SD + QSPI)"
                        : "MTP: USB file access enabled (QSPI only - no SD card)");
 }
@@ -85,13 +96,8 @@ void mtpTask() {
     }
     return;
   }
-  // MTP.begin() arms a 20Hz interval timer that answers the host until the
-  // first MTP.loop() call tears it down - and its handler queries the
-  // filesystem from INTERRUPT context. Never let the gate below skip that
-  // first call, or the timer stays armed forever racing the SD reader.
-  if (!firstLoopDone && pwmOutputInhibited() && !otaInProgress()) {
-    firstLoopDone = true;
-    MTP.loop();
+  // Never skip the first loop: the 20 Hz FS-from-IRQ timer stays armed until then.
+  if (mtpFinishStartup()) {
     return;
   }
 
@@ -127,4 +133,8 @@ bool mtpPaused() {
 
 uint32_t mtpPausedCount() {
   return pausedPasses;
+}
+
+bool mtpAllowsPwmRelease() {
+  return !started || firstLoopDone;
 }

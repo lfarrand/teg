@@ -69,6 +69,11 @@ void printf_debug(const char *format, ...);
 #define DBGPRINTF(...)
 #endif
 
+// LOCAL PATCH P1-19: Storage2Store is (StorageID>>16)-1. isMediaPresent()
+// and other storage_ indexers do not bounds-check the store.
+static inline bool mtpStoreInRange(uint32_t store, uint32_t fsCount) {
+  return store < fsCount;
+}
 
 // Define global(static) members
 uint32_t MTP_class::sessionID_ = 0;
@@ -400,6 +405,9 @@ uint32_t MTP_class::SendObjectInfo(struct MTPContainer &cmd) { // MTP 1.1 spec, 
   uint32_t parent = cmd.params[1];
   printf("SendObjectInfo: %x %x ", storage, parent);
   uint32_t store = Storage2Store(storage);
+  if (!mtpStoreInRange(store, storage_.get_FSCount())) {
+    return MTP_RESPONSE_INVALID_STORAGE_ID;
+  }
   struct MTPHeader header;
   if (!readDataPhaseHeader(&header)) return MTP_RESPONSE_INVALID_DATASET;
   printf("Dataset len=%u\n", header.len);
@@ -896,6 +904,9 @@ uint32_t MTP_class::deleteObject(uint32_t handle) {
 uint32_t MTP_class::moveObject(uint32_t handle, uint32_t newStorage,
                           uint32_t newHandle) {
   uint32_t store1 = Storage2Store(newStorage);
+  if (!mtpStoreInRange(store1, storage_.get_FSCount())) {
+    return MTP_RESPONSE_INVALID_STORAGE_ID;
+  }
   if (newHandle == 0) newHandle = store1;
 
   if (storage_.move(handle, store1, newHandle))
@@ -911,6 +922,9 @@ uint32_t MTP_class::moveObject(uint32_t handle, uint32_t newStorage,
 uint32_t MTP_class::copyObject(uint32_t handle, uint32_t newStorage,
                           uint32_t newHandle) {
   uint32_t store1 = Storage2Store(newStorage);
+  if (!mtpStoreInRange(store1, storage_.get_FSCount())) {
+    return MTP_RESPONSE_INVALID_STORAGE_ID;
+  }
   if (newHandle == 0) newHandle = store1;
 
   return storage_.copy(handle, store1, newHandle);
@@ -923,6 +937,9 @@ uint32_t MTP_class::copyObject(uint32_t handle, uint32_t newStorage,
 uint32_t MTP_class::formatStore(struct MTPContainer &cmd) {
   printf("formatStore begin\n");
   const uint32_t store = Storage2Store(cmd.params[0]);
+  if (!mtpStoreInRange(store, storage_.get_FSCount())) {
+    return MTP_RESPONSE_INVALID_STORAGE_ID;
+  }
   const uint32_t format = cmd.params[1];
   g_pmtpd_interval = this;
   dtFormatStart_ = millis();  // remember when format started
@@ -993,6 +1010,9 @@ uint32_t MTP_class::GetStorageIDs(struct MTPContainer &cmd) {
 uint32_t MTP_class::GetStorageInfo(struct MTPContainer &cmd, bool mediaAccessAllowed) {
   uint32_t storage = cmd.params[0];
   uint32_t store = Storage2Store(storage);
+  if (!mtpStoreInRange(store, storage_.get_FSCount())) {
+    return MTP_RESPONSE_INVALID_STORAGE_ID;
+  }
   FS *fs = storage_.getStoreFS(store);
   if (fs == nullptr) {
     printf("MTP_class::GetStorageInfo %u is not valid (FS nullptr)\n", store);
@@ -1047,6 +1067,9 @@ uint32_t MTP_class::GetNumObjects(struct MTPContainer &cmd) {
   }
   unsigned int num = 0;
   uint32_t store = Storage2Store(storage);
+  if (!mtpStoreInRange(store, storage_.get_FSCount())) {
+    return MTP_RESPONSE_INVALID_STORAGE_ID;
+  }
   if (storage_.isMediaPresent(store)) {
     storage_.StartGetObjectHandles(store, parent);
     while (storage_.GetNextObjectHandle(store)) {
@@ -1072,6 +1095,9 @@ uint32_t MTP_class::GetObjectHandles(struct MTPContainer &cmd) {
     return MTP_RESPONSE_SPECIFICATION_BY_FORMAT_UNSUPPORTED;
   }
   const uint32_t store = Storage2Store(storage);
+  if (!mtpStoreInRange(store, storage_.get_FSCount())) {
+    return MTP_RESPONSE_INVALID_STORAGE_ID;
+  }
   uint32_t num_handles = 0;
   if (storage_.isMediaPresent(store)) {
     storage_.StartGetObjectHandles(store, parent);

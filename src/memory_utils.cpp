@@ -1,6 +1,9 @@
 #include "memory_utils.h"
+#include "config_json.h"
 #include "utils.h"
 #include <LittleFS.h>
+
+extern MainConfig config;
 
 LittleFS_QSPIFlash flashFS;
 static bool flashFSMounted = false;
@@ -8,17 +11,32 @@ static bool psramReady = false;
 EXTMEM uint8_t buf[1024];
 
 extern "C" uint8_t external_psram_size;
+extern void kickWatchdog();
 
 bool flashFSAvailable() {
   return flashFSMounted;
+}
+
+static bool fillAndCheckPsram(uint8_t pattern) {
+  volatile uint8_t *const vp = buf;
+  memset(buf, pattern, sizeof(buf));
+  for (size_t i = 0; i < sizeof(buf); ++i) {
+    if (vp[i] != pattern) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool testPsram() {
   if (external_psram_size < 8) {
     return false;
   }
-  memset(buf, 0xAA, sizeof(buf));
-  return (buf[0] == 0xAA && buf[1023] == 0xAA);
+  if (!fillAndCheckPsram(0xAA)) {
+    return false;
+  }
+  kickWatchdog();
+  return fillAndCheckPsram(0x55);
 }
 
 bool psramAvailable() {
@@ -53,7 +71,9 @@ void reportMemoryUsage() {
   char buf[96];
   snprintf(buf, sizeof(buf), "Stack: %d now / %d min | OCRAM Free: %d | SPWM ISR: %lu cycles",
            dtcmFree, stackMin, ocramFree, vIsrCycles);
-  Serial.println(buf);
+  if (config.Pwm.Verbose) {
+    Serial.println(buf);
+  }
 
   // Compact form for the dedicated OLED status line (21 chars max at size-1 font).
   // The minimum is the number worth watching, so that is what gets the space.

@@ -122,8 +122,6 @@ void disableModule2PwmInterrupts();
 
 FASTRUN void IsrOverflowSm20();
 
-void enableXbar();
-
 uint8_t calculateBestPrescaler(uint32_t pwmFrequency);
 
 void printStats();

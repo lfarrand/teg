@@ -440,7 +440,7 @@ void loop() {
   }
 
   static unsigned long lastRamCheck = 0;
-  if (millis() - lastRamCheck >= 5000) {
+  if (millis() - lastRamCheck >= 30000) {
     reportMemoryUsage();
     lastRamCheck = millis();
   }

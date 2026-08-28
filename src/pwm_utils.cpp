@@ -8,6 +8,7 @@
 #include "mppt.h"
 #include "mqtt.h"
 #include "thermal.h"
+#include "mtp_service.h"
 #include "power_monitor.h"
 #include "waveform.h"
 #include "waveform_parse.h"
@@ -56,6 +57,9 @@ static uint64_t vIndexStepQ24 = SoftStartInstant;
 static volatile int32_t vDtCompQ15 = 0;
 
 volatile bool vFaultTripped = false;
+// Bumped on every mask. releaseOutputInhibit() refuses to commit OUTEN if this
+// changed after the last quiet sample — a fault ISR in the gap must win.
+static volatile uint32_t vFaultGeneration = 0;
 static volatile bool vPwmConfigurationValid = true;
 // True from reset until every requested register set has loaded and all protection
 // sources have been armed and sampled. It is also asserted for every timing/topology
@@ -165,6 +169,7 @@ static void connectConfiguredOutputDrivers() {
 // wrong-level edge. External gate-driver inputs still require hardware pull-downs.
 FASTRUN void maskAllOutputsSafely() {
   vOutputInhibited = true;
+  vFaultGeneration++;
   disconnectAllOutputDrivers();
 
   uint8_t m = vInvertedCellMask;
@@ -194,35 +199,59 @@ static void restoreCellPolarity() {
   asm volatile("dsb");
 }
 
-static bool releaseOutputInhibit() {
+static bool protectionLiveOrLatched() {
   const bool gpioActive = config.FaultProtection.Enabled &&
       (digitalReadFast(config.FaultProtection.Pin) ==
        (config.FaultProtection.ActiveHigh ? HIGH : LOW));
-  const bool acmpActive = acmpFaultPinActive();
-  const bool acmpLatched = acmpFaultLatched();
-  const bool acmpReady = acmpProtectionReady();
+  return !acmpProtectionReady() || gpioActive || acmpFaultPinActive() || acmpFaultLatched();
+}
+
+static bool releaseOutputInhibit() {
+  const uint32_t genAtEntry = vFaultGeneration;
   if (!vPwmConfigurationValid || vFaultTripped || vRestartInhibited || vHardwareInhibited ||
-      vProvisioningInhibited ||
-      !acmpReady || gpioActive || acmpActive || acmpLatched) {
-    if (!acmpReady || gpioActive || acmpActive || acmpLatched) {
+      vProvisioningInhibited || protectionLiveOrLatched() ||
+      !thermalAllowsPwmRelease() || !mtpAllowsPwmRelease()) {
+    if (protectionLiveOrLatched()) {
       vFaultTripped = true;
       writeLogLevel(EventWarn,
                     "PWM release refused: protection unready, active or latched");
+    } else if (!thermalAllowsPwmRelease()) {
+      writeLogLevel(EventWarn, "PWM release refused: thermal protection has no valid sample");
+    } else if (!mtpAllowsPwmRelease()) {
+      writeLogLevel(EventWarn, "PWM release refused: MTP startup timer still armed");
     }
     disconnectAllOutputDrivers();
     return false;
   }
 
-  // OUTEN stays disconnected while polarity and mask state change. Only the final
-  // module-wide writes reconnect pins, after every unbuffered field is stable.
+  // OUTEN stays disconnected while polarity and timers change. A fault ISR in
+  // this window increments vFaultGeneration and leaves the pads cleared.
   restoreCellPolarity();
   Tm1.enable();
   Tm2.enable();
   Tm3.enable();
   Tm4.enable();
   asm volatile("dsb");
+
+  // GPIO ISR cannot run while IRQs are off; ACMP hardware still gates PWM1/2.
+  // Re-sample after the OUTEN write and remask if anything moved.
+  noInterrupts();
+  if (vFaultTripped || vFaultGeneration != genAtEntry || protectionLiveOrLatched() ||
+      !thermalAllowsPwmRelease() || !mtpAllowsPwmRelease()) {
+    interrupts();
+    maskAllOutputsSafely();
+    writeLogLevel(EventWarn, "PWM release aborted: fault during commit");
+    return false;
+  }
   connectConfiguredOutputDrivers();
   vOutputInhibited = false;
+  interrupts();
+
+  if (vFaultTripped || vFaultGeneration != genAtEntry || protectionLiveOrLatched()) {
+    maskAllOutputsSafely();
+    writeLogLevel(EventWarn, "PWM release aborted: fault after OUTEN");
+    return false;
+  }
   return true;
 }
 
@@ -1358,7 +1387,7 @@ void runFeedbackLoop() {
   }
 
   static elapsedMicros sinceLastRun;
-  const uint32_t loopHz = config.Feedback.LoopHz > 0 ? config.Feedback.LoopHz : 1000;
+  const uint32_t loopHz = config.Feedback.LoopHz > 0 ? config.Feedback.LoopHz : 250;
   const uint32_t periodUs = 1000000UL / loopHz;
   if (sinceLastRun < periodUs) {
     return;
@@ -1502,42 +1531,6 @@ bool xbarConnect(uint8_t input, uint8_t output) {
   }
 
   return true;
-}
-
-void enableXbar() {
-  writeLog("Enabling XBAR");
-
-  CCM_CCGR2 |= CCM_CCGR2_XBAR1(CCM_CCGR_ON);
-
-  writeLog("XBAR connecting PIT TRIG0 to PWM1.3 EXT_SYNC");
-  if (xbarConnect(XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM1_PWM3_EXT_SYNC)) {
-    writeLog("XBAR connected PIT TRIG0 to PWM1.3 EXT_SYNC");
-  } else {
-    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM1.3 EXT_SYNC");
-  }
-
-  writeLog("XBAR connecting PIT TRIG0 to PWM2.0 EXT_SYNC");
-  if (xbarConnect(XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM2_PWM0_EXT_SYNC)) {
-    writeLog("XBAR connected PIT TRIG0 to PWM2.0 EXT_SYNC");
-  } else {
-    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM2.0 EXT_SYNC");
-  }
-
-  writeLog("XBAR connecting PIT TRIG0 to PWM3.1 EXT_SYNC");
-  if (xbarConnect(XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM3_EXT_SYNC1)) {
-    writeLog("XBAR connected PIT TRIG0 to PWM3.1 EXT_SYNC");
-  } else {
-    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM3.1 EXT_SYNC");
-  }
-
-  writeLog("XBAR connecting PIT TRIG0 to PWM4.0 EXT_SYNC");
-  if (xbarConnect(XBARA1_IN_PIT_TRIGGER0, XBARA1_OUT_FLEXPWM4_EXT_SYNC0)) {
-    writeLog("XBAR connected PIT TRIG0 to PWM4.0 EXT_SYNC");
-  } else {
-    writeLog("ERROR: XBAR did not connect PIT TRIG0 to PWM4.0 EXT_SYNC");
-  }
-
-  writeLog("Enabled XBAR");
 }
 
 void logPwmModuleStats(const char *moduleId, SubModule &pwmModule, bool hasChanB) {

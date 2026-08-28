@@ -20,5 +20,7 @@ int16_t thermalChipDeciC();
 // interrupts around each bit slot, so probe reads and carrier cycles compete; this
 // makes the cost measurable rather than inferred.
 uint32_t thermalHarvestMissedCycles();
+// False when Thermal.Enabled and no valid DS18B20 sample has been harvested yet.
+bool thermalAllowsPwmRelease();
 
 #endif

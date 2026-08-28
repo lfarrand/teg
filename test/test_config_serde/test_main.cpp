@@ -47,7 +47,7 @@ void test_defaults_from_empty_document() {
   TEST_ASSERT_EQUAL_UINT32(3300, cfg.Feedback.FullScaleMillivolts);
   TEST_ASSERT_EQUAL_UINT16(200, cfg.Feedback.KpMilli);
   TEST_ASSERT_EQUAL_UINT16(2000, cfg.Feedback.KiMilli);
-  TEST_ASSERT_EQUAL_UINT16(1000, cfg.Feedback.LoopHz);
+  TEST_ASSERT_EQUAL_UINT16(250, cfg.Feedback.LoopHz);
   TEST_ASSERT_FALSE(cfg.FaultProtection.Enabled);
   TEST_ASSERT_EQUAL_UINT8(32, cfg.FaultProtection.Pin);
   TEST_ASSERT_TRUE(cfg.FaultProtection.ActiveHigh);
@@ -283,23 +283,75 @@ void test_preserve_secrets_keeps_stored_values_on_empty_post() {
 void test_restore_secrets_is_unconditional() {
   // preserveSecrets keeps stored values only when the incoming field is
   // blank - right for the UI round-trip, wrong for a file the operator did
-  // not author. restoreSecrets must overwrite even a populated credential,
-  // so an imported file can never change the write PIN or pair the device's
-  // real password with someone else's broker.
+  // not author. When the endpoint identity is unchanged, restoreSecrets
+  // must overwrite even a populated credential so a file can never SET a
+  // secret. A changed endpoint must not receive the device secret.
   MainConfig previous;
+  copyConfigString(previous.Mqtt.Host, sizeof(previous.Mqtt.Host), "broker.lan");
+  previous.Mqtt.Port = 1883;
+  copyConfigString(previous.Mqtt.Username, sizeof(previous.Mqtt.Username), "teguser");
+  copyConfigString(previous.Mqtt.Password, sizeof(previous.Mqtt.Password), "device-pass");
+  copyConfigString(previous.Influx.Host, sizeof(previous.Influx.Host), "influx.lan");
+  previous.Influx.Port = 8086;
+  copyConfigString(previous.Influx.Org, sizeof(previous.Influx.Org), "device-org");
+  copyConfigString(previous.Influx.Bucket, sizeof(previous.Influx.Bucket), "device-bucket");
   copyConfigString(previous.Influx.Token, sizeof(previous.Influx.Token), "device-token");
   copyConfigString(previous.Security.WritePin, sizeof(previous.Security.WritePin), "1234");
-  copyConfigString(previous.Mqtt.Password, sizeof(previous.Mqtt.Password), "device-pass");
 
   MainConfig incoming;
+  copyConfigString(incoming.Mqtt.Host, sizeof(incoming.Mqtt.Host), "broker.lan");
+  incoming.Mqtt.Port = 1883;
+  copyConfigString(incoming.Mqtt.Username, sizeof(incoming.Mqtt.Username), "teguser");
+  copyConfigString(incoming.Mqtt.Password, sizeof(incoming.Mqtt.Password), "attacker-pass");
+  copyConfigString(incoming.Influx.Host, sizeof(incoming.Influx.Host), "influx.lan");
+  incoming.Influx.Port = 8086;
+  copyConfigString(incoming.Influx.Org, sizeof(incoming.Influx.Org), "device-org");
+  copyConfigString(incoming.Influx.Bucket, sizeof(incoming.Influx.Bucket), "device-bucket");
   copyConfigString(incoming.Influx.Token, sizeof(incoming.Influx.Token), "attacker-token");
   copyConfigString(incoming.Security.WritePin, sizeof(incoming.Security.WritePin), "9999");
-  copyConfigString(incoming.Mqtt.Password, sizeof(incoming.Mqtt.Password), "attacker-pass");
 
   restoreSecrets(incoming, previous);
   TEST_ASSERT_EQUAL_STRING("device-token", incoming.Influx.Token);
   TEST_ASSERT_EQUAL_STRING("1234", incoming.Security.WritePin);
   TEST_ASSERT_EQUAL_STRING("device-pass", incoming.Mqtt.Password);
+}
+
+void test_restore_secrets_clears_mqtt_on_host_change() {
+  MainConfig previous;
+  previous.Mqtt.Enabled = true;
+  copyConfigString(previous.Mqtt.Host, sizeof(previous.Mqtt.Host), "broker.lan");
+  previous.Mqtt.Port = 1883;
+  copyConfigString(previous.Mqtt.Username, sizeof(previous.Mqtt.Username), "teguser");
+  copyConfigString(previous.Mqtt.Password, sizeof(previous.Mqtt.Password), "device-pass");
+  copyConfigString(previous.Security.WritePin, sizeof(previous.Security.WritePin), "1234");
+
+  MainConfig incoming;
+  incoming.Mqtt.Enabled = true;
+  copyConfigString(incoming.Mqtt.Host, sizeof(incoming.Mqtt.Host), "other.lan");
+  incoming.Mqtt.Port = 1883;
+  copyConfigString(incoming.Mqtt.Username, sizeof(incoming.Mqtt.Username), "teguser");
+  copyConfigString(incoming.Mqtt.Password, sizeof(incoming.Mqtt.Password), "attacker-pass");
+  copyConfigString(incoming.Security.WritePin, sizeof(incoming.Security.WritePin), "9999");
+
+  restoreSecrets(incoming, previous);
+  TEST_ASSERT_EQUAL_STRING("", incoming.Mqtt.Password);
+  TEST_ASSERT_FALSE(incoming.Mqtt.Enabled);
+  TEST_ASSERT_EQUAL_STRING("1234", incoming.Security.WritePin);
+}
+
+void test_config_api_reject_reason_current_limit_threshold() {
+  MainConfig cfg;
+  cfg.CurrentLimit.ThresholdMillivolts = 50;
+  TEST_ASSERT_NOT_NULL(configApiRejectReason(cfg));
+  TEST_ASSERT_EQUAL_UINT16(50, cfg.CurrentLimit.ThresholdMillivolts);
+
+  cfg.CurrentLimit.ThresholdMillivolts = 4000;
+  TEST_ASSERT_NOT_NULL(configApiRejectReason(cfg));
+  TEST_ASSERT_EQUAL_UINT16(4000, cfg.CurrentLimit.ThresholdMillivolts);
+
+  cfg.CurrentLimit.ThresholdMillivolts = 1650;
+  TEST_ASSERT_NULL(configApiRejectReason(cfg));
+  TEST_ASSERT_EQUAL_UINT16(1650, cfg.CurrentLimit.ThresholdMillivolts);
 }
 
 void test_doc_completeness_gate() {
@@ -943,10 +995,49 @@ void test_power_mon_serde_and_validate() {
 
   back.PowerMon.IntervalMs = 10;
   TEST_ASSERT_TRUE(validateConfig(back));
-  TEST_ASSERT_EQUAL_UINT16(100, back.PowerMon.IntervalMs);
+  TEST_ASSERT_EQUAL_UINT16(250, back.PowerMon.IntervalMs);
 
   // A config validateConfig has already corrected passes unchanged
   TEST_ASSERT_FALSE(validateConfig(back));
+}
+
+void test_dead_schema_keys_omitted() {
+  MainConfig cfg;
+  JsonDocument doc;
+  configToJson(cfg, doc);
+
+  // Const views so operator[] cannot create the keys we are proving absent
+  const JsonObjectConst pwm = doc["Config"]["Pwm"];
+  const JsonObjectConst currentLimit = doc["Config"]["CurrentLimit"];
+  const JsonObjectConst tm2 = pwm["Tm2"];
+
+  TEST_ASSERT_TRUE(pwm["SyncPwm"].isNull());
+  TEST_ASSERT_TRUE(currentLimit["FilterCount"].isNull());
+  TEST_ASSERT_TRUE(currentLimit["FilterPeriod"].isNull());
+  TEST_ASSERT_TRUE(tm2["Sm20"]["PwmFrequency"].isNull());
+  TEST_ASSERT_TRUE(tm2["Sm21"]["PwmFrequency"].isNull());
+  TEST_ASSERT_TRUE(tm2["Sm22"]["PwmFrequency"].isNull());
+  TEST_ASSERT_TRUE(tm2["Sm23"]["PwmFrequency"].isNull());
+  TEST_ASSERT_TRUE(tm2["DeadTimeCompensation"].isNull());
+  TEST_ASSERT_FALSE(tm2["SpwmCarrierFrequency"].isNull());
+}
+
+void test_legacy_dead_keys_still_accepted() {
+  JsonDocument doc;
+  deserializeJson(doc, R"({
+    "Config":{
+      "Pwm":{"SyncPwm":true,"Tm2":{"DeadTimeCompensation":true,"Sm20":{"PwmFrequency":12345}}},
+      "CurrentLimit":{"FilterCount":3,"FilterPeriod":10}
+    }
+  })");
+  MainConfig cfg;
+  configFromJson(doc, cfg);
+
+  TEST_ASSERT_TRUE(cfg.Pwm.SyncPwm);
+  TEST_ASSERT_TRUE(cfg.Pwm.Tm2.DeadTimeCompensation);
+  TEST_ASSERT_EQUAL_UINT8(3, cfg.CurrentLimit.FilterCount);
+  TEST_ASSERT_EQUAL_UINT8(10, cfg.CurrentLimit.FilterPeriod);
+  TEST_ASSERT_EQUAL_UINT32(12345, cfg.Pwm.Tm2.Sm20.PwmFrequency);
 }
 
 int main() {
@@ -957,6 +1048,8 @@ int main() {
   RUN_TEST(test_redact_secrets_blanks_only_the_secrets);
   RUN_TEST(test_preserve_secrets_keeps_stored_values_on_empty_post);
   RUN_TEST(test_restore_secrets_is_unconditional);
+  RUN_TEST(test_restore_secrets_clears_mqtt_on_host_change);
+  RUN_TEST(test_config_api_reject_reason_current_limit_threshold);
   RUN_TEST(test_doc_completeness_gate);
   RUN_TEST(test_doc_completeness_checks_nested_keys_types_and_version);
   RUN_TEST(test_shorter_config_string_clears_the_old_tail);
@@ -980,5 +1073,7 @@ int main() {
   RUN_TEST(test_validate_pll);
   RUN_TEST(test_validate_mppt);
   RUN_TEST(test_power_mon_serde_and_validate);
+  RUN_TEST(test_dead_schema_keys_omitted);
+  RUN_TEST(test_legacy_dead_keys_still_accepted);
   return UNITY_END();
 }

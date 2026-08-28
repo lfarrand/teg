@@ -87,6 +87,7 @@ FLASHMEM static bool mqttConnect() {
       if (!mqttAddrValid) return false;
     }
   }
+  if (!pwmOutputInhibited()) return false;
   mqttNet.setConnectionTimeout(500);
   mq.setSocketTimeout(2); // CONNACK wait, seconds; default 15s outlives the watchdog
   mq.setServer(mqttAddr, config.Mqtt.Port);

@@ -102,7 +102,7 @@ struct FeedbackConfig {
   uint32_t FullScaleMillivolts = 3300; // feedback voltage at full ADC scale
   uint16_t KpMilli = 200;              // index per volt of error, thousandths
   uint16_t KiMilli = 2000;             // index per volt-second, thousandths
-  uint16_t LoopHz = 1000;
+  uint16_t LoopHz = 250;
 };
 
 // Fast software trip: a transition on the fault pin disconnects every FlexPWM
@@ -249,7 +249,7 @@ struct PowerMonConfig {
   uint32_t ShuntMicroOhm = 10000;      // R24 = 10 mOhm
   uint16_t CurrentLsbMicroAmp = 50;    // 50 uA/bit -> CAL 10240, FS 1.64 A
   uint16_t AlertMilliAmp = 1500;       // latched shunt alert; 0 disables
-  uint16_t IntervalMs = 100;           // I2C poll cadence
+  uint16_t IntervalMs = 250;           // I2C poll cadence
   uint8_t PgEfusePin = 14;             // TPS259_PG tap (3.3 V logic)
   uint8_t PgBuckPin = 15;              // TPSM843_PG tap
   uint8_t AlertPin = 20;               // INA226 ALERT, open-drain

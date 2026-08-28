@@ -17,7 +17,10 @@
 #include "mtp_service.h"
 #include "scope_math.h"
 #include "spectrum_math.h"
+#include "spectrum_wire.h"
+#ifdef TEG_ENABLE_CMSIS_FFT
 #include <arm_math.h>
+#endif
 #include "thermal.h"
 #include "waveform.h"
 #include "waveform_parse.h"
@@ -111,10 +114,12 @@ FLASHMEM void configureWebServer() {
   apiRouter.post("/presets/save", &api_presets_save);
   apiRouter.post("/presets/load", &api_presets_load);
   apiRouter.post("/presets/delete", &api_presets_delete);
+#ifdef TEG_ENABLE_UNSAFE_LAB_OTA
   apiRouter.post("/ota/commit", &api_ota_commit);
   apiRouter.post("/ota/abort", &api_ota_abort);
   apiRouter.get("/ota", &api_ota_get);
   apiRouter.post("/ota", &api_ota_post);
+#endif
   app.use("/api", &apiRouter);
 }
 
@@ -213,12 +218,22 @@ FLASHMEM void serve_pico_css(Request &, Response &res) {
   sendAsset(res, "/pico.min.css", "max-age=86400"); // content-stable, cache a day
 }
 
-FLASHMEM void api_config_get(Request &, Response &res) {
+FLASHMEM static void writeConfigJson(Response &res, bool attach) {
   JsonDocument doc;
   configToJson(config, doc);
   redactSecrets(doc); // the Influx token and write PIN never leave the device
+  if (attach) {
+    doc["ExportedBy"] = TEG_GIT_HASH; // which firmware wrote this file
+    res.set("Content-Disposition", "attachment; filename=\"teg-config.json\"");
+  }
   res.set("Content-Type", "application/json");
   serializeJson(doc, res);
+}
+
+FLASHMEM void api_config_get(Request &req, Response &res) {
+  char qbuf[8];
+  const bool attach = req.query("download", qbuf, sizeof(qbuf)) && qbuf[0] == '1';
+  writeConfigJson(res, attach);
 }
 
 // Constant-time comparison over the whole PIN buffer so response timing
@@ -397,6 +412,14 @@ FLASHMEM void api_config_post(Request &req, Response &res) {
   MainConfig candidate;
   configFromJson(doc, candidate);
   preserveSecrets(candidate, previous); // empty secret in the POST = keep current
+  if (const char *reason = configApiRejectReason(candidate)) {
+    res.status(422);
+    res.set("Content-Type", "application/json");
+    JsonDocument out;
+    out["error"] = reason;
+    serializeJson(out, res);
+    return;
+  }
   if (validateConfig(candidate)) {
     writeLog("Invalid values in config; corrected");
   }
@@ -544,13 +567,14 @@ static uint32_t rfftInstancePoints = 0;
 #endif
 
 FLASHMEM void api_spectrum(Request &req, Response &res) {
+  constexpr uint32_t SpectrumDefaultPoints = 1024;
   char qbuf[12];
-  uint32_t points = SpectrumMaxPoints;
+  uint32_t points = SpectrumDefaultPoints;
   if (req.query("points", qbuf, sizeof(qbuf))) {
     points = strtoul(qbuf, nullptr, 10);
   }
   if (points < 256 || points > SpectrumMaxPoints || (points & (points - 1)) != 0) {
-    points = SpectrumMaxPoints;
+    points = SpectrumDefaultPoints;
   }
   // Engine: "portable" (the natively-tested radix-2, default) or "cmsis"
   // (ARM's mixed-radix real FFT, ~5x faster). The CMSIS path is compiled out unless
@@ -562,72 +586,96 @@ FLASHMEM void api_spectrum(Request &req, Response &res) {
     useCmsis = strcmp(qbuf, "cmsis") == 0;
   }
 #endif
+  const bool wantBin = req.query("format", qbuf, sizeof(qbuf)) && strcmp(qbuf, "bin") == 0;
+
+  const uint32_t sampleHz = config.Pwm.Tm2.SpwmCarrierFrequency;
+  const bool available = captureActive() && captureCopyRecent(fftSamples, points) != 0;
+  const float binHz = static_cast<float>(sampleHz) / points;
+
+  float *mag = nullptr;
+  uint32_t computeMicros = 0;
+  float fund = 0.0f;
+  float fundamentalHz = 0.0f;
+  float thd = 0.0f;
+  if (available) {
+    const uint32_t computeStart = ARM_DWT_CYCCNT;
+    const uint32_t halfN = points / 2;
+#ifdef TEG_ENABLE_CMSIS_FFT
+    if (useCmsis) {
+      if (rfftInstancePoints != points) {
+        if (arm_rfft_fast_init_f32(&rfftInstance, points) != ARM_MATH_SUCCESS) {
+          useCmsis = false; // unsupported length: fall back
+        } else {
+          rfftInstancePoints = points;
+        }
+      }
+    }
+    if (useCmsis) {
+      prepareSpectrumInputReal(fftSamples, points, fftRe);
+      arm_rfft_fast_f32(&rfftInstance, fftRe, fftIm, 0); // consumes fftRe
+      mag = fftRe;
+      spectrumMagnitudesPacked(fftIm, mag, halfN);
+    } else
+#endif
+    {
+      prepareSpectrumInput(fftSamples, points, fftRe, fftIm);
+      fftRadix2(fftRe, fftIm, points);
+      // In-place: mag[i] depends only on re[i]/im[i], so re[] can hold the result
+      mag = fftRe;
+      spectrumMagnitudes(fftRe, fftIm, mag, halfN);
+    }
+    computeMicros = (ARM_DWT_CYCCNT - computeStart) / (F_CPU_ACTUAL / 1000000);
+    const uint32_t fundBin = findFundamentalBin(mag, halfN);
+    fund = harmonicPeak(mag, halfN, fundBin);
+    fundamentalHz = binHz * fundBin;
+    thd = thdPercent(mag, halfN, fundBin);
+  }
+
+  if (wantBin) {
+    uint8_t buf[SpectrumWireMaxBody];
+    const SpectrumWireFields f = {available, sampleHz, points, computeMicros,
+                                  binHz, fundamentalHz, thd};
+    const size_t n = spectrumWirePack(buf, sizeof(buf), f, mag, fund);
+    res.set("Content-Type", "application/octet-stream");
+    res.write(buf, n);
+    return;
+  }
 
   res.set("Content-Type", "application/json");
   JsonDocument doc;
-  const uint32_t sampleHz = config.Pwm.Tm2.SpwmCarrierFrequency;
   doc["sampleHz"] = sampleHz;
   doc["points"] = points;
-
-  if (!captureActive() || captureCopyRecent(fftSamples, points) == 0) {
+  if (!available) {
     doc["available"] = false;
     serializeJson(doc, res);
     return;
   }
-
-  const uint32_t computeStart = ARM_DWT_CYCCNT;
-  const uint32_t halfN = points / 2;
-  float *mag;
-#ifdef TEG_ENABLE_CMSIS_FFT
-  if (useCmsis) {
-    if (rfftInstancePoints != points) {
-      if (arm_rfft_fast_init_f32(&rfftInstance, points) != ARM_MATH_SUCCESS) {
-        useCmsis = false; // unsupported length: fall back
-      } else {
-        rfftInstancePoints = points;
-      }
-    }
-  }
-  if (useCmsis) {
-    prepareSpectrumInputReal(fftSamples, points, fftRe);
-    arm_rfft_fast_f32(&rfftInstance, fftRe, fftIm, 0); // consumes fftRe
-    mag = fftRe;
-    spectrumMagnitudesPacked(fftIm, mag, halfN);
-  } else
-#endif
-  {
-    prepareSpectrumInput(fftSamples, points, fftRe, fftIm);
-    fftRadix2(fftRe, fftIm, points);
-    // In-place: mag[i] depends only on re[i]/im[i], so re[] can hold the result
-    mag = fftRe;
-    spectrumMagnitudes(fftRe, fftIm, mag, halfN);
-  }
   doc["engine"] = useCmsis ? "cmsis" : "portable";
-  doc["computeMicros"] = (ARM_DWT_CYCCNT - computeStart) / (F_CPU_ACTUAL / 1000000);
-
-  const uint32_t fundBin = findFundamentalBin(mag, halfN);
-  const float fund = harmonicPeak(mag, halfN, fundBin);
+  doc["computeMicros"] = computeMicros;
   doc["available"] = true;
-  doc["binHz"] = static_cast<float>(sampleHz) / points;
-  doc["fundamentalHz"] = (static_cast<float>(sampleHz) / points) * fundBin;
-  doc["thdPercent"] = thdPercent(mag, halfN, fundBin);
+  doc["binHz"] = binHz;
+  doc["fundamentalHz"] = fundamentalHz;
+  doc["thdPercent"] = thd;
 
-  // First 512 bins, normalized to the fundamental, rounded to 4 decimals
-  const uint32_t outBins = halfN < 512 ? halfN : 512;
+  const uint16_t outBins = spectrumWireBinCount(points, true);
   JsonArray arr = doc["mag"].to<JsonArray>();
-  for (uint32_t i = 0; i < outBins; i++) {
-    arr.add(fund > 0.0f ? roundf((mag[i] / fund) * 10000.0f) / 10000.0f : 0.0f);
+  for (uint16_t i = 0; i < outBins; i++) {
+    arr.add(spectrumWireQuantize(mag[i], fund) / SpectrumWireScale);
   }
   serializeJson(doc, res);
 }
 
 constexpr uint32_t MaxCaptureBins = 600;
+constexpr uint32_t MaxCaptureCount = 32768;
 
 void api_capture(Request &req, Response &res) {
   char qbuf[16];
   uint32_t count = 20000, bins = MaxCaptureBins;
   if (req.query("count", qbuf, sizeof(qbuf))) {
     count = strtoul(qbuf, nullptr, 10);
+  }
+  if (count > MaxCaptureCount) {
+    count = MaxCaptureCount;
   }
   if (req.query("bins", qbuf, sizeof(qbuf))) {
     bins = strtoul(qbuf, nullptr, 10);
@@ -666,13 +714,7 @@ void api_capture(Request &req, Response &res) {
 // the export is safe to store or share; importing it back keeps whatever
 // credentials are currently on the device.
 FLASHMEM void api_config_export(Request &, Response &res) {
-  JsonDocument doc;
-  configToJson(config, doc);
-  redactSecrets(doc);
-  doc["ExportedBy"] = TEG_GIT_HASH; // which firmware wrote this file
-  res.set("Content-Type", "application/json");
-  res.set("Content-Disposition", "attachment; filename=\"teg-config.json\"");
-  serializeJson(doc, res);
+  writeConfigJson(res, true);
 }
 
 FLASHMEM void api_presets_get(Request &, Response &res) {
@@ -784,6 +826,7 @@ FLASHMEM void api_presets_delete(Request &req, Response &res) {
   presetResult(res, presetDelete(name, &err), err);
 }
 
+#ifdef TEG_ENABLE_UNSAFE_LAB_OTA
 FLASHMEM void api_ota_get(Request &, Response &res) {
   JsonDocument doc;
   doc["enabled"] = otaReleaseEnabled();
@@ -873,6 +916,7 @@ FLASHMEM void api_ota_abort(Request &req, Response &res) {
   res.set("Content-Type", "application/json");
   res.print(F("{\"aborted\":true,\"rebooting\":true}"));
 }
+#endif
 
 static const char *scopeStateName(uint8_t s) {
   switch (s) {
@@ -1085,22 +1129,32 @@ FLASHMEM void api_crash(Request &, Response &res) {
   res.print(text[0] != '\0' ? text : "none");
 }
 
-FLASHMEM void api_status(Request &, Response &res) {
+FLASHMEM void api_status(Request &req, Response &res) {
+  char qbuf[8];
+  const bool lite = req.query("lite", qbuf, sizeof(qbuf)) && qbuf[0] == '1';
+
   JsonDocument doc;
   doc["uptimeMs"] = millis();
-  doc["version"] = TEG_GIT_HASH;
-  doc["resetCause"] = resetCauseString();
-  doc["hostname"] = networkHostname();
-  doc["crash"] = crashReportText()[0] != '\0';
+  if (!lite) {
+    doc["version"] = TEG_GIT_HASH;
+    doc["resetCause"] = resetCauseString();
+    doc["hostname"] = networkHostname();
+    doc["crash"] = crashReportText()[0] != '\0';
+  }
   doc["active"] = spwmActive();
   doc["fault"] = vFaultTripped;
   doc["restartInhibit"] = pwmRestartInhibited();
   doc["hardwareInhibit"] = pwmHardwareInhibited();
   doc["provisioningInhibit"] = pwmProvisioningInhibited();
-  doc["outputsInhibited"] = pwmOutputInhibited();
+  if (!lite) {
+    doc["outputsInhibited"] = pwmOutputInhibited();
+  }
   doc["configPersistPending"] = configSaveNeeded;
-  doc["pwmConfigValid"] = pwmConfigurationValid();
-  doc["ota"] = otaInProgress();
+  if (!lite) {
+    doc["pwmConfigValid"] = pwmConfigurationValid();
+    doc["ota"] = otaInProgress();
+  }
+  doc["otaEnabled"] = otaReleaseEnabled();
   doc["mtp"] = mtpEnabled();
   if (mtpEnabled()) {
     doc["mtpPaused"] = mtpPaused();
@@ -1114,20 +1168,26 @@ FLASHMEM void api_status(Request &, Response &res) {
     doc["ocTripsPerSec"] = acmpCbcTripsPerSec();
   }
   doc["isrCycles"] = vIsrCycles;
-  doc["missedIsrCycles"] = vMissedIsrCycles; // carrier cycles the ISR failed to serve
-  doc["thermalMissedCycles"] = thermalHarvestMissedCycles(); // of those, the last OneWire harvest
+  if (!lite) {
+    doc["missedIsrCycles"] = vMissedIsrCycles; // carrier cycles the ISR failed to serve
+    doc["thermalMissedCycles"] = thermalHarvestMissedCycles(); // of those, the last OneWire harvest
+  }
   doc["applyMicros"] = lastApplyMicros;
   doc["modMilliHz"] = modulationActualMilliHz();
   doc["indexMilli"] = modulationIndexNowMilli();
   doc["targetMilli"] = modulationIndexTargetMilli();
   doc["dtcmFree"] = getFreeMemory();
-  doc["stackLowWater"] = getStackLowWater(); // the figure that reveals an overflow
+  if (!lite) {
+    doc["stackLowWater"] = getStackLowWater(); // the figure that reveals an overflow
+  }
   doc["ocramFree"] = freeram();
-  doc["captureActive"] = captureActive();
-  doc["captureFrozen"] = captureIsFrozen();
-  doc["captureSamples"] = captureSampleCount();
-  doc["captureVoltageMisses"] = captureVoltageMissCount();
-  doc["captureCurrentMisses"] = captureCurrentMissCount();
+  if (!lite) {
+    doc["captureActive"] = captureActive();
+    doc["captureFrozen"] = captureIsFrozen();
+    doc["captureSamples"] = captureSampleCount();
+    doc["captureVoltageMisses"] = captureVoltageMissCount();
+    doc["captureCurrentMisses"] = captureCurrentMissCount();
+  }
   doc["mqttConnected"] = mqttConnected();
   doc["mqttPublishFailures"] = mqttPublishFailures();
   doc["mpptEnabled"] = config.Mppt.Enabled;
@@ -1147,52 +1207,54 @@ FLASHMEM void api_status(Request &, Response &res) {
     doc["pllRefMv"] = pllRefMillivolts();
     doc["pllResyncs"] = pllResyncCount();
   }
-  const MeterReadings meter = meterReadings();
-  doc["meterActive"] = meter.valid;
-  if (meter.valid) {
-    doc["powerMw"] = meter.powerMw;
-    doc["vrmsMv"] = meter.vrmsMv;
-    doc["irmsMa"] = meter.irmsMa;
-    doc["pfMilli"] = meter.pfMilli;
-    doc["energyMwh"] = meterEnergyMwh();
-  }
-  // Aux power monitor: the driver board's own supply telemetry (INA226 over
-  // Wire2 plus eFuse PG/IMON taps)
-  doc["auxMonEnabled"] = config.PowerMon.Enabled;
-  if (config.PowerMon.Enabled) {
-    const PowerMonReadings aux = powerMonReadings();
-    doc["auxMonOnline"] = aux.valid;
-    if (aux.valid) {
-      doc["auxBusMv"] = aux.busMv;
-      doc["auxCurrentMa"] = aux.currentMa;
-      doc["auxPowerMw"] = aux.powerMw;
-      doc["auxEnergyMwh"] = powerMonEnergyMwh();
-      doc["auxPeakMa"] = powerMonPeakMa();
-      if (aux.imonMa >= 0) {
-        doc["auxImonMa"] = aux.imonMa;
+  if (!lite) {
+    const MeterReadings meter = meterReadings();
+    doc["meterActive"] = meter.valid;
+    if (meter.valid) {
+      doc["powerMw"] = meter.powerMw;
+      doc["vrmsMv"] = meter.vrmsMv;
+      doc["irmsMa"] = meter.irmsMa;
+      doc["pfMilli"] = meter.pfMilli;
+      doc["energyMwh"] = meterEnergyMwh();
+    }
+    // Aux power monitor: the driver board's own supply telemetry (INA226 over
+    // Wire2 plus eFuse PG/IMON taps)
+    doc["auxMonEnabled"] = config.PowerMon.Enabled;
+    if (config.PowerMon.Enabled) {
+      const PowerMonReadings aux = powerMonReadings();
+      doc["auxMonOnline"] = aux.valid;
+      if (aux.valid) {
+        doc["auxBusMv"] = aux.busMv;
+        doc["auxCurrentMa"] = aux.currentMa;
+        doc["auxPowerMw"] = aux.powerMw;
+        doc["auxEnergyMwh"] = powerMonEnergyMwh();
+        doc["auxPeakMa"] = powerMonPeakMa();
+        if (aux.imonMa >= 0) {
+          doc["auxImonMa"] = aux.imonMa;
+        }
       }
+      if (config.PowerMon.PgEfusePin != 255) {
+        doc["auxPgEfuse"] = aux.pgEfuse;
+      }
+      if (config.PowerMon.PgBuckPin != 255) {
+        doc["auxPgBuck"] = aux.pgBuck;
+      }
+      doc["auxAlert"] = aux.alert;
+      doc["auxAlertCount"] = aux.alertCount;
+      doc["auxPgEdgeCount"] = aux.pgEdgeCount;
+      doc["auxCommsErrors"] = aux.commsErrors;
     }
-    if (config.PowerMon.PgEfusePin != 255) {
-      doc["auxPgEfuse"] = aux.pgEfuse;
+    // Measured feedback voltage: synchronous capture mean when available,
+    // otherwise a direct 12-bit read of the configured pin
+    if (captureActive() && !captureIsFrozen()) {
+      doc["feedbackMv"] = (captureMeanRaw(64) * config.Feedback.FullScaleMillivolts) / AdcCountFullScale;
+    } else {
+      doc["feedbackMv"] =
+        (static_cast<uint32_t>(analogRead(config.Feedback.AnalogPin)) * config.Feedback.FullScaleMillivolts) /
+        AdcCountFullScale; // 12-bit, same as capture - see capture.h
     }
-    if (config.PowerMon.PgBuckPin != 255) {
-      doc["auxPgBuck"] = aux.pgBuck;
-    }
-    doc["auxAlert"] = aux.alert;
-    doc["auxAlertCount"] = aux.alertCount;
-    doc["auxPgEdgeCount"] = aux.pgEdgeCount;
-    doc["auxCommsErrors"] = aux.commsErrors;
+    doc["streamUnderruns"] = waveformStreamUnderruns();
   }
-  // Measured feedback voltage: synchronous capture mean when available,
-  // otherwise a direct 12-bit read of the configured pin
-  if (captureActive() && !captureIsFrozen()) {
-    doc["feedbackMv"] = (captureMeanRaw(64) * config.Feedback.FullScaleMillivolts) / 4095U;
-  } else {
-    doc["feedbackMv"] =
-      (static_cast<uint32_t>(analogRead(config.Feedback.AnalogPin)) * config.Feedback.FullScaleMillivolts) /
-      AdcCountFullScale; // 12-bit, same as capture - see capture.h
-  }
-  doc["streamUnderruns"] = waveformStreamUnderruns();
   doc["derateMilli"] = thermalDerateMilliNow();
   doc["hotDeciC"] = thermalHotDeciC();   // INT16_MIN = unavailable
   doc["coldDeciC"] = thermalColdDeciC();

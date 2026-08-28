@@ -28,8 +28,6 @@
     <a href="/" role="button" class="secondary outline" style="width:auto;margin:0;padding:0.4rem 0.9rem">Settings</a>
     <label style="margin:0;display:flex;align-items:center;gap:0.4rem;font-size:0.8rem">Refresh
       <select id="rate">
-        <option value="250">250 ms</option>
-        <option value="500">500 ms</option>
         <option value="1000" selected>1 s</option>
         <option value="2000">2 s</option>
         <option value="5000">5 s</option>
@@ -50,13 +48,7 @@
     <div class="legend" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
       <span>0 Hz &rarr; <span id="spec-maxhz">?</span> &middot; magnitude in dB relative to the fundamental (0 dBc top, &minus;80 dB floor)</span>
       <span style="display:flex;align-items:center;gap:0.8rem">
-        <label style="margin:0;display:flex;align-items:center;gap:0.3rem">FFT
-          <select id="spec-engine" style="width:auto;margin:0;padding:0.1rem 1.6rem 0.1rem 0.4rem;font-size:0.7rem">
-            <option value="portable">Radix-2 (tested)</option>
-            <option value="cmsis">CMSIS (fast)</option>
-          </select>
-        </label>
-        <label style="margin:0"><input type="checkbox" id="spec-auto" checked> auto-refresh</label>
+        <label style="margin:0"><input type="checkbox" id="spec-auto"> auto-refresh</label>
       </span>
     </div>
   </div>
@@ -248,31 +240,49 @@ function drawSpectrum(d) {
   $("#spec-maxhz").textContent = Math.round(d.binHz * n) + " Hz";
 }
 
+let specBusy = false;
+let lastSpecAt = 0;
 async function pollSpectrum() {
-  if (!$("#spec-auto").checked) return;
+  if (!$("#spec-auto").checked || specBusy) return;
+  if (Date.now() - lastSpecAt < 2000) return;
+  specBusy = true;
   try {
-    const engine = $("#spec-engine").value;
-    const d = await (await apiGet(`/api/spectrum?engine=${engine}`)).json();
-    if (!d.available) {
+    lastSpecAt = Date.now();
+    const buf = await (await apiGet("/api/spectrum?format=bin")).arrayBuffer();
+    const v = new DataView(buf);
+    if (v.byteLength < 32 || v.getUint32(0) !== 0x54454753 || v.getUint8(4) !== 1) {
+      throw new Error("spectrum"); // "TEGS" + version 1
+    }
+    const available = (v.getUint8(5) & 1) !== 0;
+    if (!available) {
       $("#spec-info").textContent = "capture not running";
       return;
     }
+    const binCount = v.getUint16(6, true);
+    const computeMicros = v.getUint32(16, true);
+    const binHz = v.getFloat32(20, true);
+    const fundamentalHz = v.getFloat32(24, true);
+    const thdPercent = v.getFloat32(28, true);
+    if (v.byteLength < 32 + binCount * 2) throw new Error("spectrum");
+    const mag = new Array(binCount);
+    for (let i = 0; i < binCount; i++)
+      mag[i] = v.getUint16(32 + i * 2, true) / 10000;
     $("#spec-info").textContent =
-      `f₁ ${d.fundamentalHz.toFixed(1)} Hz · THD ${d.thdPercent.toFixed(2)} % · ` +
-      `${d.computeMicros} µs (${d.engine})`;
-    drawSpectrum(d);
-  } catch (e) { /* next tick */ }
+      `f₁ ${fundamentalHz.toFixed(1)} Hz · THD ${thdPercent.toFixed(2)} % · ` +
+      `${computeMicros} µs (portable)`;
+    drawSpectrum({ mag, binHz });
+  } catch (e) { /* next tick */ } finally {
+    specBusy = false;
+  }
 }
-$("#spec-engine").value = localStorage.getItem("specEngine") || "portable";
-$("#spec-engine").addEventListener("change", () => {
-  localStorage.setItem("specEngine", $("#spec-engine").value);
-  pollSpectrum();
-});
 
 let timer = null;
 let paused = false;
+let pollBusy = false;
 
 async function poll() {
+  if (pollBusy) return;
+  pollBusy = true;
   try {
     const s = await (await apiGet("/api/status")).json();
     chIndex.push([s.indexMilli / 1000, s.targetMilli / 1000]);
@@ -292,8 +302,8 @@ async function poll() {
     chAuxCurrent.push([aux ? s.auxCurrentMa / 1000 : null,
                        aux && s.auxImonMa !== undefined ? s.auxImonMa / 1000 : null]);
     $("#fault-banner").style.display = s.fault ? "block" : "none";
-    pollSpectrum();
-    pollLog();
+    await pollLog();
+    await pollSpectrum();
     const up = Math.floor(s.uptimeMs / 1000);
     $("#footer").textContent =
       `uptime ${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m ${up % 60}s · ` +
@@ -314,7 +324,9 @@ async function poll() {
             (s.auxAlert ? " OVERCURRENT ALERT" : "")
           : " · driver board monitor OFFLINE"
         : "");
-  } catch (e) { /* device busy; next tick */ }
+  } catch (e) { /* device busy; next tick */ } finally {
+    pollBusy = false;
+  }
 }
 
 // Event log: poll with the last sequence number seen, so nothing repeats
@@ -381,11 +393,14 @@ function schedule() {
   clearInterval(timer);
   if (!paused) {
     poll();
-    timer = setInterval(poll, Number($("#rate").value));
+    timer = setInterval(poll, Math.max(1000, Number($("#rate").value) || 1000));
   }
 }
 
-$("#rate").value = localStorage.getItem("statsRate") || "1000";
+{
+  const stored = Number(localStorage.getItem("statsRate"));
+  $("#rate").value = String(Number.isFinite(stored) && stored >= 1000 ? stored : 1000);
+}
 $("#rate").addEventListener("change", () => {
   localStorage.setItem("statsRate", $("#rate").value);
   schedule();

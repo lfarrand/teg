@@ -2,7 +2,9 @@
 
 #include <unity.h>
 #include <math.h>
+#include <string.h>
 #include <spectrum_math.h>
+#include <spectrum_wire.h>
 
 static float re[SpectrumMaxPoints];
 static float im[SpectrumMaxPoints];
@@ -157,6 +159,97 @@ void test_noncoherent_high_order_harmonic_is_not_missed() {
   TEST_ASSERT_FLOAT_WITHIN(1.0f, 10.0f, thdPercent(mag, n / 2, fundamental, 10));
 }
 
+void test_spectrum_max_points_is_4096() {
+  TEST_ASSERT_EQUAL_UINT32(4096, SpectrumMaxPoints);
+}
+
+void test_spectrum_wire_roundtrip() {
+  const float fund = 2.0f;
+  const float mags[4] = {2.0f, 1.0f, 0.5f, 0.0f};
+  SpectrumWireFields in{};
+  in.available = true;
+  in.sampleHz = 10000;
+  in.points = 8;
+  in.computeMicros = 1234;
+  in.binHz = 1250.0f;
+  in.fundamentalHz = 1250.0f;
+  in.thdPercent = 11.18f;
+
+  uint8_t buf[64];
+  const size_t n = spectrumWirePack(buf, sizeof(buf), in, mags, fund);
+  TEST_ASSERT_EQUAL_UINT32(spectrumWirePayloadSize(4), n);
+  TEST_ASSERT_EQUAL_UINT8('T', buf[0]);
+  TEST_ASSERT_EQUAL_UINT8('E', buf[1]);
+  TEST_ASSERT_EQUAL_UINT8('G', buf[2]);
+  TEST_ASSERT_EQUAL_UINT8('S', buf[3]);
+  TEST_ASSERT_EQUAL_UINT8(SpectrumWireVersion, buf[4]);
+  TEST_ASSERT_EQUAL_UINT8(1, buf[5]);
+
+  SpectrumWireFields out{};
+  uint16_t bins[8] = {0};
+  uint16_t binCount = 0;
+  TEST_ASSERT_TRUE(spectrumWireUnpack(buf, n, out, bins, 8, &binCount));
+  TEST_ASSERT_TRUE(out.available);
+  TEST_ASSERT_EQUAL_UINT32(10000, out.sampleHz);
+  TEST_ASSERT_EQUAL_UINT32(8, out.points);
+  TEST_ASSERT_EQUAL_UINT32(1234, out.computeMicros);
+  TEST_ASSERT_EQUAL_FLOAT(1250.0f, out.binHz);
+  TEST_ASSERT_EQUAL_FLOAT(1250.0f, out.fundamentalHz);
+  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 11.18f, out.thdPercent);
+  TEST_ASSERT_EQUAL_UINT16(4, binCount);
+  TEST_ASSERT_EQUAL_UINT16(10000, bins[0]);
+  TEST_ASSERT_EQUAL_UINT16(5000, bins[1]);
+  TEST_ASSERT_EQUAL_UINT16(2500, bins[2]);
+  TEST_ASSERT_EQUAL_UINT16(0, bins[3]);
+}
+
+void test_spectrum_wire_unavailable() {
+  SpectrumWireFields in{};
+  in.available = false;
+  in.sampleHz = 8000;
+  in.points = 1024;
+  in.computeMicros = 9;
+  in.binHz = 7.8125f;
+  in.fundamentalHz = 50.0f;
+  in.thdPercent = 3.0f;
+
+  uint8_t buf[64];
+  const size_t n = spectrumWirePack(buf, sizeof(buf), in, nullptr, 1.0f);
+  TEST_ASSERT_EQUAL_UINT32(SpectrumWireHeaderSize, n);
+  TEST_ASSERT_EQUAL_UINT8(0, buf[5]);
+  uint16_t storedBins = 0xFFFF;
+  memcpy(&storedBins, buf + 6, 2);
+  TEST_ASSERT_EQUAL_UINT16(0, storedBins);
+  TEST_ASSERT_EQUAL_UINT32(0, spectrumWirePack(buf, SpectrumWireHeaderSize - 1, in, nullptr, 1.0f));
+
+  SpectrumWireFields out{};
+  uint16_t bins[4] = {0};
+  uint16_t binCount = 99;
+  TEST_ASSERT_TRUE(spectrumWireUnpack(buf, n, out, bins, 4, &binCount));
+  TEST_ASSERT_FALSE(out.available);
+  TEST_ASSERT_EQUAL_UINT32(8000, out.sampleHz);
+  TEST_ASSERT_EQUAL_UINT32(1024, out.points);
+  TEST_ASSERT_EQUAL_UINT16(0, binCount);
+}
+
+void test_spectrum_wire_rejects_bad_header() {
+  uint8_t buf[SpectrumWireHeaderSize] = {0};
+  memcpy(buf, "TEGS", 4);
+  buf[4] = SpectrumWireVersion;
+
+  SpectrumWireFields f{};
+  uint16_t bins[1] = {0};
+  uint16_t binCount = 0;
+  TEST_ASSERT_FALSE(spectrumWireUnpack(buf, SpectrumWireHeaderSize - 1, f, bins, 1, &binCount));
+
+  buf[0] = 'X';
+  TEST_ASSERT_FALSE(spectrumWireUnpack(buf, SpectrumWireHeaderSize, f, bins, 1, &binCount));
+  buf[0] = 'T';
+
+  buf[4] = 2;
+  TEST_ASSERT_FALSE(spectrumWireUnpack(buf, SpectrumWireHeaderSize, f, bins, 1, &binCount));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_fft_impulse_is_flat);
@@ -168,5 +261,9 @@ int main() {
   RUN_TEST(test_real_and_complex_prep_agree);
   RUN_TEST(test_thd_guards);
   RUN_TEST(test_noncoherent_high_order_harmonic_is_not_missed);
+  RUN_TEST(test_spectrum_max_points_is_4096);
+  RUN_TEST(test_spectrum_wire_roundtrip);
+  RUN_TEST(test_spectrum_wire_unavailable);
+  RUN_TEST(test_spectrum_wire_rejects_bad_header);
   return UNITY_END();
 }

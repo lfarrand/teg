@@ -48,6 +48,7 @@ static elapsedMillis sinceRequest;
 static elapsedMillis sinceRescan;
 static bool conversionPending = false;
 static uint32_t missedAtRequest = 0;
+static bool haveValidExternalSample = false;
 
 uint32_t thermalHarvestMissedCycles() {
   return harvestMissedCycles;
@@ -82,10 +83,13 @@ static void cacheProbeAddresses() {
 void thermalConfigure() {
   if (!config.Thermal.Enabled) {
     derateMilli = 1000;
+    haveValidExternalSample = true;
     hotDeciC = coldDeciC = chipDeciC = INT16_MIN;
     conversionPending = false;
     return;
   }
+  derateMilli = 0;
+  haveValidExternalSample = false;
   if (config.Thermal.OneWirePin != activePin) {
     activePin = config.Thermal.OneWirePin;
     oneWireBus = new (oneWireStorage) OneWire(activePin);
@@ -108,10 +112,16 @@ void thermalTask() {
   if (!config.Thermal.Enabled) {
     return;
   }
+  // OneWire masks IRQs 65–70 µs per write-0. Do not run bit slots while OUTEN
+  // is live; last-good derate holds until the next inhibited harvest.
+  if (!pwmOutputInhibited()) {
+    return;
+  }
 
   // Non-blocking cadence: request conversions, harvest them 800ms later
   // (a 12-bit DS18B20 conversion takes 750ms)
-  if (!conversionPending && sinceRequest >= 2000) {
+  const uint32_t requestMs = config.Pwm.Tm2.SpwmCarrierFrequency >= 10000U ? 4000U : 2000U;
+  if (!conversionPending && sinceRequest >= requestMs) {
     // Start the measurement before the request itself: OneWire disables
     // interrupts during bit slots, so counting only the later temperature read
     // concealed most of the disturbance we are trying to expose.
@@ -157,9 +167,10 @@ void thermalTask() {
   if (chipDeciC != INT16_MIN && chipDeciC / 10.0f > worstC) {
     worstC = chipDeciC / 10.0f;
   }
-  derateMilli = worstC > -999.0f
-                  ? thermalDerateMilli(worstC, config.Thermal.DerateStartC, config.Thermal.DerateEndC)
-                  : 1000;
+  haveValidExternalSample = (hotDeciC != INT16_MIN) || (coldDeciC != INT16_MIN);
+  derateMilli = haveValidExternalSample
+                    ? thermalDerateMilli(worstC, config.Thermal.DerateStartC, config.Thermal.DerateEndC)
+                    : 0;
 
   setThermalDerateMilli(derateMilli);
 
@@ -174,6 +185,10 @@ void thermalTask() {
     }
     setModulationIndexTargetQ15(indexMilliToQ15(indexMilli));
   }
+}
+
+bool thermalAllowsPwmRelease() {
+  return !config.Thermal.Enabled || haveValidExternalSample;
 }
 
 uint16_t thermalDerateMilliNow() {

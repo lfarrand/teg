@@ -417,10 +417,10 @@ from here, so calibration errors propagate.
 
 ## What the tests already cover
 
-Host suites exercise headers; they do not prove ISR or OUTEN. The last
-verified host-safe count is the six-suite **91/91** gate
-(`test_config_serde`, `test_features`, `test_ota`, `test_spectrum`,
-`test_thermal_math`, `test_waveform`).
+Host suites exercise headers; they do not prove ISR or OUTEN. The host-safe
+gate is `test_config_serde`, `test_features`, `test_ota`, `test_spectrum`
+(including `test_spectrum_wire_quantize_saturates`), `test_thermal_math`, and
+`test_waveform`.
 
 - Modulation maths for all nine schemes, including FFT-verified harmonic
   behaviour (carrier cancellation, triplen-free line-line, the 4/π six-step

@@ -3,6 +3,7 @@
 #include "config_json.h"
 #include "pwm_utils.h"
 #include "modulation.h"
+#include "utils.h"
 #include <Arduino.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
@@ -131,6 +132,14 @@ void thermalConfigure() {
   haveValidExternalSample = false;
   derateMilli = 0;
   setThermalDerateMilli(0);
+  if (!pwmOutputInhibited()) {
+    vFaultTripped = true;
+    maskAllOutputsSafely();
+    NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
+    writeLogLevel(EventWarn,
+                  "Thermal enable or OneWire pin change while generating; "
+                  "outputs inhibited until a DS18B20 sample");
+  }
 }
 
 static int16_t toDeciC(float c) {

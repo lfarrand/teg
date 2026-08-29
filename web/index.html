@@ -720,7 +720,10 @@ async function refreshPresets() {
     if (prev) sel.value = prev;
     if (!d.available) $("#preset-info").textContent = "no SD card — presets unavailable";
     else if (!(d.presets || []).length) $("#preset-info").textContent = "no presets saved yet";
-  } catch (e) { /* device busy */ }
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 async function presetPost(path, name) {
@@ -817,10 +820,10 @@ $("#cfg-export").addEventListener("click", () =>
     $("#preset-info").textContent = "export failed: " + e.message));
 
 let presetsLoaded = false;
-$("#preset-panel").addEventListener("toggle", () => {
+$("#preset-panel").addEventListener("toggle", async () => {
   if (!$("#preset-panel").open || presetsLoaded) return;
   presetsLoaded = true;
-  refreshPresets();
+  if (!(await refreshPresets())) presetsLoaded = false;
 });
 
 let otaSize = 0;
@@ -987,7 +990,7 @@ async function refreshWaveform() {
     if (d.type === "none") {
       $("#wave-info").textContent = "none uploaded";
       drawWavePreview([]);
-      return;
+      return true;
     }
     let pts = [];
     if (d.type === "reference") {
@@ -1005,8 +1008,10 @@ async function refreshWaveform() {
       $("#wave-info").textContent = `sequence · ${d.count} segments · ${(total / 1000).toFixed(2)} ms period`;
     }
     drawWavePreview(pts);
+    return true;
   } catch (e) {
     $("#wave-info").textContent = "waveform fetch failed";
+    return false;
   }
 }
 
@@ -1040,10 +1045,10 @@ async function uploadWaveform() {
 }
 $("#wave-upload").addEventListener("click", uploadWaveform);
 let waveformLoaded = false;
-$("#wave-panel").addEventListener("toggle", () => {
+$("#wave-panel").addEventListener("toggle", async () => {
   if (!$("#wave-panel").open || waveformLoaded) return;
   waveformLoaded = true;
-  refreshWaveform();
+  if (!(await refreshWaveform())) waveformLoaded = false;
 });
 
 $("#fault-clear").addEventListener("click", async () => {

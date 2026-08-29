@@ -1206,9 +1206,9 @@ FLASHMEM void api_status(Request &req, Response &res) {
     doc["pllRefMv"] = pllRefMillivolts();
     doc["pllResyncs"] = pllResyncCount();
   }
+  const MeterReadings meter = meterReadings();
+  doc["meterActive"] = meter.valid;
   if (!lite) {
-    const MeterReadings meter = meterReadings();
-    doc["meterActive"] = meter.valid;
     if (meter.valid) {
       doc["powerMw"] = meter.powerMw;
       doc["vrmsMv"] = meter.vrmsMv;

@@ -626,7 +626,15 @@ async function pollStatus() {
       : "";
     const otaOn = s.otaEnabled === true;
     $("#ota-article").hidden = !otaOn;
-    if (otaOn) $("#ota-upload").disabled = false;
+    if (otaOn) {
+      $("#ota-upload").disabled = false;
+      if (!otaStateLoaded) {
+        otaStateLoaded = true;
+        restoreOtaState();
+      }
+    } else {
+      otaStateLoaded = false;
+    }
   } catch (e) { /* device busy; retry next tick */ }
 }
 
@@ -816,6 +824,32 @@ $("#preset-panel").addEventListener("toggle", () => {
 });
 
 let otaSize = 0;
+let otaStateLoaded = false;
+async function restoreOtaState() {
+  try {
+    const r = await apiGet("/api/ota");
+    if (!r.ok) {
+      otaStateLoaded = false;
+      return;
+    }
+    const out = await r.json();
+    otaSize = out.size || 0;
+    if (out.valid) {
+      $("#ota-info").textContent =
+        `verified: ${out.size} bytes staged — ready to commit`;
+      $("#ota-commit").disabled = false;
+      $("#ota-abort").disabled = false;
+    } else if (out.inProgress || out.error) {
+      $("#ota-info").textContent = out.error
+        ? `rejected: ${out.error} — outputs stay disabled; abort to reboot`
+        : "upload in progress — outputs stay disabled; abort to reboot";
+      $("#ota-commit").disabled = true;
+      $("#ota-abort").disabled = false;
+    }
+  } catch (e) {
+    otaStateLoaded = false;
+  }
+}
 $("#ota-upload").addEventListener("click", async () => {
   const f = $("#ota-file").files[0];
   if (!f) { $("#ota-info").textContent = "choose a .hex file first"; return; }

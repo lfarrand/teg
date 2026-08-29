@@ -49,6 +49,7 @@ static elapsedMillis sinceRescan;
 static bool conversionPending = false;
 static uint32_t missedAtRequest = 0;
 static bool haveValidExternalSample = false;
+static bool thermalEnabledApplied = false;
 
 uint32_t thermalHarvestMissedCycles() {
   return harvestMissedCycles;
@@ -80,24 +81,56 @@ static void cacheProbeAddresses() {
   }
 }
 
+static float worstValidTempC() {
+  float worstC = -1000.0f;
+  if (hotDeciC != INT16_MIN) {
+    worstC = hotDeciC / 10.0f;
+  }
+  if (coldDeciC != INT16_MIN && coldDeciC / 10.0f > worstC) {
+    worstC = coldDeciC / 10.0f;
+  }
+  if (chipDeciC != INT16_MIN && chipDeciC / 10.0f > worstC) {
+    worstC = chipDeciC / 10.0f;
+  }
+  return worstC;
+}
+
 void thermalConfigure() {
   if (!config.Thermal.Enabled) {
     derateMilli = 1000;
     haveValidExternalSample = true;
+    thermalEnabledApplied = false;
     hotDeciC = coldDeciC = chipDeciC = INT16_MIN;
     conversionPending = false;
+    setThermalDerateMilli(1000);
     return;
   }
-  derateMilli = 0;
-  haveValidExternalSample = false;
-  if (config.Thermal.OneWirePin != activePin) {
+
+  const bool pinChanged = config.Thermal.OneWirePin != activePin;
+  const bool keepSample = thermalEnabledApplied && !pinChanged && haveValidExternalSample;
+  if (pinChanged) {
     activePin = config.Thermal.OneWirePin;
     oneWireBus = new (oneWireStorage) OneWire(activePin);
     sensors.setOneWire(oneWireBus);
     sensors.setWaitForConversion(false); // never block loop() on a conversion
     hotAddrValid = coldAddrValid = false; // different bus: forget the old ROMs
     cacheProbeAddresses();
+    conversionPending = false;
   }
+  thermalEnabledApplied = true;
+
+  // applyPwmConfig calls this on every save. Clearing the sample while OUTEN
+  // is live would skip OneWire forever and freeze the last ISR cap.
+  if (keepSample) {
+    derateMilli = thermalDerateMilli(worstValidTempC(), config.Thermal.DerateStartC,
+                                     config.Thermal.DerateEndC);
+    setThermalDerateMilli(derateMilli);
+    return;
+  }
+
+  haveValidExternalSample = false;
+  derateMilli = 0;
+  setThermalDerateMilli(0);
 }
 
 static int16_t toDeciC(float c) {
@@ -157,19 +190,10 @@ void thermalTask() {
 
   // Derate on the worst of BOTH external probes and die temperature. Probe
   // role assignment affects labels only, never thermal protection.
-  float worstC = -1000.0f;
-  if (hotDeciC != INT16_MIN) {
-    worstC = hotDeciC / 10.0f;
-  }
-  if (coldDeciC != INT16_MIN && coldDeciC / 10.0f > worstC) {
-    worstC = coldDeciC / 10.0f;
-  }
-  if (chipDeciC != INT16_MIN && chipDeciC / 10.0f > worstC) {
-    worstC = chipDeciC / 10.0f;
-  }
   haveValidExternalSample = (hotDeciC != INT16_MIN) || (coldDeciC != INT16_MIN);
   derateMilli = haveValidExternalSample
-                    ? thermalDerateMilli(worstC, config.Thermal.DerateStartC, config.Thermal.DerateEndC)
+                    ? thermalDerateMilli(worstValidTempC(), config.Thermal.DerateStartC,
+                                         config.Thermal.DerateEndC)
                     : 0;
 
   setThermalDerateMilli(derateMilli);

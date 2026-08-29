@@ -41,7 +41,14 @@ inline uint16_t spectrumWireQuantize(float mag, float fund) {
   if (fund <= 0.0f || mag <= 0.0f) {
     return 0;
   }
-  return static_cast<uint16_t>(roundf((mag / fund) * SpectrumWireScale));
+  const float scaled = roundf((mag / fund) * SpectrumWireScale);
+  if (scaled >= 65535.0f) {
+    return 65535;
+  }
+  if (scaled <= 0.0f) {
+    return 0;
+  }
+  return static_cast<uint16_t>(scaled);
 }
 
 inline uint16_t spectrumWireBinCount(uint32_t points, bool available) {

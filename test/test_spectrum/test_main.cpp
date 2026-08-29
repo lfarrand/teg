@@ -232,6 +232,13 @@ void test_spectrum_wire_unavailable() {
   TEST_ASSERT_EQUAL_UINT16(0, binCount);
 }
 
+void test_spectrum_wire_quantize_saturates() {
+  TEST_ASSERT_EQUAL_UINT16(0, spectrumWireQuantize(1.0f, 0.0f));
+  TEST_ASSERT_EQUAL_UINT16(0, spectrumWireQuantize(0.0f, 1.0f));
+  TEST_ASSERT_EQUAL_UINT16(10000, spectrumWireQuantize(2.0f, 2.0f));
+  TEST_ASSERT_EQUAL_UINT16(65535, spectrumWireQuantize(8.0f, 1.0f));
+}
+
 void test_spectrum_wire_rejects_bad_header() {
   uint8_t buf[SpectrumWireHeaderSize] = {0};
   memcpy(buf, "TEGS", 4);
@@ -264,6 +271,7 @@ int main() {
   RUN_TEST(test_spectrum_max_points_is_4096);
   RUN_TEST(test_spectrum_wire_roundtrip);
   RUN_TEST(test_spectrum_wire_unavailable);
+  RUN_TEST(test_spectrum_wire_quantize_saturates);
   RUN_TEST(test_spectrum_wire_rejects_bad_header);
   return UNITY_END();
 }

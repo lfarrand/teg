@@ -1185,19 +1185,6 @@ void configureModule4() {
   writeLog(ok ? "Configured TM4" : "TM4 configuration failed; outputs inhibited");
 }
 
-uint8_t calculateBestPrescaler(uint32_t pwmFrequency) {
-  return bestPrescalerIndex(F_BUS_ACTUAL, pwmFrequency, MAX_COUNTER_VALUE);
-}
-
-void attachInterruptVectors() {
-  Serial.println(F("Attaching PWM interrupt vectors"));
-
-  if (pwmInterruptRequired()) {
-    attachModule2PwmInterruptVectors();
-    enablePwmInterrupts();
-  }
-}
-
 void attachModule2PwmInterruptVectors() {
   Serial.println(F("Attaching module 2 PWM interrupt vectors"));
   attachInterruptVector(IRQ_FLEXPWM2_0, &IsrOverflowSm20);

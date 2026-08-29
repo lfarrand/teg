@@ -559,7 +559,7 @@ DMAMEM static int16_t fftSamples[SpectrumMaxPoints];
 //
 // The portable radix-2 engine stays available, is the natively-tested one, and already
 // serves every request. Define TEG_ENABLE_CMSIS_FFT to link the fast path back in;
-// with it undefined, ?engine=cmsis falls back and the response reports "portable", the
+// with it undefined, ?engine=cmsis falls back, the
 // same contract already used for an unsupported point count.
 #ifdef TEG_ENABLE_CMSIS_FFT
 static arm_rfft_fast_instance_f32 rfftInstance;
@@ -650,7 +650,6 @@ FLASHMEM void api_spectrum(Request &req, Response &res) {
     serializeJson(doc, res);
     return;
   }
-  doc["engine"] = useCmsis ? "cmsis" : "portable";
   doc["computeMicros"] = computeMicros;
   doc["available"] = true;
   doc["binHz"] = binHz;
@@ -711,8 +710,8 @@ void api_capture(Request &req, Response &res) {
 }
 
 // Download the running configuration as a file. Secrets are redacted, so
-// the export is safe to store or share; importing it back keeps whatever
-// credentials are currently on the device.
+// the export is safe to store or share. Import uses restoreSecrets
+// (PIN always; MQTT/Influx only if endpoint identity matches).
 FLASHMEM void api_config_export(Request &, Response &res) {
   writeConfigJson(res, true);
 }
@@ -787,9 +786,9 @@ FLASHMEM void api_presets_load(Request &req, Response &res) {
 }
 
 // Import a settings file. Deliberately NOT the plain config POST: an
-// imported file is not operator-authored, so secrets are always taken from
-// the device and an incomplete document is rejected instead of defaulting
-// safety sections off.
+// imported file is not operator-authored, so restoreSecrets is
+// identity-gated and an incomplete document is rejected instead of
+// defaulting safety sections off.
 FLASHMEM void api_config_import(Request &req, Response &res) {
   if (!writeAuthorized(req)) {
     res.sendStatus(401);

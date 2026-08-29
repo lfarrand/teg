@@ -214,7 +214,7 @@ struct PllConfig {
 // modulation index, fed by the Meter's real-power measurement (requires
 // Capture + Meter enabled; silently idle otherwise, like the meter itself).
 // Mutually exclusive with the Feedback loop (same actuator). Compatible
-// with the PLL (frequency/phase vs amplitude - the grid-tie MPPT topology).
+// with the PLL (frequency/phase vs amplitude on the bench).
 struct MpptConfig {
   bool Enabled = false;
   uint16_t IntervalMs = 3000;    // evaluation cadence; must cover the index

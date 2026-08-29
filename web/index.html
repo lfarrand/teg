@@ -282,7 +282,7 @@
 
   <article>
     <header>Presets &amp; Backup</header>
-    <p class="hint">Save the current settings under a name and switch between them later. Presets and exports omit credentials (InfluxDB token, MQTT password, write PIN), and loading or importing never changes them &mdash; the device always keeps its own. Note the files <em>do</em> contain host names, topics and usernames, so treat them as configuration, not as public data.</p>
+    <p class="hint">Save the current settings under a name and switch between them later. Presets and exports omit credentials (InfluxDB token, MQTT password, write PIN). Loading or importing always restores the write PIN. MQTT and Influx secrets restore only when the endpoint identity matches; otherwise they are cleared and that integration is disabled. Note the files <em>do</em> contain host names, topics and usernames, so treat them as configuration, not as public data.</p>
     <details id="preset-panel">
       <summary>Named presets</summary>
       <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
@@ -317,7 +317,7 @@
 
   <article>
     <header>MQTT / Home Assistant</header>
-    <p class="hint">Telemetry with Home Assistant auto-discovery: sensors appear under one &ldquo;TEG Inverter&rdquo; device (power, energy for the HA dashboard, temperatures, fault alert&hellip;). Read-only &mdash; no command topics.</p>
+    <p class="hint">Bench MQTT telemetry with Home Assistant auto-discovery: sensors appear under one &ldquo;TEG Inverter&rdquo; device (power, energy, temperatures, fault alert&hellip;). Read-only &mdash; no command topics.</p>
     <label><input type="checkbox" role="switch" data-path="Mqtt.Enabled"> Enabled</label>
     <div class="grid-fields">
       <label>Broker host <input type="text" data-str data-path="Mqtt.Host" maxlength="39"></label>
@@ -776,8 +776,9 @@ $("#cfg-import").addEventListener("click", async () => {
     const text = await f.text();
     const parsed = JSON.parse(text); // fail before touching the device
     if (!parsed.Config) throw new Error("not a TEG settings export");
-    // Dedicated import endpoint: the device enforces secret preservation and
-    // rejects incomplete documents rather than defaulting safety sections off
+    // Dedicated import endpoint: restoreSecrets is identity-gated (PIN always;
+    // MQTT/Influx only if endpoint identity matches). Incomplete documents are rejected
+    // rather than defaulting safety sections off
     let r = await fetch("/api/config/import", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),

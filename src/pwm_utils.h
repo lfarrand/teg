@@ -5,9 +5,6 @@
 #include <eFlexPwm.h>
 
 #define LOG_BUF_SIZE 256
-constexpr uint16_t MinDutyCycle = 0;
-constexpr uint16_t MidDutyCycle = 32768;
-constexpr uint16_t MaxDutyCycle = 65535;
 constexpr uint16_t MAX_COUNTER_VALUE = 0xFFFF;
 
 extern volatile uint32_t vPhase;
@@ -108,8 +105,6 @@ void configureModule3();
 
 void configureModule4();
 
-void attachInterruptVectors();
-
 void attachModule2PwmInterruptVectors();
 
 void enablePwmInterrupts();
@@ -121,8 +116,6 @@ void enableModule2PwmInterrupts();
 void disableModule2PwmInterrupts();
 
 FASTRUN void IsrOverflowSm20();
-
-uint8_t calculateBestPrescaler(uint32_t pwmFrequency);
 
 void printStats();
 

@@ -2,9 +2,9 @@
 //
 // Presets are ordinary config JSON written to /presets/<name>.json with the
 // secrets blanked, so a preset is safe to copy off the card or share. On
-// load, preserveSecrets() re-fills them from whatever is currently stored -
-// the same contract the web UI already uses for redacted round-trips - so
-// switching presets never wipes credentials.
+// load, restoreSecrets() restores the write PIN always. MQTT/Influx secrets
+// restore only when the endpoint identity matches; otherwise they are cleared
+// and that integration is disabled.
 //
 // Name validation lives in preset_name.h and is a security boundary: names
 // arrive from the network and become filenames.

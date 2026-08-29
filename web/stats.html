@@ -269,7 +269,7 @@ async function pollSpectrum() {
       mag[i] = v.getUint16(32 + i * 2, true) / 10000;
     $("#spec-info").textContent =
       `f₁ ${fundamentalHz.toFixed(1)} Hz · THD ${thdPercent.toFixed(2)} % · ` +
-      `${computeMicros} µs (portable)`;
+      `${computeMicros} µs`;
     drawSpectrum({ mag, binHz });
   } catch (e) { /* next tick */ } finally {
     specBusy = false;

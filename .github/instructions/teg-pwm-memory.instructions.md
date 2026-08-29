@@ -21,7 +21,7 @@ Preset/import disables the PWM2 IRQ with `pwmInterruptRequired()` before memcpy 
 
 ## Thermal
 
-When thermal is enabled, PWM release waits for a valid DS18B20 sample. OneWire bit slots do not run while outputs are connected. Missing probes fail closed (derate 0), not full output. While inhibited, request conversions every 4 s when the carrier is ≥ 10 kHz (else 2 s); keep the 800 ms harvest wait. `thermalConfigure()` keeps a harvested sample when thermal stays enabled on the same OneWire pin. Pin change or first enable fail-closes, pushes derate 0 into the ISR, and if OUTEN is live trips and masks so OneWire can harvest. Do not clear `haveValidExternalSample` on every `applyPwmConfig`.
+When thermal is enabled, PWM release waits for a valid DS18B20 sample. OneWire bit slots do not run while outputs are connected. Missing probes fail closed (derate 0), not full output. While inhibited, request conversions every 4 s when the carrier is ≥ 10 kHz (else 2 s); keep the 800 ms harvest wait. `thermalConfigure()` keeps a harvested sample when thermal stays enabled on the same OneWire pin. Pin change or first enable fail-closes, pushes derate 0 into the ISR, and if OUTEN is live trips and masks *before* `cacheProbeAddresses()`. Do not clear `haveValidExternalSample` on every `applyPwmConfig`.
 
 ## MTP
 
@@ -41,7 +41,7 @@ When thermal is enabled, PWM release waits for a valid DS18B20 sample. OneWire b
 
 ## OTA and settings I/O
 
-Production leaves `TEG_ENABLE_UNSAFE_LAB_OTA` undefined: `ota.h` stubs, empty `ota.cpp` / `flash_ota.cpp`, no `/api/ota*` routes (HTTP 404, not 501). Settings poll `/api/status?lite=1` (no `analogRead`; still emit last-window `meterActive`). Named presets and waveform GET when those panels open; clear the loaded flag if the fetch fails so the next open retries. Export is `/api/config?download=1`. Pico lives at `/pico.min.css` as a token sheet, not the 83 KB library.
+Production leaves `TEG_ENABLE_UNSAFE_LAB_OTA` undefined: `ota.h` stubs, empty `ota.cpp` / `flash_ota.cpp`, no `/api/ota*` routes (HTTP 404, not 501). Settings poll `/api/status?lite=1` (no `analogRead`; still emit last-window `meterActive`). Named presets and waveform GET when those panels open; clear the loaded flag if the fetch fails so the next open retries. Export is `/api/config?download=1`. Pico lives at `/pico.min.css` as a token sheet, not the 83 KB library. `setup()` must `flushDisplay()` while still inhibited before `clearFaultTrip(false)` so a generated write PIN reaches the OLED; `flushDisplay()` stays skipped while OUTEN is live.
 
 ## Operator docs
 

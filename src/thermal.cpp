@@ -109,6 +109,16 @@ void thermalConfigure() {
 
   const bool pinChanged = config.Thermal.OneWirePin != activePin;
   const bool keepSample = thermalEnabledApplied && !pinChanged && haveValidExternalSample;
+  // cacheProbeAddresses() runs a full ROM search (IRQ-off bit slots). Trip and
+  // mask before that scan when this apply cannot keep the last sample.
+  if (!keepSample && !pwmOutputInhibited()) {
+    vFaultTripped = true;
+    maskAllOutputsSafely();
+    NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
+    writeLogLevel(EventWarn,
+                  "Thermal enable or OneWire pin change while generating; "
+                  "outputs inhibited until a DS18B20 sample");
+  }
   if (pinChanged) {
     activePin = config.Thermal.OneWirePin;
     oneWireBus = new (oneWireStorage) OneWire(activePin);
@@ -132,14 +142,6 @@ void thermalConfigure() {
   haveValidExternalSample = false;
   derateMilli = 0;
   setThermalDerateMilli(0);
-  if (!pwmOutputInhibited()) {
-    vFaultTripped = true;
-    maskAllOutputsSafely();
-    NVIC_DISABLE_IRQ(IRQ_FLEXPWM2_0);
-    writeLogLevel(EventWarn,
-                  "Thermal enable or OneWire pin change while generating; "
-                  "outputs inhibited until a DS18B20 sample");
-  }
 }
 
 static int16_t toDeciC(float c) {

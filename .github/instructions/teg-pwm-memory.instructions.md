@@ -21,7 +21,7 @@ Preset/import disables the PWM2 IRQ with `pwmInterruptRequired()` before memcpy 
 
 ## Thermal
 
-When thermal is enabled, PWM release waits for a valid DS18B20 sample. OneWire bit slots do not run while outputs are connected. Missing probes fail closed (derate 0), not full output. While inhibited, request conversions every 4 s when the carrier is ≥ 10 kHz (else 2 s); keep the 800 ms harvest wait.
+When thermal is enabled, PWM release waits for a valid DS18B20 sample. OneWire bit slots do not run while outputs are connected. Missing probes fail closed (derate 0), not full output. While inhibited, request conversions every 4 s when the carrier is ≥ 10 kHz (else 2 s); keep the 800 ms harvest wait. `thermalConfigure()` keeps a harvested sample when thermal stays enabled on the same OneWire pin; pin change or first enable fail-closes and pushes derate 0 into the ISR. Do not clear `haveValidExternalSample` on every `applyPwmConfig`.
 
 ## MTP
 

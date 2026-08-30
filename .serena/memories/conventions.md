@@ -6,7 +6,7 @@ Put algorithm/state machines in headers (`*_math.h`, `modulation.h`, `pwm_timing
 
 New host-testable unit: `test/test_<name>/test_main.cpp`, Unity, `setUp`/`tearDown`, `pio test -e native`.
 
-Host suites: serde/ota/spectrum/thermal_math/waveform (80/80 last host run), not ISR/OUTEN.
+Host six-suite gate: serde/ota/spectrum/thermal_math/waveform/features plus `test_spectrum_wire_quantize_saturates`, not ISR/OUTEN. Also native: `test_mqtt_discovery` (8/8) — report separately. Do not publish a 91/99/six-suite numeric total; dated REVIEW_FIXES 91/91 lines stay as snapshots. Operator docs now name that split.
 
 `build_src_flags` (`-Wall -Wextra -Wdouble-promotion`) apply to `src/` only so library noise stays out.
 
@@ -27,19 +27,19 @@ Host suites: serde/ota/spectrum/thermal_math/waveform (80/80 last host run), not
 
 ## Safety / API
 
-Every `/api/*` needs `X-Auth-Pin`, same-subnet peer, valid Host; browser Origin must match. Rate-limit failures. Secrets never leave the device on export. `restoreSecrets` always restores the write PIN; MQTT/Influx secrets only when endpoint identity matches, otherwise clear and disable.
+Every `/api/*` needs `X-Auth-Pin`, same-subnet peer, valid Host; browser Origin must match. Rate-limit failures. Secrets never leave the device on export. `restoreSecrets` always restores the write PIN; MQTT/Influx secrets only when endpoint identity matches, otherwise clear and disable. Do not merge with `preserveSecrets`.
 
 Preset/import must disable PWM IRQ via `pwmInterruptRequired()` (not only `spwmActive()`) before memcpy of `MainConfig`.
 
-`configToJson` omits SyncPwm, CurrentLimit FilterCount/Period, and Tm2 cell PwmFrequency; reads and validate clamps stay.
+SchemaVersion stays 1. `configToJson` omits SyncPwm, CurrentLimit FilterCount/Period, Tm2 cell PwmFrequency, and Tm2.DeadTimeCompensation; reads and validate clamps stay. MQTT is 17 entities (16 `MqttSensors[]` + fault); energy fields use `device_class=energy`, `state_class=total_increasing`, Wh; no `aux_alert` entity.
 
 Config is a complete versioned schema; reject partial/wrong-type/unsafe sections before touching hardware. Saves: generation + CRC, read-back, live/tmp/backup rotation.
 
-Settings UI: `/api/status?lite=1` (no analogRead); presets/waveform GET on first panel open; export `/api/config?download=1`. `pico.min.css` is a ~2 KB token sheet at the same URL. OLED paints newest 5 EventLog lines; `logs[5]` deleted.
+Settings UI: `/api/status?lite=1` (no analogRead; last-window `meterActive`); power/vrms/irms/pf/energy stay full-status only. Presets/waveform GET on first panel open; clear the loaded flag if the fetch fails so the next open retries. Export `/api/config?download=1`. Lab OTA UI restores GET `/api/ota` on first `otaEnabled` poll; production stays 404. `pico.min.css` is a ~2 KB token sheet at the same URL. OLED paints newest 5 EventLog lines; `logs[5]` deleted. `setup()` `flushDisplay()` while still inhibited before `clearFaultTrip(false)`; `flushDisplay()` skips I2C while OUTEN is live.
 
 `serviceControlTasks()` from long HTTP handlers. It must not re-enter network/USB stacks.
 
-MTP write opcodes stay refused at the dispatcher (`0x100B/C/D/F`, `0x1019/1A`, `0x9804`). Descriptor must not advertise refused ops. Adapter also refuses mutating FS calls. `MTP.begin()` must `MTP.loop()` while still inhibited; `mtpAllowsPwmRelease()` gates OUTEN. GetObjectHandles / Storage2Store store index must be `< get_FSCount()`.
+USB is always composite (`-DUSB_MTPDISK_SERIAL`, never `=1`). `Mtp.Enabled` defaults false; enabling does not require a reboot (`mtpTask()` `MTP.begin()` while inhibited). MTP write opcodes stay refused at the dispatcher (`0x100B/C/D/F`, `0x1019/1A`, `0x9804`). Descriptor must not advertise refused ops. Adapter also refuses mutating FS calls. `MTP.begin()` must `MTP.loop()` while still inhibited; `mtpAllowsPwmRelease()` gates OUTEN. GetObjectHandles / Storage2Store store index must be `< get_FSCount()`.
 
 ## Libraries and pins
 

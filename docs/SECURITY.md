@@ -1,9 +1,10 @@
 # Security posture
 
-Updated 2026-08-01 after the six-lane adversarial release review and its
-hardening pass. This firmware remains a **bench instrument for a trusted,
-isolated LAN**. It is not suitable for direct Internet exposure, an untrusted
-shared network, unattended generation, or a commercial product.
+Updated 2026-08-30 after the six-lane adversarial release review, its
+hardening pass, and the landed 28 August slices. This firmware remains a
+**bench instrument for a trusted, isolated LAN**. It is not suitable for
+direct Internet exposure, an untrusted shared network, unattended generation,
+or a commercial product.
 
 The security controls below reduce accidental and LAN-reachable failure modes;
 they do not turn HTTP bearer authentication into a secure remote-management
@@ -37,10 +38,12 @@ All `/api/*` methods, including diagnostic GETs, now pass through one policy:
 - config, log, crash, capture, spectrum, preset and OTA endpoints receive the
   same policy; only the static UI assets remain public;
 - secret fields are redacted from JSON responses and exports. Empty secret
-  fields in an update preserve the value already stored on the device.
-- import and preset load use restoreSecrets: the write PIN is always restored;
-  MQTT/Influx secrets restore only when the endpoint identity matches, otherwise
-  they are cleared and that integration is disabled.
+  fields in a POST use `preserveSecrets`: the value already stored on the
+  device is kept.
+- import and preset load use `restoreSecrets` (a different contract): the
+  write PIN is always restored; MQTT/Influx secrets restore only when the
+  endpoint identity matches, otherwise they are cleared and that integration
+  is disabled. Do not merge these two helpers.
 
 The PIN is generated from the hardware entropy source on first boot, displayed
 locally, and must be durably written before PWM output release. If its first save
@@ -113,9 +116,14 @@ separate provisioning interlock prevents OUTEN reconnection until a complete
 configuration plus PIN has been durably promoted.
 
 USB MTP is read-only, runs only while every PWM output is inhibited, and hides
-the settings and preset trees. This prevents ordinary host browsing from
-exposing those credentials, but it is not a defence against someone removing
-the card or using SWD/serial access. Do not reuse any device credential elsewhere.
+the settings and preset trees. `MTP.begin()` must `MTP.loop()` while still
+inhibited; `mtpAllowsPwmRelease()` holds OUTEN until that first loop. The USB
+composite is always present (`-DUSB_MTPDISK_SERIAL`, PID `0x04D5`);
+`Mtp.Enabled` only starts the service. Framework patches stay on the
+copy-on-write tree `.pio/framework-arduinoteensy-teg`, not the global
+PlatformIO package. This prevents ordinary host browsing from exposing those
+credentials, but it is not a defence against someone removing the card or
+using SWD/serial access. Do not reuse any device credential elsewhere.
 
 ## Time and logs
 

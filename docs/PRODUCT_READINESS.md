@@ -17,6 +17,10 @@ built here.
 > strict schema/pin validation, recoverable persistence, fail-closed PSRAM and bounded
 > network/USB/storage paths. Those fixes make a safer bench controller; they do not
 > supply functional-safety independence, secure transport or product certification.
+>
+> **Status update, 2026-08-30:** PRs #67/#68 landed MTP copy-on-write, review-slice
+> software contracts, and updater CI. They do not change NO-SHIP, product status,
+> or the AGPL Ethernet-stack blocker.
 
 ## 1. The four firmware facts that constrain the product
 

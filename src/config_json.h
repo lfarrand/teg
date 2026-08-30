@@ -145,8 +145,9 @@ struct InfluxConfig {
 
 // USB MTP file access to the SD card and QSPI flash. OFF by default: a host
 // transfer runs to completion inside one service call, stalling the control
-// tasks meanwhile, so this is a maintenance-mode feature. Takes effect at
-// the next reboot (the USB descriptor and MTP's own startup are boot-time).
+// tasks meanwhile, so this is a maintenance-mode feature. USB is always
+// composite; enabling starts the service on the next inhibited pass.
+// Disabling does not tear the session down until the next boot.
 struct MtpConfig {
   bool Enabled = false;
 };

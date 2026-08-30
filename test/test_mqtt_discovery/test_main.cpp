@@ -41,9 +41,9 @@ void test_power_sensor_discovery() {
   TEST_ASSERT_EQUAL_STRING("abc1234", doc["origin"]["sw_version"]);
 }
 
-void test_energy_sensor_feeds_ha_dashboard() {
-  // The HA energy dashboard requires device_class energy AND state_class
-  // total_increasing - a regression here silently breaks the dashboard
+void test_energy_sensor_payload_shape() {
+  // Energy discovery payload shape: device_class energy, state_class
+  // total_increasing, unit Wh.
   const MqttSensorDef *energy = nullptr;
   for (unsigned i = 0; i < MqttSensorCount; i++) {
     if (strcmp(MqttSensors[i].object, "energy") == 0) {
@@ -138,7 +138,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_topic_layout);
   RUN_TEST(test_power_sensor_discovery);
-  RUN_TEST(test_energy_sensor_feeds_ha_dashboard);
+  RUN_TEST(test_energy_sensor_payload_shape);
   RUN_TEST(test_fault_binary_sensor);
   RUN_TEST(test_unique_ids_are_unique);
   RUN_TEST(test_discovery_fits_publish_buffer);

@@ -27,6 +27,8 @@
 #include "ota_crc.h"
 #include <Arduino.h>
 
+#ifdef TEG_ENABLE_UNSAFE_LAB_OTA
+
 extern "C" {
 // cores/teensy4/eeprom.c - each op: __disable_irq, FlexSPI IP command,
 // D-cache purge, busy-wait on the flash status register, __enable_irq
@@ -168,3 +170,5 @@ FASTRUN bool otaFlashCommit(uint32_t imageSize, uint32_t expectedCrc) {
   for (;;) {
   }
 }
+
+#endif

@@ -20,6 +20,8 @@
 #include "utils.h"
 #include "main.h"
 
+#ifdef TEG_ENABLE_UNSAFE_LAB_OTA
+
 extern MainConfig config;
 
 static OtaIngest ing;
@@ -37,11 +39,7 @@ static volatile bool rebootPending = false;
 static void (*progressFn)() = nullptr;
 
 bool otaReleaseEnabled() {
-#ifdef TEG_ENABLE_UNSAFE_LAB_OTA
   return true;
-#else
-  return false;
-#endif
 }
 
 // Kick the watchdog ahead of each staging-sector erase (up to 400ms each)
@@ -211,3 +209,5 @@ void otaLoopTask() {
     }
   }
 }
+
+#endif

@@ -65,13 +65,14 @@ both software and hardware fault protection.
   verify-before-commit OTA implementation that is compiled out unless the explicit
   unsafe-lab build flag is enabled
 - **Modern web UI** — single-page app with automatic dark mode, live telemetry,
-  and scheme-aware forms, served gzip-compressed from flash
-- **Tested core logic** — 319 native unit tests across 27 suites cover the selected
-  hardware-independent headers (modulation, metering, PLL, MPPT, OTA verification,
-  config mapping and related helpers): 94.4% lines, 100% functions and 64.0%
-  branches in that scope, gated at 90% lines and 60% branches in CI. The native environment
-  builds no firmware `.cpp` files, so this is not whole-firmware coverage and cannot
-  validate registers, ISRs, boot order or the network path
+  and scheme-aware forms, served gzip-compressed from flash. `/pico.min.css` is a
+  ~2 KB token sheet at that URL, not Pico.css v2
+- **Tested core logic** — host-native Unity covers selected headers only
+  (`test_build_src = no`). Firmware `.cpp` is target-only. The host-safe gate is
+  `test_config_serde`, `test_features`, `test_ota`, `test_spectrum` (including
+  `test_spectrum_wire_quantize_saturates`), `test_thermal_math` and
+  `test_waveform`. That is not ISR, OUTEN, register, boot-order, or network
+  proof; the native environment cannot validate those paths
 
 ## Hardware
 
@@ -167,14 +168,14 @@ The API underneath is plain JSON:
 
 | Endpoint | Method | Purpose |
 |---|---|---|
-| `/api/config` | GET | Full configuration document (secrets redacted) |
+| `/api/config` | GET | Full configuration document (secrets redacted); `?download=1` attaches `teg-config.json` (same body as export) |
 | `/api/config` | POST | Validate and atomically apply a complete configuration; queue a verified SD save; returns `{"applyMicros": n, "persistPending": true}` |
-| `/api/status` | GET | Live telemetry (uptime, fault, ISR cycles, apply time, actual frequency, index, free RAM) |
+| `/api/status` | GET | Live telemetry (uptime, fault, ISR cycles, apply time, actual frequency, index, free RAM); `?lite=1` exists (no `analogRead`; settings poll uses this) |
 | `/api/capture` | GET | Min/max envelope of the waveform capture ring (`?count=&bins=`) |
 | `/api/waveform` | GET | Current uploaded custom waveform (type, size, preview) |
 | `/api/waveform` | POST | Upload text, TEGW or gzip; exact-length/time bounded, staged and swapped only after validation; refused during active stepped/streamed playback |
 | `/api/capture/raw` | GET | Binary capture download — 20-byte `TEGC` header + LE `uint16` samples (`?channel=v\|i&count=`) |
-| `/api/spectrum` | GET | FFT magnitudes, fundamental and THD (`?points=&engine=portable\|cmsis`) |
+| `/api/spectrum` | GET | FFT magnitudes, fundamental and THD (`?points=`, default 1024); `?format=bin` is 32-byte LE TEGS + u16 bins (unavailable is HTTP 200, flags=0). JSON `mag[]` uses `spectrumWireQuantize` / 10000, ≤128 bins |
 | `/api/scope` | GET | Trigger state, source, edge, level, post-trigger count |
 | `/api/scope/arm` | POST | Arm the single-shot trigger `{source, edge, levelMv, postSamples}` |
 | `/api/scope/release` | POST | Disarm and resume rolling capture |
@@ -182,11 +183,11 @@ The API underneath is plain JSON:
 | `/api/log` | GET | Event log since a sequence number (`?since=n`) with ISO-8601 timestamps |
 | `/api/presets` | GET | List saved presets |
 | `/api/presets/save\|load\|delete` | POST | Manage presets `{name}` |
-| `/api/config/export` | GET | Download settings as a file (secrets omitted) |
-| `/api/config/import` | POST | Apply a settings file (secrets always preserved from the device) |
-| `/api/ota` | GET/POST | OTA status; production returns disabled/501, unsafe-lab builds can stage and verify Intel-HEX |
-| `/api/ota/commit` | POST | Unsafe-lab only: flash the verified image and reboot (echo the verified size back) |
-| `/api/ota/abort` | POST | Discard the staged image and reboot |
+| `/api/config/export` | GET | Alias for `GET /api/config?download=1` (primary export; secrets omitted) |
+| `/api/config/import` | POST | Apply a settings file. PIN always restored. MQTT password only if Host/Port/Username match; else clear and `Mqtt.Enabled = false`. Influx token only if Host/Port/Org/Bucket match; else clear and `Influx.IntervalSeconds = 0` |
+| `/api/ota` | GET/POST | Production routes unregistered → HTTP 404. Lab-only if `TEG_ENABLE_UNSAFE_LAB_OTA` (do not enable it) |
+| `/api/ota/commit` | POST | Exists only when that lab flag is compiled in; production 404s. Lab: flash the verified image and reboot (echo the verified size back) |
+| `/api/ota/abort` | POST | Exists only when that lab flag is compiled in; production 404s. Lab: discard the staged image and reboot |
 | `/api/crash` | GET | Crash report from the previous run, if any |
 
 Every `/api/*` request, GET or POST, requires a matching `X-Auth-Pin` header —
@@ -348,7 +349,7 @@ e.g. a rectified-and-filtered output sample or the DC bus through a divider.
 | **Kp** (/1000) | Proportional gain — index units per volt of error |
 | **Ki** (/1000) | Integral gain — index units per volt-second |
 | **Analog pin** | Feedback input (default A17 / pin 41) |
-| **Loop Hz** | Control loop rate (default 1000) |
+| **Loop Hz** | Control loop rate (default 250) |
 
 The live status bar shows the index actually applied and the PI's current target,
 so convergence is visible in real time.
@@ -417,25 +418,19 @@ counts, chunk-streamed with the watchdog serviced throughout.
 
 `GET /api/spectrum` runs a Hann-windowed FFT over the most recent capture
 samples and returns normalised magnitudes, the detected fundamental, and **total
-harmonic distortion**. The stats page renders it as a dBc plot.
+harmonic distortion**. The default GET is JSON; the stats page uses
+`?format=bin` (32-byte LE TEGS header plus u16 bins).
 
-Two engines exist: a **portable radix-2** implementation (the default — it is the
-one carrying the unit tests, so the exact code that runs on the device is verified
-on the host) and **CMSIS `arm_rfft_fast_f32`** for speed. The measured compute time
-is reported either way, along with which engine actually ran.
+**Portable radix-2** is the tested default. The CMSIS UI picker is gone. JSON
+does not emit `"engine"`. `?engine=cmsis` is compiled out unless someone defines
+`TEG_ENABLE_CMSIS_FFT` (do not). Host spectral tests exercise headers; they do
+not prove the ISR or OUTEN.
 
-The CMSIS engine is **compiled out by default**. Linking it drags ~77 KB of CMSIS
-tables into DTCM — on a Teensy 4, plain `const` data is copied there rather than
-left in flash — which is a poor trade for a fast path reachable only by adding
-`?engine=cmsis` to one diagnostic endpoint. Build with `-DTEG_ENABLE_CMSIS_FFT` to
-put it back, at that cost. Without it, `?engine=cmsis` falls back and the response
-says `"portable"`.
-
-The modulation schemes' spectral claims are themselves unit-tested: the suite
-synthesises the switched output by driving the *same* per-cycle pipeline the ISR
-uses, then FFTs it to confirm carrier-group cancellation, triplen-free line-line
+The modulation schemes' spectral claims are themselves unit-tested at header
+scope: the suite synthesises the switched output from `modulationCycleDuties`,
+then FFTs it to confirm carrier-group cancellation, triplen-free line-line
 voltages, the 4/π six-step series, the trapezoid's harmonic envelope, and
-dither's carrier spreading.
+dither's carrier spreading. That is not ISR or OUTEN proof.
 
 The displayed THD is diagnostic, not standards-grade. It uses a quadratic
 fractional-bin fundamental estimate and Hann main-lobe RSS bands around each
@@ -545,8 +540,9 @@ nominal.
 
 Mutually exclusive with carrier dither, stepped waveform playback and the
 closed-loop feedback (which regulates the same pin as a DC level); enabling the
-PLL turns those off on save. **PLL + MPPT together is the grid-tie topology** —
-frequency/phase from one, amplitude from the other.
+PLL turns those off on save. Both can be enabled together on the bench
+(frequency/phase vs amplitude); this is not a grid-tie product and is
+unverified on a power stage.
 
 ## MPPT
 
@@ -573,10 +569,10 @@ exclusive with the closed-loop feedback (same actuator).
 Publishes telemetry to an MQTT broker with **Home Assistant auto-discovery**:
 one retained config per entity, a single shared JSON state topic read via
 `value_template`, and an availability topic wired as the connection's last will.
-A "TEG Inverter" device appears with 13 entities — power, voltage, current,
-power factor, an **energy sensor the HA energy dashboard accepts directly**,
-frequency, modulation index, all three temperatures, thermal derate, PLL state,
-and a fault alert.
+A "TEG Inverter" device appears with 17 entities — power, voltage, current,
+power factor, energy, frequency, modulation index, all three temperatures,
+thermal derate, PLL state, four driver-board aux sensors (power, voltage,
+current, energy), and a fault alert.
 
 Read-only: there are no command topics, so the PIN-authenticated HTTP API stays
 the only write path. The broker password follows the same secret contract as the
@@ -585,8 +581,8 @@ stored one. No TLS.
 
 ## OTA firmware updates
 
-**OTA is disabled in the normal production build.** Its endpoints report that
-state and refuse upload/commit. A developer can deliberately add
+**OTA is disabled in the normal production build.** Production routes are
+unregistered and return HTTP 404. A developer can deliberately add
 `TEG_ENABLE_UNSAFE_LAB_OTA` to expose the lab updater; never use that flag on an
 unattended unit. In that lab build, upload a PlatformIO `.hex` through the web
 UI. It stages into upper flash and is fully verified while the running firmware
@@ -631,11 +627,13 @@ live at `/presets/<name>.json` on the SD card. Also available: a settings
 download, and an import that applies a file.
 
 **Credentials never travel with configuration.** Presets and exports are written
-redacted, and applying any file the operator did not author restores secrets
-*unconditionally* from the device — so an imported file can never change the
-write PIN (locking you out) or pair the device's real broker password with
-someone else's host. Files still contain host names, topics and usernames, so
-treat them as configuration rather than public data.
+redacted. Applying a file always restores the write PIN. MQTT password is
+restored only if Host/Port/Username match; otherwise it is cleared and
+`Mqtt.Enabled` is set false. Influx token is restored only if Host/Port/Org/Bucket
+match; otherwise it is cleared and `Influx.IntervalSeconds` is set to 0. An
+imported file cannot change the write PIN (locking you out), but a host/port/user
+change can drop a broker password. Files still contain host names, topics and
+usernames, so treat them as configuration rather than public data.
 
 Applying a document also **requires the safety-relevant sections to be present**:
 absent JSON sections would otherwise fall back to compiled defaults and silently
@@ -735,6 +733,7 @@ the unobserved interval. The INA226 is hot-pluggable: probe failures retry every
 5 s, degraded-mode style. Scaling math lives in `power_monitor_math.h`
 (natively tested); wiring details are in the driver-board repo's
 `POWER_MONITORING_DESIGN_2026-08-01.md`.
+`PowerMon.IntervalMs` default and validate floor are 250.
 
 The configuration word is `0x4527`: 16 averages with 1.1 ms shunt and bus
 conversions (about 35.2 ms per refreshed result). The positive shunt-overvoltage
@@ -814,10 +813,10 @@ device's config file on the SD card, never in firmware source or this repository
   `thermal_math.h`, `waveform_parse.h`, `gzip_stream.h`, `stream_ring.h`,
   `write_pin.h`, `ntp_utils.h`, `power_monitor_math.h`, `pi_controller.h`.
 - The ISR's per-cycle duty pipeline is itself one of those headers
-  (`modulationCycleDuties`), called verbatim by the interrupt — so the spectral
-  tests measure the real thing rather than a reimplementation.
+  (`modulationCycleDuties`). Host tests of that function are not ISR/OUTEN proof.
 - The web UI lives in `web/` and is gzipped into flash at build time by
-  `scripts/gzip_web_assets.py` (Pico.css v2 is vendored; no build toolchain).
+  `scripts/gzip_web_assets.py`. `web/pico.min.css` is a ~2 KB token sheet, still
+  served at `/pico.min.css` (no build toolchain).
 - [`lib/aWOT`](https://github.com/lfarrand/aWOT) and
   [`lib/eFlexPwm`](https://github.com/lfarrand/eFlexPwm) are forks held as **git
   submodules**, each with its own GitHub repository and independently testable history. The parent records exact
@@ -918,8 +917,7 @@ gates rather than caveats:
 - **Remote management is bench-grade.** There is no TLS, OTA is unsigned/single-slot
   when deliberately lab-enabled, credentials are plaintext on SD, and NTP/logs are
   not cryptographic evidence. See [docs/SECURITY.md](docs/SECURITY.md).
-- **CMSIS FFT remains opt-in.** `TEG_ENABLE_CMSIS_FFT` trades about 77 KiB of TCM
-  for speed; the portable radix-2 engine stays the tested default. Recheck RAM1
-  stack headroom before enabling it.
+- **CMSIS FFT remains compiled out.** Do not define `TEG_ENABLE_CMSIS_FFT`. The
+  portable radix-2 engine stays the tested default. There is no UI engine picker.
 
 The complete ordered procedure is [docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md).

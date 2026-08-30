@@ -107,7 +107,7 @@ time reaches the hardware. That was not true before 2026-07-30; if you have read
 older copy of this file saying complementary operation "does not work", it is stale.
 
 **Nothing in this path has run on hardware.** It writes FlexPWM registers directly on
-every settings apply, and the 319 host tests are structurally unable to see registers.
+every settings apply, and host tests cannot see FlexPWM registers.
 
 ### The one that would have damaged hardware
 
@@ -172,8 +172,9 @@ OUTEN, OCTRL, MCTRL or the pin mux, and a timeout must leave every pin dark.
       harvest alone cost. Probe addresses are cached rather than re-searched, so
       this should now be a small fraction of what it was — but "should" is the
       word doing the work, and this is the number that settles it. If it is large
-      enough to matter for your output quality, the next lever is lengthening the
-      2 s harvest interval, since the cost is per-harvest.
+      enough to matter for your output quality, the next lever is the harvest
+      request: 4 s when the carrier is ≥ 10 kHz while PWM is inhibited; the
+      800 ms wait is kept. That is not a generic 2 s harvest interval.
 
 ## 1. USB MTP — stack headroom (do this one first if MTP is enabled)
 
@@ -227,9 +228,9 @@ Also for MTP:
 
 **Test on a bench board with USB access before ever using this remotely.**
 
-- [ ] Confirm a normal release build reports OTA disabled and returns 501 for upload.
-      The destructive checks below apply only to a deliberately compiled
-      `TEG_ENABLE_UNSAFE_LAB_OTA` sacrificial build.
+- [ ] Confirm a normal release build's OTA upload/status routes are unregistered
+      and return HTTP 404. The destructive checks below apply only to a
+      deliberately compiled `TEG_ENABLE_UNSAFE_LAB_OTA` sacrificial build.
 
 - [ ] From the first erase of the commit until the reset (**~10–60 s**), a power
       loss leaves the board unbootable and needing physical recovery
@@ -327,6 +328,7 @@ from here, so calibration errors propagate.
       status recovery and energy-gap handling.
 - [ ] Compare TPS25983 IMON with INA226 only inside the eFuse datasheet's specified
       IMON current range. Below it, treat IMON as qualitative.
+- [ ] `PowerMon.IntervalMs` default and validate floor are 250.
 
 ## 5. Grid / reference PLL
 
@@ -369,8 +371,8 @@ from here, so calibration errors propagate.
 
 - [ ] **No TLS.** Use a LAN broker or a plaintext listener; port 8883 will
       connect at TCP level and then fail (bounded, but pointless).
-- [ ] Confirm the device appears as one "TEG Inverter" with all entities, and
-      that the energy sensor is accepted by the HA energy dashboard.
+- [ ] Confirm MQTT discovery entities appear on a bench broker. This is a bench
+      integration, not an energy-dashboard product claim.
 - [ ] Discovery configs are retained, so entities survive an HA restart —
       turn discovery off if you manage entities by hand.
 
@@ -391,16 +393,20 @@ from here, so calibration errors propagate.
 
 - [ ] Requires an SD card; the list endpoint reports `available: false` without
       one.
-- [ ] Confirm a preset load applies immediately and that **credentials are
-      untouched** — presets and exports deliberately omit them, and importing
-      can never change the write PIN or a broker password.
+- [ ] Confirm a preset load applies immediately. The write PIN is always
+      restored. MQTT password and Influx token are restored only if endpoint
+      identity matches (MQTT: Host/Port/Username; Influx: Host/Port/Org/Bucket);
+      otherwise they are cleared and disabled (`Mqtt.Enabled = false`,
+      `Influx.IntervalSeconds = 0`). Import can drop a broker password when
+      host/port/user change.
 - [ ] Note preset files still contain host names, topics and usernames. Treat
       them as configuration, not public data.
 
 ## 11. Spectrum and THD
 
-- [ ] Compare the two FFT engines on the same capture: the portable radix-2 is
-      the unit-tested reference, CMSIS is the fast path. They should agree.
+- [ ] Portable radix-2 is the default. Check `GET /api/spectrum?format=bin`
+      (TEGS; HTTP 200 + flags=0 if unavailable). The JSON default has no
+      `"engine"` field. Do not compare two FFT engines.
 - [ ] Sanity-check the reported THD against a known-clean and a known-distorted
       output before trusting absolute numbers.
 - [ ] Use a deliberately non-coherent fundamental and inject a known high-order
@@ -411,12 +417,14 @@ from here, so calibration errors propagate.
 
 ## What the tests already cover
 
-Do not re-verify these by hand — they are pinned by the 319 host-side unit
-tests and re-run in CI on every push:
+Host suites exercise headers; they do not prove ISR or OUTEN. The host-safe
+gate is `test_config_serde`, `test_features`, `test_ota`, `test_spectrum`
+(including `test_spectrum_wire_quantize_saturates`), `test_thermal_math`, and
+`test_waveform`.
 
 - Modulation maths for all nine schemes, including FFT-verified harmonic
   behaviour (carrier cancellation, triplen-free line-line, the 4/π six-step
-  series, dither spreading) measured through the *same* code the ISR runs.
+  series, dither spreading). That is header-level, not ISR/OUTEN proof.
 - Metering conversions, MPPT convergence on synthetic TEG curves, PLL lock
   behaviour (acquisition, phase jumps, THD immunity, clamping, noise rejection).
 - Intel-HEX parsing and OTA image verification, including rejection of

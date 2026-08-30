@@ -2,9 +2,9 @@
 //
 // Presets are ordinary config JSON written to /presets/<name>.json with the
 // secrets blanked, so a preset is safe to copy off the card or share. On
-// load, preserveSecrets() re-fills them from whatever is currently stored -
-// the same contract the web UI already uses for redacted round-trips - so
-// switching presets never wipes credentials.
+// load, restoreSecrets() restores the write PIN always. MQTT/Influx secrets
+// restore only when the endpoint identity matches; otherwise they are cleared
+// and that integration is disabled.
 //
 // Name validation lives in preset_name.h and is a security boundary: names
 // arrive from the network and become filenames.
@@ -192,9 +192,13 @@ bool configApplyDocument(const JsonDocument &doc, const char **errorOut) {
   memcpy(&previous, &config, sizeof(previous));
   MainConfig candidate;
   configFromJson(doc, candidate);
-  // UNCONDITIONAL: a file must never be able to set a credential (see
-  // config_serde.h). Only an explicit UI edit can change a secret.
+  // Files cannot set secrets; restoreSecrets keeps PIN and same-endpoint
+  // MQTT/Influx credentials (see config_serde.h).
   restoreSecrets(candidate, previous);
+  if (const char *reason = configApiRejectReason(candidate)) {
+    *errorOut = reason;
+    return false;
+  }
   if (validateConfig(candidate)) {
     writeLog("Loaded configuration contained invalid values; corrected");
   }
@@ -203,14 +207,14 @@ bool configApplyDocument(const JsonDocument &doc, const char **errorOut) {
     *errorOut = "configuration contains an invalid or conflicting pin assignment";
     return false;
   }
-  if (spwmActive()) {
+  if (pwmInterruptRequired()) {
     disablePwmInterrupts();
   }
   memcpy(&config, &candidate, sizeof(config));
   applyPwmConfig(previous);
   // Not while a trip is latched: applyPwmConfig deliberately re-asserts the
   // masking, and the modulation ISR must not drive fault-masked submodules
-  if (spwmActive() && !vFaultTripped) {
+  if (pwmInterruptRequired() && !vFaultTripped) {
     attachModule2PwmInterruptVectors();
     enablePwmInterrupts();
   }

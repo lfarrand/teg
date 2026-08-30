@@ -38,6 +38,9 @@ All `/api/*` methods, including diagnostic GETs, now pass through one policy:
   same policy; only the static UI assets remain public;
 - secret fields are redacted from JSON responses and exports. Empty secret
   fields in an update preserve the value already stored on the device.
+- import and preset load use restoreSecrets: the write PIN is always restored;
+  MQTT/Influx secrets restore only when the endpoint identity matches, otherwise
+  they are cleared and that integration is disabled.
 
 The PIN is generated from the hardware entropy source on first boot, displayed
 locally, and must be durably written before PWM output release. If its first save
@@ -80,9 +83,9 @@ hardware trip path are still required.
 
 ## OTA policy
 
-OTA is **compiled out of production builds**. `/api/ota` reports it disabled and
-upload/commit requests are refused unless a developer deliberately builds with
-`TEG_ENABLE_UNSAFE_LAB_OTA`.
+OTA is **compiled out of production builds**. Production `/api/ota*` routes are
+unregistered and return HTTP 404. Lab upload/commit exist only when a
+developer deliberately builds with `TEG_ENABLE_UNSAFE_LAB_OTA`.
 
 The lab updater stages into unused program flash, validates Intel-HEX bounds,
 the FlexSPI/IVT/boot-data structure, board/project markers and a whole-image

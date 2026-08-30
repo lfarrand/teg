@@ -320,6 +320,10 @@ FLASHMEM void setup() {
   // Normal power-on/external reset starts only after every protection source has
   // been armed and sampled. Watchdog, lockup, overtemperature and crash restarts
   // remain inhibited until POST /api/fault/clear authenticates an operator.
+  // Paint a generated write PIN (and other boot notices) first: flushDisplay()
+  // skips I2C once OUTEN is live, so a release here would otherwise leave the
+  // credential queued but never shown.
+  flushDisplay();
   clearFaultTrip(false);
 
   printStats();
@@ -440,7 +444,7 @@ void loop() {
   }
 
   static unsigned long lastRamCheck = 0;
-  if (millis() - lastRamCheck >= 5000) {
+  if (millis() - lastRamCheck >= 30000) {
     reportMemoryUsage();
     lastRamCheck = millis();
   }

@@ -2,9 +2,10 @@
 #define PRESETS_H
 
 // Named configuration presets stored on the SD card. Presets never contain
-// secrets: they are written redacted and loading preserves whatever is
-// currently stored, so a preset file can be copied off the card or emailed
-// without leaking the InfluxDB token, MQTT password or write PIN.
+// secrets: they are written redacted. Load uses restoreSecrets: PIN always;
+// MQTT/Influx only when the endpoint identity matches, otherwise cleared
+// and that integration disabled. A preset file can be copied off the card
+// or emailed without leaking the InfluxDB token, MQTT password or write PIN.
 
 #include <stdint.h>
 #include <ArduinoJson.h>
@@ -17,14 +18,14 @@ bool presetList(JsonDocument &doc);
 // on failure.
 bool presetSave(const char *name, const char **errorOut);
 
-// Load a preset into the live config: secrets preserved, values validated,
+// Load a preset into the live config: restoreSecrets is identity-gated, values validated,
 // hardware applied, and the result persisted to the main settings file.
 bool presetLoad(const char *name, const char **errorOut);
 
 bool presetDelete(const char *name, const char **errorOut);
 
-// Apply a whole-config document (preset file or imported settings): secrets
-// are always taken from the running config, missing sections are rejected
+// Apply a whole-config document (preset file or imported settings):
+// restoreSecrets is identity-gated, missing sections are rejected
 // rather than defaulted, and the result is validated, applied and queued
 // for persistence.
 bool configApplyDocument(const JsonDocument &doc, const char **errorOut);

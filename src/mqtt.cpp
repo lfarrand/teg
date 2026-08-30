@@ -3,7 +3,7 @@
 //
 // Behavior: connect with a last-will "offline" on the availability topic;
 // on each (re)connect publish the retained discovery configs ONE PER TASK
-// PASS (a back-to-back burst of all 13 exceeds lwIP's TCP send buffer and
+// PASS (a back-to-back burst of all 17 exceeds lwIP's TCP send buffer and
 // corrupts the MQTT stream mid-frame), then a state immediately once
 // discovery completes, then every IntervalSeconds.
 //
@@ -87,6 +87,7 @@ FLASHMEM static bool mqttConnect() {
       if (!mqttAddrValid) return false;
     }
   }
+  if (!pwmOutputInhibited()) return false;
   mqttNet.setConnectionTimeout(500);
   mq.setSocketTimeout(2); // CONNACK wait, seconds; default 15s outlives the watchdog
   mq.setServer(mqttAddr, config.Mqtt.Port);

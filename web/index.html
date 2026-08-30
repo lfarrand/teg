@@ -106,7 +106,6 @@
       </label>
       <label>Dither % <input type="number" data-path="Pwm.Tm2.CarrierDitherPercent" min="0" max="30"></label>
     </div>
-    <label data-show="1,2,3,5,6,7,8"><input type="checkbox" role="switch" data-path="Pwm.Tm2.DeadTimeCompensation"> Dead-time compensation</label>
     <label data-show="4"><input type="checkbox" role="switch" data-path="Pwm.Tm2.NearestLevelModulation"> Nearest-level (staircase)</label>
     <p class="hint" id="scheme-hint"></p>
   </article>
@@ -155,7 +154,7 @@
       <label>Shunt &micro;&Omega; <input type="number" data-path="PowerMon.ShuntMicroOhm" min="100" max="1000000"></label>
       <label>Current LSB &micro;A <input type="number" data-path="PowerMon.CurrentLsbMicroAmp" min="1" max="10000"></label>
       <label>Alert mA (0 off) <input type="number" data-path="PowerMon.AlertMilliAmp" min="0" max="65535"></label>
-      <label>Poll ms <input type="number" data-path="PowerMon.IntervalMs" min="50" max="65535"></label>
+      <label>Poll ms <input type="number" data-path="PowerMon.IntervalMs" min="250" max="65535"></label>
       <label>eFuse PG pin (255 off) <input type="number" data-path="PowerMon.PgEfusePin" min="0" max="255"></label>
       <label>Buck PG pin (255 off) <input type="number" data-path="PowerMon.PgBuckPin" min="0" max="255"></label>
       <label>Alert pin (255 off) <input type="number" data-path="PowerMon.AlertPin" min="0" max="255"></label>
@@ -261,14 +260,17 @@
 
   <article>
     <header>Custom Waveform</header>
-    <p class="hint">Upload a <code>teg-wave v1</code> file. <code>type=reference</code>: one sample (-1..1) per line, resampled to the 2048-point table and played by the DDS. <code>type=sequence</code>: <code>level, duration_us</code> per line, up to 64 segments, looped (quantized to the carrier period). Select Waveform &ldquo;Custom&rdquo; or &ldquo;Sequence&rdquo; above to use it.</p>
     <label><input type="checkbox" role="switch" data-path="Pwm.Tm2.WaveformSampleStep"> Sample-step playback: one stored sample per carrier cycle at full resolution (repeat period = points &divide; carrier; e.g. 2M points at 20&thinsp;kHz &asymp; 105&thinsp;s). Off = the file is one period at the modulation frequency.</label>
-    <div style="display:flex;gap:0.8rem;align-items:center;margin-bottom:0.6rem;flex-wrap:wrap">
-      <input type="file" id="wave-file" accept=".txt,.csv,.wave,.bin" style="margin:0;width:auto">
-      <button id="wave-upload" class="secondary outline" style="width:auto;margin:0">Upload</button>
-      <span class="hint" id="wave-info"></span>
-    </div>
-    <canvas id="wave-canvas" height="140" style="width:100%;border:1px solid var(--pico-muted-border-color);border-radius:6px"></canvas>
+    <details id="wave-panel">
+      <summary>Custom waveform</summary>
+      <p class="hint">Upload a <code>teg-wave v1</code> file. <code>type=reference</code>: one sample (-1..1) per line, resampled to the 2048-point table and played by the DDS. <code>type=sequence</code>: <code>level, duration_us</code> per line, up to 64 segments, looped (quantized to the carrier period). Select Waveform &ldquo;Custom&rdquo; or &ldquo;Sequence&rdquo; above to use it.</p>
+      <div style="display:flex;gap:0.8rem;align-items:center;margin-bottom:0.6rem;flex-wrap:wrap">
+        <input type="file" id="wave-file" accept=".txt,.csv,.wave,.bin" style="margin:0;width:auto">
+        <button id="wave-upload" class="secondary outline" style="width:auto;margin:0">Upload</button>
+        <span class="hint" id="wave-info"></span>
+      </div>
+      <canvas id="wave-canvas" height="140" style="width:100%;border:1px solid var(--pico-muted-border-color);border-radius:6px"></canvas>
+    </details>
   </article>
 
   <article>
@@ -280,16 +282,19 @@
 
   <article>
     <header>Presets &amp; Backup</header>
-    <p class="hint">Save the current settings under a name and switch between them later. Presets and exports omit credentials (InfluxDB token, MQTT password, write PIN), and loading or importing never changes them &mdash; the device always keeps its own. Note the files <em>do</em> contain host names, topics and usernames, so treat them as configuration, not as public data.</p>
-    <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
-      <select id="preset-list" style="width:auto;margin:0;min-width:12rem"></select>
-      <button id="preset-load" class="secondary outline" style="width:auto;margin:0">Load</button>
-      <button id="preset-delete" class="secondary outline" style="width:auto;margin:0">Delete</button>
-    </div>
-    <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
-      <input type="text" id="preset-name" placeholder="New preset name" maxlength="32" style="width:auto;margin:0">
-      <button id="preset-save" class="secondary outline" style="width:auto;margin:0">Save current</button>
-    </div>
+    <p class="hint">Save the current settings under a name and switch between them later. Presets and exports omit credentials (InfluxDB token, MQTT password, write PIN). Loading or importing always restores the write PIN. MQTT and Influx secrets restore only when the endpoint identity matches; otherwise they are cleared and that integration is disabled. Note the files <em>do</em> contain host names, topics and usernames, so treat them as configuration, not as public data.</p>
+    <details id="preset-panel">
+      <summary>Named presets</summary>
+      <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
+        <select id="preset-list" style="width:auto;margin:0;min-width:12rem"></select>
+        <button id="preset-load" class="secondary outline" style="width:auto;margin:0">Load</button>
+        <button id="preset-delete" class="secondary outline" style="width:auto;margin:0">Delete</button>
+      </div>
+      <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
+        <input type="text" id="preset-name" placeholder="New preset name" maxlength="32" style="width:auto;margin:0">
+        <button id="preset-save" class="secondary outline" style="width:auto;margin:0">Save current</button>
+      </div>
+    </details>
     <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap">
       <button type="button" id="cfg-export" class="secondary outline" style="width:auto;margin:0">Export settings</button>
       <input type="file" id="cfg-import-file" accept=".json" style="margin:0;width:auto">
@@ -298,7 +303,7 @@
     <span class="hint" id="preset-info"></span>
   </article>
 
-  <article>
+  <article id="ota-article">
     <header>Firmware Update (OTA)</header>
     <p class="hint"><strong>Disabled in production builds.</strong> The experimental updater is unsigned and the Teensy 4.1 boot path is single-slot, so authenticity, rollback protection and power-loss recovery cannot be guaranteed. Release firmware must be installed with the Teensy USB bootloader. Lab builds may opt in explicitly with <code>TEG_ENABLE_UNSAFE_LAB_OTA</code>.</p>
     <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
@@ -312,7 +317,7 @@
 
   <article>
     <header>MQTT / Home Assistant</header>
-    <p class="hint">Telemetry with Home Assistant auto-discovery: sensors appear under one &ldquo;TEG Inverter&rdquo; device (power, energy for the HA dashboard, temperatures, fault alert&hellip;). Read-only &mdash; no command topics.</p>
+    <p class="hint">Bench MQTT telemetry with Home Assistant auto-discovery: sensors appear under one &ldquo;TEG Inverter&rdquo; device (power, energy, temperatures, fault alert&hellip;). Read-only &mdash; no command topics.</p>
     <label><input type="checkbox" role="switch" data-path="Mqtt.Enabled"> Enabled</label>
     <div class="grid-fields">
       <label>Broker host <input type="text" data-str data-path="Mqtt.Host" maxlength="39"></label>
@@ -417,8 +422,12 @@ function buildSubmoduleCards() {
   const host = $("#submodules");
   for (const [path, title, channels] of SUBMODULES) {
     const art = document.createElement("article");
-    let html = `<header>${title}</header><div class="grid-fields">
-      <label>Frequency Hz <input type="number" min="1" data-path="Pwm.${path}.PwmFrequency"></label>
+    let html = `<header>${title}</header><div class="grid-fields">`;
+    if (!path.startsWith("Tm2.")) {
+      html += `
+      <label>Frequency Hz <input type="number" min="1" data-path="Pwm.${path}.PwmFrequency"></label>`;
+    }
+    html += `
       <label>Pair mode
       <select data-path="Pwm.${path}.Pair">
         <option value="0">Independent (A and B unrelated)</option>
@@ -567,7 +576,7 @@ function fmtUptime(ms) {
 
 async function pollStatus() {
   try {
-    const s = await (await apiGet("/api/status")).json();
+    const s = await (await apiGet("/api/status?lite=1")).json();
     $("#st-up").textContent = fmtUptime(s.uptimeMs);
     $("#st-freq").textContent = s.active ? (s.modMilliHz / 1000).toFixed(3) + " Hz" : "off";
     $("#st-idx").textContent = s.active
@@ -615,6 +624,17 @@ async function pollStatus() {
         (s.ocActive ? " — ABOVE THRESHOLD" : "") +
         (s.ocMode === "cbc" ? ` · ${s.ocTrips} cycles limited (${s.ocTripsPerSec}/s)` : "")
       : "";
+    const otaOn = s.otaEnabled === true;
+    $("#ota-article").hidden = !otaOn;
+    if (otaOn) {
+      $("#ota-upload").disabled = false;
+      if (!otaStateLoaded) {
+        otaStateLoaded = true;
+        restoreOtaState();
+      }
+    } else {
+      otaStateLoaded = false;
+    }
   } catch (e) { /* device busy; retry next tick */ }
 }
 
@@ -700,7 +720,10 @@ async function refreshPresets() {
     if (prev) sel.value = prev;
     if (!d.available) $("#preset-info").textContent = "no SD card — presets unavailable";
     else if (!(d.presets || []).length) $("#preset-info").textContent = "no presets saved yet";
-  } catch (e) { /* device busy */ }
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 async function presetPost(path, name) {
@@ -764,8 +787,9 @@ $("#cfg-import").addEventListener("click", async () => {
     const text = await f.text();
     const parsed = JSON.parse(text); // fail before touching the device
     if (!parsed.Config) throw new Error("not a TEG settings export");
-    // Dedicated import endpoint: the device enforces secret preservation and
-    // rejects incomplete documents rather than defaulting safety sections off
+    // Dedicated import endpoint: restoreSecrets is identity-gated (PIN always;
+    // MQTT/Influx only if endpoint identity matches). Incomplete documents are rejected
+    // rather than defaulting safety sections off
     let r = await fetch("/api/config/import", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
@@ -792,12 +816,43 @@ $("#cfg-import").addEventListener("click", async () => {
 });
 
 $("#cfg-export").addEventListener("click", () =>
-  downloadApi("/api/config/export", "teg-config.json").catch((e) =>
+  downloadApi("/api/config?download=1", "teg-config.json").catch((e) =>
     $("#preset-info").textContent = "export failed: " + e.message));
 
-refreshPresets();
+let presetsLoaded = false;
+$("#preset-panel").addEventListener("toggle", async () => {
+  if (!$("#preset-panel").open || presetsLoaded) return;
+  presetsLoaded = true;
+  if (!(await refreshPresets())) presetsLoaded = false;
+});
 
 let otaSize = 0;
+let otaStateLoaded = false;
+async function restoreOtaState() {
+  try {
+    const r = await apiGet("/api/ota");
+    if (!r.ok) {
+      otaStateLoaded = false;
+      return;
+    }
+    const out = await r.json();
+    otaSize = out.size || 0;
+    if (out.valid) {
+      $("#ota-info").textContent =
+        `verified: ${out.size} bytes staged — ready to commit`;
+      $("#ota-commit").disabled = false;
+      $("#ota-abort").disabled = false;
+    } else if (out.inProgress || out.error) {
+      $("#ota-info").textContent = out.error
+        ? `rejected: ${out.error} — outputs stay disabled; abort to reboot`
+        : "upload in progress — outputs stay disabled; abort to reboot";
+      $("#ota-commit").disabled = true;
+      $("#ota-abort").disabled = false;
+    }
+  } catch (e) {
+    otaStateLoaded = false;
+  }
+}
 $("#ota-upload").addEventListener("click", async () => {
   const f = $("#ota-file").files[0];
   if (!f) { $("#ota-info").textContent = "choose a .hex file first"; return; }
@@ -861,29 +916,6 @@ $("#ota-abort").addEventListener("click", async () => {
     $("#ota-info").textContent = "abort request failed: " + e.message;
   }
 });
-
-// An OTA leaves the outputs disabled until reboot: if the page is reloaded
-// mid-flow, re-expose the abort path so the device is never stranded
-(async () => {
-  try {
-    const s = await (await apiGet("/api/ota")).json();
-    if (!s.enabled) {
-      $("#ota-file").disabled = true;
-      $("#ota-upload").disabled = true;
-      $("#ota-info").textContent = s.reason || "OTA disabled in this production build";
-      return;
-    }
-    $("#ota-upload").disabled = false;
-    if (s.inProgress) {
-      otaSize = s.size;
-      $("#ota-abort").disabled = false;
-      $("#ota-commit").disabled = !s.valid;
-      $("#ota-info").textContent = s.valid
-        ? `staged image verified (${s.size} bytes) — outputs disabled until commit or abort`
-        : `OTA in progress, outputs disabled${s.error ? " — " + s.error : ""}`;
-    }
-  } catch (e) { /* device busy */ }
-})();
 
 $("#trig-arm").addEventListener("click", async () => {
   try {
@@ -958,7 +990,7 @@ async function refreshWaveform() {
     if (d.type === "none") {
       $("#wave-info").textContent = "none uploaded";
       drawWavePreview([]);
-      return;
+      return true;
     }
     let pts = [];
     if (d.type === "reference") {
@@ -976,8 +1008,10 @@ async function refreshWaveform() {
       $("#wave-info").textContent = `sequence · ${d.count} segments · ${(total / 1000).toFixed(2)} ms period`;
     }
     drawWavePreview(pts);
+    return true;
   } catch (e) {
     $("#wave-info").textContent = "waveform fetch failed";
+    return false;
   }
 }
 
@@ -1010,7 +1044,12 @@ async function uploadWaveform() {
   }
 }
 $("#wave-upload").addEventListener("click", uploadWaveform);
-refreshWaveform();
+let waveformLoaded = false;
+$("#wave-panel").addEventListener("toggle", async () => {
+  if (!$("#wave-panel").open || waveformLoaded) return;
+  waveformLoaded = true;
+  if (!(await refreshWaveform())) waveformLoaded = false;
+});
 
 $("#fault-clear").addEventListener("click", async () => {
   const post = () => fetch("/api/fault/clear", { method: "POST", headers: authHeaders() });

@@ -13,14 +13,6 @@
 extern Adafruit_SSD1306 display;
 extern char timeServer[];
 
-String logs[LogSize] = {
-  "Line 1",
-  "Line 2",
-  "Line 3",
-  "Line 4",
-  "Line 5"
-};
-
 constexpr int NTP_PACKET_SIZE = 48;
 byte packetBuffer[NTP_PACKET_SIZE];
 
@@ -35,7 +27,7 @@ extern qindesign::network::EthernetClient influxDbClient;
 static String statusLine;
 static bool displayDirty = false;
 static unsigned long lastDisplayFlush = 0;
-constexpr unsigned long DisplayFlushIntervalMs = 250;
+constexpr unsigned long DisplayFlushIntervalMs = 1000;
 
 // Deliberately does NOT redraw the display: a full OLED push blocks for
 // ~25-30ms, which would land inside latency-sensitive paths (the settings
@@ -46,12 +38,6 @@ void writeLog(const String &msg) {
 }
 
 void writeLogLevel(uint8_t level, const String &msg) {
-  for (int i = 0; i < LogSize - 1; i++) {
-    logs[i] = logs[i + 1];
-  }
-
-  logs[LogSize - 1] = msg;
-
   Serial.println(msg);
 
   // Timestamped copy for /api/log
@@ -91,6 +77,9 @@ void setStatusLine(const String &line) {
 }
 
 void flushDisplay() {
+  if (!pwmOutputInhibited()) {
+    return;
+  }
   extern bool displayAvailable;
   if (!displayAvailable) {
     displayDirty = false;
@@ -105,9 +94,15 @@ void flushDisplay() {
   display.setCursor(0, 0);
   display.println(statusLine);
 
-  for (int16_t i = 0; i < LogSize; i++) {
-    display.setCursor(10, (i + 1) * 10);
-    display.println(logs[i]);
+  const EventLog &log = eventLogRef();
+  constexpr uint32_t OledLogLines = 5;
+  const uint32_t newest = eventLogNewestSeq(log);
+  const uint32_t since = newest > OledLogLines ? newest - OledLogLines : 0;
+  for (uint32_t i = 0; i < OledLogLines; i++) {
+    const EventEntry *e = eventLogAt(log, since, i);
+    if (e) {
+      display.println(e->text);
+    }
   }
 
   display.display();
@@ -155,13 +150,6 @@ int freeram() {
   extern unsigned long _heap_end;
   extern char *__brkval;
   return (char *)&_heap_end - __brkval;
-}
-
-void printDigits(int digits) {
-  Serial.print(F(":"));
-  if (digits < 10)
-    Serial.print('0');
-  Serial.print(digits);
 }
 
 // Non-blocking NTP client. The request is sent from loop() and the reply is
@@ -284,7 +272,7 @@ FLASHMEM bool prepareInfluxEndpoint() {
   return influxAddrValid;
 }
 
-FLASHMEM void writeInfluxDb(const String &data) {
+FLASHMEM void writeInfluxDb(const char *data) {
   // Metrics are disabled until a token is configured (settings.cfg / web UI);
   // the token is deliberately never present in source
   if (config.Influx.Token[0] == '\0' || config.Influx.Host[0] == '\0') {
@@ -314,12 +302,12 @@ FLASHMEM void writeInfluxDb(const String &data) {
     influxDbClient.println(config.Influx.Token);
     influxDbClient.println("Content-Type: text/plain");
     influxDbClient.print("Content-Length: ");
-    influxDbClient.println(data.length());
+    influxDbClient.println(strlen(data));
     influxDbClient.println();
     influxDbClient.print(data);
 
     elapsedMillis drainTimer;
-    while (influxDbClient.connected() && drainTimer < 250) {
+    while (influxDbClient.connected() && drainTimer < 20) {
       if (influxDbClient.available()) {
         influxDbClient.read();
       }

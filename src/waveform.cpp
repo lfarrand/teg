@@ -541,14 +541,22 @@ bool waveformApplyStream(Stream &in, uint32_t expectedBytes, const char **errorO
                           static_cast<uint8_t>(segMicros[i]), static_cast<uint8_t>(segMicros[i] >> 8),
                           static_cast<uint8_t>(segMicros[i] >> 16),
                           static_cast<uint8_t>(segMicros[i] >> 24)};
-        out.write(rec, sizeof(rec));
+        if (out.write(rec, sizeof(rec)) != sizeof(rec)) {
+          ok = fail("SD write failed");
+          break;
+        }
       }
     }
-    uint8_t header[WaveBinaryHeaderSize];
-    waveBinaryHeaderWrite(header, finalType, finalCount);
-    out.seekSet(0);
-    out.write(header, sizeof(header));
-    out.flush();
+    if (ok) {
+      uint8_t header[WaveBinaryHeaderSize];
+      waveBinaryHeaderWrite(header, finalType, finalCount);
+      // FsFile::flush() is void; sync() is the persist that can fail.
+      if (!out.seekSet(0) ||
+          out.write(header, sizeof(header)) != static_cast<int>(sizeof(header)) ||
+          !out.sync()) {
+        ok = fail("SD write failed");
+      }
+    }
     out.close();
   } else if (out) {
     out.close();
@@ -564,11 +572,21 @@ bool waveformApplyStream(Stream &in, uint32_t expectedBytes, const char **errorO
   }
 
   if (useSd) {
-    const uint64_t expectedSize = WaveBinaryHeaderSize +
-        static_cast<uint64_t>(finalCount) * (finalType == WaveTypeReference ? 2U : 8U);
     FsFile verify = sd.open(WaveformStagingFile, O_RDONLY);
-    const bool verified = verify && verify.fileSize() == expectedSize;
-    if (verify) verify.close();
+    bool verified = false;
+    if (verify) {
+      uint8_t header[WaveBinaryHeaderSize];
+      uint8_t type = WaveTypeNone;
+      if (verify.read(header, sizeof(header)) == static_cast<int>(sizeof(header))) {
+        const int32_t count = waveBinaryHeaderRead(header, &type);
+        if (count >= 0 && type == finalType && static_cast<uint32_t>(count) == finalCount) {
+          const uint64_t payload = static_cast<uint64_t>(count) *
+              (type == WaveTypeReference ? 2U : 8U);
+          verified = verify.fileSize() == WaveBinaryHeaderSize + payload;
+        }
+      }
+      verify.close();
+    }
     if (!verified) {
       sd.remove(WaveformStagingFile);
       *errorOut = "staged waveform failed read-back verification";

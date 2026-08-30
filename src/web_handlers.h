@@ -28,10 +28,12 @@ void api_presets_get(Request &req, Response &res);
 void api_presets_save(Request &req, Response &res);
 void api_presets_load(Request &req, Response &res);
 void api_presets_delete(Request &req, Response &res);
+#ifdef TEG_ENABLE_UNSAFE_LAB_OTA
 void api_ota_get(Request &req, Response &res);
 void api_ota_post(Request &req, Response &res);
 void api_ota_commit(Request &req, Response &res);
 void api_ota_abort(Request &req, Response &res);
+#endif
 void api_scope_arm(Request &req, Response &res);
 void api_scope_release(Request &req, Response &res);
 void api_capture_raw(Request &req, Response &res);

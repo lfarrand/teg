@@ -124,7 +124,7 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.Feedback.FullScaleMillivolts = Config_Feedback["FullScaleMillivolts"] | 3300;
   config.Feedback.KpMilli = Config_Feedback["KpMilli"] | 200;
   config.Feedback.KiMilli = Config_Feedback["KiMilli"] | 2000;
-  config.Feedback.LoopHz = Config_Feedback["LoopHz"] | 1000;
+  config.Feedback.LoopHz = Config_Feedback["LoopHz"] | 250;
 
   JsonObjectConst Config_FaultProtection = doc["Config"]["FaultProtection"];
   config.FaultProtection.Enabled = Config_FaultProtection["Enabled"] | false;
@@ -205,7 +205,7 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.PowerMon.ShuntMicroOhm = Config_PowerMon["ShuntMicroOhm"] | 10000;
   config.PowerMon.CurrentLsbMicroAmp = Config_PowerMon["CurrentLsbMicroAmp"] | 50;
   config.PowerMon.AlertMilliAmp = Config_PowerMon["AlertMilliAmp"] | 1500;
-  config.PowerMon.IntervalMs = Config_PowerMon["IntervalMs"] | 100;
+  config.PowerMon.IntervalMs = Config_PowerMon["IntervalMs"] | 250;
   config.PowerMon.PgEfusePin = Config_PowerMon["PgEfusePin"] | 14;
   config.PowerMon.PgBuckPin = Config_PowerMon["PgBuckPin"] | 15;
   config.PowerMon.AlertPin = Config_PowerMon["AlertPin"] | 20;
@@ -235,17 +235,40 @@ inline void preserveSecrets(MainConfig &config, const MainConfig &previous) {
   }
 }
 
-// UNCONDITIONAL secret restore, for documents the operator did not author
-// (presets, imported files). preserveSecrets only fills in EMPTY fields, so
-// a file carrying a real credential would replace the live one - locking
-// the operator out via a changed write PIN, or pairing a stolen broker host
-// with the device's genuine password. Config applied from such a file must
-// never be able to set a secret; only an explicit UI edit can.
+// Secret restore for documents the operator did not author (presets,
+// imported files). preserveSecrets only fills in EMPTY fields, so a file
+// carrying a real credential would replace the live one - locking the
+// operator out via a changed write PIN. Files cannot SET a secret; they
+// also must not attach the device secret to a new endpoint. The write PIN
+// is always restored. MQTT password and Influx token are restored only
+// when the endpoint identity is unchanged; otherwise the secret is cleared
+// and that integration is disabled.
 inline void restoreSecrets(MainConfig &config, const MainConfig &previous) {
-  copyConfigString(config.Influx.Token, sizeof(config.Influx.Token), previous.Influx.Token);
   copyConfigString(config.Security.WritePin, sizeof(config.Security.WritePin),
                    previous.Security.WritePin);
-  copyConfigString(config.Mqtt.Password, sizeof(config.Mqtt.Password), previous.Mqtt.Password);
+
+  const bool mqttEndpointUnchanged =
+      strcmp(config.Mqtt.Host, previous.Mqtt.Host) == 0 &&
+      config.Mqtt.Port == previous.Mqtt.Port &&
+      strcmp(config.Mqtt.Username, previous.Mqtt.Username) == 0;
+  if (mqttEndpointUnchanged) {
+    copyConfigString(config.Mqtt.Password, sizeof(config.Mqtt.Password), previous.Mqtt.Password);
+  } else {
+    copyConfigString(config.Mqtt.Password, sizeof(config.Mqtt.Password), "");
+    config.Mqtt.Enabled = false;
+  }
+
+  const bool influxEndpointUnchanged =
+      strcmp(config.Influx.Host, previous.Influx.Host) == 0 &&
+      config.Influx.Port == previous.Influx.Port &&
+      strcmp(config.Influx.Org, previous.Influx.Org) == 0 &&
+      strcmp(config.Influx.Bucket, previous.Influx.Bucket) == 0;
+  if (influxEndpointUnchanged) {
+    copyConfigString(config.Influx.Token, sizeof(config.Influx.Token), previous.Influx.Token);
+  } else {
+    copyConfigString(config.Influx.Token, sizeof(config.Influx.Token), "");
+    config.Influx.IntervalSeconds = 0;
+  }
 }
 
 // Clamps out-of-range values; returns true if anything was corrected.
@@ -566,13 +589,23 @@ inline bool validateConfig(MainConfig &config) {
     config.PowerMon.CurrentLsbMicroAmp = 50;
     corrected = true;
   }
-  // Below 50 ms the I2C traffic starts to matter in the loop budget; there
+  // Below 250 ms the I2C traffic starts to matter in the loop budget; there
   // is no telemetry value in polling a 35 ms conversion faster than that
-  if (config.PowerMon.IntervalMs < 50) {
-    config.PowerMon.IntervalMs = 100;
+  if (config.PowerMon.IntervalMs < 250) {
+    config.PowerMon.IntervalMs = 250;
     corrected = true;
   }
   return corrected;
+}
+
+// API/import path: reject rather than silently rewrite. Boot load still
+// sanitizes via validateConfig(). Does not mutate config.
+inline const char *configApiRejectReason(const MainConfig &config) {
+  if (config.CurrentLimit.ThresholdMillivolts < 100 ||
+      config.CurrentLimit.ThresholdMillivolts > 3300) {
+    return "CurrentLimit.ThresholdMillivolts must be 100..3300";
+  }
+  return nullptr;
 }
 
 inline void configToJson(const MainConfig &config, JsonDocument &doc) {
@@ -587,7 +620,6 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
 
   JsonObject Config_Pwm = doc["Config"]["Pwm"].to<JsonObject>();
   Config_Pwm["PrintRegs"] = config.Pwm.PrintRegs;
-  Config_Pwm["SyncPwm"] = config.Pwm.SyncPwm;
   Config_Pwm["Verbose"] = config.Pwm.Verbose;
 
   JsonObject Config_Pwm_Tm1_Sm13 = Config_Pwm["Tm1"]["Sm13"].to<JsonObject>();
@@ -609,7 +641,6 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_Pwm_Tm2["ModulationIndexMilli"] = config.Pwm.Tm2.ModulationIndexMilli;
   Config_Pwm_Tm2["ModulationCells"] = config.Pwm.Tm2.ModulationCells;
   Config_Pwm_Tm2["CarrierDisposition"] = config.Pwm.Tm2.CarrierDisposition;
-  Config_Pwm_Tm2["DeadTimeCompensation"] = config.Pwm.Tm2.DeadTimeCompensation;
   Config_Pwm_Tm2["SoftStartMs"] = config.Pwm.Tm2.SoftStartMs;
   Config_Pwm_Tm2["ReferenceWaveform"] = config.Pwm.Tm2.ReferenceWaveform;
   Config_Pwm_Tm2["DpwmVariant"] = config.Pwm.Tm2.DpwmVariant;
@@ -622,7 +653,6 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   JsonObject Config_Pwm_Tm2_Sm20 = Config_Pwm_Tm2["Sm20"].to<JsonObject>();
   Config_Pwm_Tm2_Sm20["Pair"] = config.Pwm.Tm2.Sm20.Pair;
   Config_Pwm_Tm2_Sm20["DeadTime"] = config.Pwm.Tm2.Sm20.DeadTime;
-  Config_Pwm_Tm2_Sm20["PwmFrequency"] = config.Pwm.Tm2.Sm20.PwmFrequency;
 
   JsonObject Config_Pwm_Tm2_Sm20_ChannelA = Config_Pwm_Tm2_Sm20["ChannelA"].to<JsonObject>();
   Config_Pwm_Tm2_Sm20_ChannelA["DutyCycle"] = config.Pwm.Tm2.Sm20.ChannelA.DutyCycle;
@@ -633,7 +663,6 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   JsonObject Config_Pwm_Tm2_Sm21 = Config_Pwm_Tm2["Sm21"].to<JsonObject>();
   Config_Pwm_Tm2_Sm21["Pair"] = config.Pwm.Tm2.Sm21.Pair;
   Config_Pwm_Tm2_Sm21["DeadTime"] = config.Pwm.Tm2.Sm21.DeadTime;
-  Config_Pwm_Tm2_Sm21["PwmFrequency"] = config.Pwm.Tm2.Sm21.PwmFrequency;
 
   JsonObject Config_Pwm_Tm2_Sm21_ChannelA = Config_Pwm_Tm2_Sm21["ChannelA"].to<JsonObject>();
   Config_Pwm_Tm2_Sm21_ChannelA["DutyCycle"] = config.Pwm.Tm2.Sm21.ChannelA.DutyCycle;
@@ -641,7 +670,6 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   JsonObject Config_Pwm_Tm2_Sm22 = Config_Pwm_Tm2["Sm22"].to<JsonObject>();
   Config_Pwm_Tm2_Sm22["Pair"] = config.Pwm.Tm2.Sm22.Pair;
   Config_Pwm_Tm2_Sm22["DeadTime"] = config.Pwm.Tm2.Sm22.DeadTime;
-  Config_Pwm_Tm2_Sm22["PwmFrequency"] = config.Pwm.Tm2.Sm22.PwmFrequency;
 
   JsonObject Config_Pwm_Tm2_Sm22_ChannelA = Config_Pwm_Tm2_Sm22["ChannelA"].to<JsonObject>();
   Config_Pwm_Tm2_Sm22_ChannelA["DutyCycle"] = config.Pwm.Tm2.Sm22.ChannelA.DutyCycle;
@@ -652,7 +680,6 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   JsonObject Config_Pwm_Tm2_Sm23 = Config_Pwm_Tm2["Sm23"].to<JsonObject>();
   Config_Pwm_Tm2_Sm23["Pair"] = config.Pwm.Tm2.Sm23.Pair;
   Config_Pwm_Tm2_Sm23["DeadTime"] = config.Pwm.Tm2.Sm23.DeadTime;
-  Config_Pwm_Tm2_Sm23["PwmFrequency"] = config.Pwm.Tm2.Sm23.PwmFrequency;
 
   JsonObject Config_Pwm_Tm2_Sm23_ChannelA = Config_Pwm_Tm2_Sm23["ChannelA"].to<JsonObject>();
   Config_Pwm_Tm2_Sm23_ChannelA["DutyCycle"] = config.Pwm.Tm2.Sm23.ChannelA.DutyCycle;
@@ -719,8 +746,6 @@ inline void configToJson(const MainConfig &config, JsonDocument &doc) {
   Config_CurrentLimit["Pin"] = config.CurrentLimit.Pin;
   Config_CurrentLimit["ThresholdMillivolts"] = config.CurrentLimit.ThresholdMillivolts;
   Config_CurrentLimit["CycleByCycle"] = config.CurrentLimit.CycleByCycle;
-  Config_CurrentLimit["FilterCount"] = config.CurrentLimit.FilterCount;
-  Config_CurrentLimit["FilterPeriod"] = config.CurrentLimit.FilterPeriod;
 
   JsonObject Config_Influx = doc["Config"]["Influx"].to<JsonObject>();
   Config_Influx["Host"] = config.Influx.Host;

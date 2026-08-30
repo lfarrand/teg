@@ -30,8 +30,8 @@ struct MqttSensorDef {
   const char *stateKey;    // key in the state JSON
 };
 
-// The published entity set. Energy uses Wh with total_increasing so the HA
-// energy dashboard accepts it directly.
+// The published entity set. Energy uses device_class=energy,
+// state_class=total_increasing, unit Wh.
 constexpr MqttSensorDef MqttSensors[] = {
   {"power", "Real power", "W", "power", "measurement", "power_w"},
   {"vrms", "Output voltage", "V", "voltage", "measurement", "vrms_v"},

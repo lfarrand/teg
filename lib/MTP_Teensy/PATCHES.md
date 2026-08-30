@@ -69,6 +69,10 @@ Call sites (each marked `LOCAL PATCH`):
 **Deliberately NOT patched:** sibling-relink walks in delete/move. Unreachable
 behind patch 1; feeding the watchdog there would convert a reset into a hang.
 
+## Patch 3: store index bounds (P1-19)
+
+`mtpStoreInRange(store, get_FSCount())` after `Storage2Store` before `isMediaPresent` / store indexing; OOB returns `MTP_RESPONSE_INVALID_STORAGE_ID`.
+
 ## Why the KurtE callback files stay gone
 
 `MTP_SD_Callbacks.cpp` and `MTP_USBFS_Callbacks.cpp` are still absent. They

@@ -34,7 +34,7 @@ Host tests cannot close the task. Point at the relevant `docs/BENCH_CHECKS.md` i
 
 ## Docs / comments / memories
 
-Operator-doc, comment, and memory refreshes that only name already-landed contracts land via a feature-branch PR (e.g. #69), not a commit on `main`.
+Operator-doc, comment, and memory refreshes that only name already-landed contracts land via a feature-branch PR (e.g. #69), not a commit on `main`. README UI stills under `docs/images/readme-ui-*.png` regenerate with `python scripts/readme_ui_fixtures/serve_and_capture.py`; captions stay UI orientation / fixture / inhibited — not bench proof.
 
 ## Memories
 

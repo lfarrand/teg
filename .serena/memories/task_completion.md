@@ -32,6 +32,10 @@ If `lib/aWOT` or `lib/eFlexPwm` sources changed: their CMake/ctest suites (see `
 
 Host tests cannot close the task. Point at the relevant `docs/BENCH_CHECKS.md` items; do not claim bench-verified.
 
+## Docs / comments / memories
+
+Operator-doc, comment, and memory refreshes that only name already-landed contracts land via a feature-branch PR (e.g. #69), not a commit on `main`.
+
 ## Memories
 
 After adding, renaming, or deleting Serena memories: `serena memories check` from the repo root.

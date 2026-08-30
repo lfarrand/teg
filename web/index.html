@@ -138,7 +138,7 @@
 
   <article>
     <header>Thermal Monitoring</header>
-    <label><input type="checkbox" role="switch" data-path="Thermal.Enabled"> DS18B20 probes + die temperature; ROM-sorted probe labels are deterministic and the hottest of all three linearly derates the modulation index</label>
+    <label><input type="checkbox" role="switch" data-path="Thermal.Enabled"> DS18B20 probes + die temperature; ROM-sorted probe labels are deterministic. Enabled thermal refuses PWM release until a DS18B20 sample exists (die-only is not enough); the hottest of both probes and the die then linearly derates the modulation index</label>
     <div class="grid-fields">
       <label>OneWire pin <input type="number" data-path="Thermal.OneWirePin" min="0" max="41"></label>
       <label>Derate start &deg;C <input type="number" data-path="Thermal.DerateStartC" min="0" max="255"></label>
@@ -275,8 +275,8 @@
 
   <article>
     <header>USB File Access (MTP)</header>
-    <p class="hint"><strong>Read-only.</strong> Exposes the SD card and QSPI flash over USB so captures, waveforms and presets can be copied off without pulling the card; the host cannot delete, modify or format anything (those operations run unbounded inside a single service pass, so they are refused outright). <strong>Takes effect after a reboot.</strong> A transfer stalls the control tasks while it runs, so service is withheld automatically whenever the inverter is actually generating &mdash; streaming playback or capture with the output live &mdash; and during a firmware update.</p>
-    <label><input type="checkbox" role="switch" data-path="Mtp.Enabled"> Enabled (reboot to apply)</label>
+    <p class="hint"><strong>Read-only.</strong> Exposes the SD card and QSPI flash over USB so captures, waveforms and presets can be copied off without pulling the card; the host cannot delete, modify or format anything (those operations run unbounded inside a single service pass, so they are refused outright). USB is always composite (PID <code>0x04D5</code>). Enabling starts the service on the next inhibited pass &mdash; no reboot. Disabling does not tear the session down until the next boot. A transfer stalls the control tasks while it runs, so service is withheld automatically whenever the inverter is actually generating and during a firmware update. PWM release waits until the first <code>MTP.loop()</code> after <code>begin()</code>.</p>
+    <label><input type="checkbox" role="switch" data-path="Mtp.Enabled"> Enabled (starts when outputs are inhibited)</label>
     <span class="hint" id="mtp-status"></span>
   </article>
 
@@ -605,7 +605,7 @@ async function pollStatus() {
       (s.fault || s.restartInhibit) && !s.hardwareInhibit && !s.provisioningInhibit ? "inline-block" : "none";
     $("#mtp-status").textContent = s.mtp
       ? (s.mtpPaused ? "· active but paused (inverter busy)" : "· active")
-      : (cfg && cfg.Mtp && cfg.Mtp.Enabled ? "· enabled in settings — reboot to start" : "");
+      : (cfg && cfg.Mtp && cfg.Mtp.Enabled ? "· enabled in settings — waiting for the next inhibited pass" : "");
     $("#mqtt-status").textContent =
       s.mqttConnected ? "· connected" : (s.mqttPublishFailures ? `· ${s.mqttPublishFailures} publish failures` : "");
     $("#mppt-status").textContent = s.mpptEnabled
@@ -1074,7 +1074,7 @@ $("#fault-clear").addEventListener("click", async () => {
   }
 });
 
-// Theme: Pico v2 honours data-theme; "auto" = follow the OS
+// Theme: /pico.min.css token sheet honours data-theme; "auto" = follow the OS
 const themeSel = $("#theme");
 themeSel.value = localStorage.getItem("theme") || "auto";
 function applyTheme() {

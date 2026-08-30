@@ -4,9 +4,9 @@ Teensy 4.1 (i.MX RT1062) PWM inverter controller for a TEG power stage. Platform
 
 ## Ship posture
 
-NO-SHIP for an energised or unattended power stage until `docs/BENCH_CHECKS.md` disconnected checklist passes. Target ISR/OUTEN is not host-proven. PRs #18–#29 remain bench-unverified. PWM inhibit/release (`vFaultGeneration` + IRQ-off OUTEN), ACMP vs software gates, thermal/OneWire, preset IRQ, and `restoreSecrets`: `mem:pwm_safety`. Software findings from `docs/REVIEW_2026-08-01.md`, `docs/REVIEW_FIXES_2026-08-28.md`, and `docs/REVIEW_FIXES_2026-08-28-2.md` are remediated in-tree; plans `plan/refactor-adversarial-fixes-1.md` and `plan/refactor-adversarial-fixes-2.md` are Completed. FlexPWM, ACMP/XBAR, ADC/ISR budgets, PSRAM, and MTP are not host-provable.
+NO-SHIP for an energised or unattended power stage until `docs/BENCH_CHECKS.md` disconnected checklist passes. Target ISR/OUTEN is not host-proven. PRs #18–#29 remain bench-unverified. PWM inhibit/release (`vFaultGeneration` + IRQ-off OUTEN), ACMP vs software gates, thermal/OneWire, preset IRQ, and `restoreSecrets`: `mem:pwm_safety`. Software findings from `docs/REVIEW_2026-08-01.md` and `docs/REVIEW_FIXES_2026-08-28.md` through `-6.md` are remediated in-tree; plans `plan/refactor-adversarial-fixes-1.md` through `-6.md` are Completed. Dated 91/91 lines in those notes stay as snapshots. FlexPWM, ACMP/XBAR, ADC/ISR budgets, PSRAM, and MTP are not host-provable.
 
-This is a bench instrument: HTTP/MQTT/Influx have no TLS; the PIN is cleartext. Production `TEG_ENABLE_UNSAFE_LAB_OTA` is undefined (`ota.h` stubs, empty `ota.cpp`/`flash_ota.cpp`, no `/api/ota` routes). Isolation assumptions: `docs/SECURITY.md`. Product-vs-instrument gap: `docs/PRODUCT_READINESS.md`.
+This is a bench instrument: HTTP/MQTT/Influx have no TLS; the PIN is cleartext. PLL is a bench reference lock, not grid-tie. Operator README/BENCH_CHECKS/SECURITY/CI_SECURITY/PRODUCT_READINESS/`web/index.html`/teg-pwm-memory name landed #67/#68 contracts; they are not bench proof. That operator-copy alignment is docs/comments/memories-only PR #69 (do not commit those refreshes on `main`). Do not create `plan/refactor-adversarial-fixes-7.md`; remaining work is disconnected `docs/BENCH_CHECKS.md` evidence. Production `TEG_ENABLE_UNSAFE_LAB_OTA` is undefined (`ota.h` stubs, empty `ota.cpp`/`flash_ota.cpp`, no `/api/ota` routes). Isolation assumptions: `docs/SECURITY.md`. Product-vs-instrument gap: `docs/PRODUCT_READINESS.md`.
 
 ## Tree
 
@@ -15,14 +15,14 @@ This is a bench instrument: HTTP/MQTT/Influx have no TLS; the PIN is cleartext. 
 - `lib/aWOT`, `lib/eFlexPwm` — gitlink forks. Commit and push in the submodule repo before moving the parent gitlink. Patches: each `PATCHES.md`.
 - `lib/MTP_Teensy` — `mtp_wdog.h` plus patches applied to `scripts/mtp_core162/` (Teensyduino 1.62 MTP). Details: `lib/MTP_Teensy/PATCHES.md`.
 - `lib/miniz` — vendored inflate-only.
-- `test/test_*/test_main.cpp` — Unity suites for `pio test -e native` (serde/ota/spectrum/thermal_math/waveform; 80/80 last host run).
+- `test/test_*/test_main.cpp` — Unity suites for `pio test -e native` (six-suite serde/ota/spectrum/thermal_math/waveform/features plus `test_spectrum_wire_quantize_saturates`; also `test_mqtt_discovery`). Host Unity is not ISR/OUTEN proof.
 - `fuzz/`, `benchmark/` — parser libFuzzer and Google Benchmark (CI jobs, not Cortex-M7 evidence).
 - `compile_commands.json` — present at repo root for the C++ language server.
 
 ## Hard invariants
 
 - 8 MiB PSRAM is mandatory. Unproven/failed PSRAM keeps PWM drivers disconnected. Large capture/waveform buffers are `EXTMEM`.
-- Thermal enabled + no valid DS18B20 sample → derate 0 and release refused (die-only is not enough). OneWire only while PWM is inhibited (skipped while OUTEN live). Harvest request 4 s when carrier ≥ 10 kHz while inhibited; 800 ms wait kept.
+- Thermal enabled + no valid DS18B20 sample → derate 0 and release refused (die-only is not enough). OneWire only while PWM is inhibited (skipped while OUTEN live). `thermalConfigure()` keeps `haveValidExternalSample` on the same OneWire pin; pin change or first enable fail-closes and, if OUTEN is live, trips + masks *before* `cacheProbeAddresses()`. Harvest request 4 s when carrier ≥ 10 kHz while inhibited; 800 ms wait kept.
 - Missing/invalid settings or failed PIN persist → provisioning interlock; fault-clear cannot bypass it.
 - Pair modes that cannot be honoured hold **both** outputs off (never silently revert to independent).
 - Polarity-inverting schemes (2, 5, 4+POD/APOD): MASK/fault act before polarity; firmware un-inverts before mask. Scope before trusting.

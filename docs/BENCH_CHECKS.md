@@ -11,10 +11,11 @@ This file lists what to confirm before trusting each feature, roughly in
 descending order of what goes wrong if you skip it. Work down as far as the
 features you actually intend to use.
 
-> **Release gate, 2026-08-01: NO-SHIP.** The confirmed software blockers in
-> [REVIEW_2026-08-01.md](REVIEW_2026-08-01.md) are remediated on the hardening
-> branch. This checklist is the remaining evidence gate: validate the corrected
-> build with gate drivers and the power stage disconnected.
+> **Release gate: NO-SHIP.** Confirmed software blockers from
+> [REVIEW_2026-08-01.md](REVIEW_2026-08-01.md) and the 28 August slices are
+> remediated in software. This checklist is the remaining evidence gate: validate
+> the current `main` build with gate drivers and the power stage disconnected.
+> Host Unity is not ISR or OUTEN proof.
 
 Everything here is in addition to the original checklist (dead-time per
 complementary pair, bipolar leg opposition, POD/APOD idle states, fault-trip
@@ -176,6 +177,18 @@ OUTEN, OCTRL, MCTRL or the pin mux, and a timeout must leave every pin dark.
       request: 4 s when the carrier is ≥ 10 kHz while PWM is inhibited; the
       800 ms wait is kept. That is not a generic 2 s harvest interval.
 
+## 0c. Thermal fail-closed (before generating with Thermal.Enabled)
+
+- [ ] Enable thermal with **no** DS18B20 on the bus. Derate must go to 0 and
+      PWM release must be refused. Die temperature alone is not enough.
+- [ ] Harvest a DS18B20 sample while inhibited, then apply an unrelated
+      settings change on the same OneWire pin. The sample must be kept; OneWire
+      must not run while OUTEN is live.
+- [ ] First-enable or change the OneWire pin while generating. Outputs must
+      trip and mask **before** the ROM search (`cacheProbeAddresses`).
+- [ ] Confirm `thermalMissedCycles` does not climb from OneWire traffic while
+      OUTEN is live.
+
 ## 1. USB MTP — stack headroom (do this one first if MTP is enabled)
 
 > **Largely resolved 2026-07-30.** Compiling out the opt-in CMSIS FFT engine
@@ -210,13 +223,21 @@ stack, and it was the single most likely way this build bites you.
 
 Also for MTP:
 
+- [ ] USB is always composite (`-DUSB_MTPDISK_SERIAL`, PID `0x04D5`) even when
+      `Mtp.Enabled` is false. Enabling service while inhibited starts
+      `MTP.begin()` without a reboot; disabling does not tear the session down
+      until the next boot.
+- [ ] After `MTP.begin()`, confirm one `MTP.loop()` while still inhibited.
+      `mtpAllowsPwmRelease()` must refuse OUTEN until that first loop runs
+      (20 Hz filesystem-from-IRQ timer).
 - [ ] Enter a deliberate maintenance state first: inhibit every PWM output and stop
       control ownership before browsing. Confirm the automatic gate never starts or
       services MTP during SPWM, fixed duty, resident playback or other-module output.
 - [ ] **It is read-only by design.** Confirm the host cannot delete, rename or
       write — that refusal is a safety property, not a bug (see
-      `lib/MTP_Teensy/PATCHES.md`).
-- [ ] The USB PID changes to `0x04D5`, so the COM port may move once. Serial
+      `lib/MTP_Teensy/PATCHES.md`). GetObjectHandles / Storage2Store must refuse
+      a store index that is not `< get_FSCount()`.
+- [ ] The USB PID is `0x04D5`, so the COM port may move once. Serial
       still works (`USB_MTPDISK_SERIAL`), but **eject the device before
       flashing** — an open MTP session can block Teensy Loader's auto-reboot.
 - [ ] File timestamps are wrong on the host for even-numbered years after
@@ -391,6 +412,9 @@ from here, so calibration errors propagate.
 
 ## 10. Presets, export and import
 
+- [ ] Settings polls `/api/status?lite=1`. Confirm `meterActive` is last-window
+      state (no `analogRead` on that path) and that MPPT copy does not always
+      say “waiting for power metering”.
 - [ ] Requires an SD card; the list endpoint reports `available: false` without
       one.
 - [ ] Confirm a preset load applies immediately. The write PIN is always
@@ -405,8 +429,9 @@ from here, so calibration errors propagate.
 ## 11. Spectrum and THD
 
 - [ ] Portable radix-2 is the default. Check `GET /api/spectrum?format=bin`
-      (TEGS; HTTP 200 + flags=0 if unavailable). The JSON default has no
-      `"engine"` field. Do not compare two FFT engines.
+      (TEGS; HTTP 200 + flags=0 if unavailable). JSON `mag[]` uses
+      `spectrumWireQuantize` / 10000 and saturates at 65535. The JSON default
+      has no `"engine"` field. Do not compare two FFT engines.
 - [ ] Sanity-check the reported THD against a known-clean and a known-distorted
       output before trusting absolute numbers.
 - [ ] Use a deliberately non-coherent fundamental and inject a known high-order
@@ -417,10 +442,12 @@ from here, so calibration errors propagate.
 
 ## What the tests already cover
 
-Host suites exercise headers; they do not prove ISR or OUTEN. The host-safe
-gate is `test_config_serde`, `test_features`, `test_ota`, `test_spectrum`
-(including `test_spectrum_wire_quantize_saturates`), `test_thermal_math`, and
-`test_waveform`.
+Host suites exercise headers; they do not prove ISR or OUTEN. The six-suite
+host-safe gate is `test_config_serde`, `test_features`, `test_ota`,
+`test_spectrum`, `test_thermal_math`, and `test_waveform`. Name
+`test_spectrum_wire_quantize_saturates` separately from that list (Unity case
+in `test_spectrum`). `test_mqtt_discovery` is also native; report it separately.
+Do not publish a numeric test census.
 
 - Modulation maths for all nine schemes, including FFT-verified harmonic
   behaviour (carrier cancellation, triplen-free line-line, the 4/π six-step

@@ -11,7 +11,7 @@
 PlatformIO. Envs in `platformio.ini`:
 
 - `teensy41` — default firmware. `platform`, `platform_packages`, and `lib_deps` are **exact pins**.
-- `native` — Unity + gcov; `test_build_src = no`. Host suites cover serde/ota/spectrum/thermal_math/waveform (80/80 last host run), not ISR/OUTEN.
+- `native` — Unity + gcov; `test_build_src = no`. Six-suite gate is serde/ota/spectrum/thermal_math/waveform/features plus `test_spectrum_wire_quantize_saturates`, not ISR/OUTEN. Also `test_mqtt_discovery` (8/8) — report separately. Do not publish a 91/99/six-suite numeric total. Operator docs name that split.
 - `native-sanitize` — ASan/UBSan. On Windows use MSYS2 CLANG64 and keep `clang64/bin` on PATH so the ASan DLL loads.
 
 Load-bearing Teensy pins (read the `platformio.ini` comment before changing):

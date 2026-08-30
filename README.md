@@ -4,8 +4,9 @@ Firmware for a **Teensy 4.1** (NXP i.MX RT1062, Cortex-M7 @ 600 MHz) that acts a
 network-controlled PWM signal generator and inverter modulator for a thermoelectric
 generator (TEG) power system. It drives complementary IGBT/MOSFET gate pairs across
 all four FlexPWM timer modules, with a modern web UI, a JSON API, closed-loop
-amplitude regulation, grid synchronisation, maximum-power-point tracking, and
-both software and hardware fault protection.
+amplitude regulation, a bench PLL that can lock to an external AC reference
+(not a grid-tie product), maximum-power-point tracking, and both software and
+hardware fault protection.
 
 > **New features are bench-unverified.** The twelve capabilities added in
 > PRs #18–#29 (everything from *Power metering* onward below) have been
@@ -13,11 +14,13 @@ both software and hardware fault protection.
 > analysis — never on hardware. Read **[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md)**
 > before using them on a real power stage.
 >
-> **Release review, 2026-08-01: the confirmed software findings have been
-> remediated, but the release remains NO-SHIP for an energised or unattended
-> power stage until the disconnected-hardware checklist passes.** See the exact
-> reviewed commits, evidence, rejected false positives and fix disposition in
-> **[docs/REVIEW_2026-08-01.md](docs/REVIEW_2026-08-01.md)**.
+> **Release remains NO-SHIP** for an energised or unattended power stage until
+> the disconnected-hardware checklist in
+> **[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md)** passes. Dated reviews
+> ([2026-08-01](docs/REVIEW_2026-08-01.md),
+> [2026-08-28](docs/REVIEW_2026-08-28.md)) record findings; slices 1–6 of the
+> 28 August pass are landed in software. Host tests and later PRs are not
+> ISR/OUTEN proof.
 >
 > **This is a bench instrument, not a product.** Every API method now requires the
 > PIN, a same-subnet peer and valid Host/Origin authority; failed attempts are
@@ -68,11 +71,14 @@ both software and hardware fault protection.
   and scheme-aware forms, served gzip-compressed from flash. `/pico.min.css` is a
   ~2 KB token sheet at that URL, not Pico.css v2
 - **Tested core logic** — host-native Unity covers selected headers only
-  (`test_build_src = no`). Firmware `.cpp` is target-only. The host-safe gate is
-  `test_config_serde`, `test_features`, `test_ota`, `test_spectrum` (including
-  `test_spectrum_wire_quantize_saturates`), `test_thermal_math` and
-  `test_waveform`. That is not ISR, OUTEN, register, boot-order, or network
-  proof; the native environment cannot validate those paths
+  (`test_build_src = no`). Firmware `.cpp` is target-only. The six-suite
+  host-safe gate is `test_config_serde`, `test_features`, `test_ota`,
+  `test_spectrum`, `test_thermal_math` and `test_waveform`. Name
+  `test_spectrum_wire_quantize_saturates` separately from that list (Unity case
+  in `test_spectrum`). `test_mqtt_discovery` is also native; report it
+  separately.
+  That is not ISR, OUTEN, register, boot-order, or network proof; the native
+  environment cannot validate those paths
 
 ## Hardware
 
@@ -134,9 +140,12 @@ live. See [docs/CI_SECURITY.md](docs/CI_SECURITY.md) for exact gates and
 limitations; in particular, benchmark timings from a shared x86 runner are not
 Cortex-M7 timing evidence.
 
-Settings persist to `/settings.cfg` (JSON) on the SD card. Boot, API updates,
-imports and presets all require the complete versioned schema and reject missing,
-wrongly typed or unsafe sections before hardware changes. Saves contain a monotonic
+Settings persist to `/settings.cfg` (JSON) on the SD card. SchemaVersion stays
+1. Boot, API updates, imports and presets all require the complete versioned
+schema and reject missing, wrongly typed or unsafe sections before hardware
+changes. `GET /api/config` omits `Pwm.SyncPwm`, `CurrentLimit.FilterCount` /
+`FilterPeriod`, Tm2 cell `PwmFrequency`, and `Tm2.DeadTimeCompensation`; the
+parser still reads those keys and `validateConfig` still clamps them. Saves contain a monotonic
 generation and CRC over the canonical configuration, are read back and verified,
 then rotate through live and backup names. Boot scans the live, temporary and backup
 files and promotes the newest valid generation, so power loss during FAT rename does
@@ -170,12 +179,12 @@ The API underneath is plain JSON:
 |---|---|---|
 | `/api/config` | GET | Full configuration document (secrets redacted); `?download=1` attaches `teg-config.json` (same body as export) |
 | `/api/config` | POST | Validate and atomically apply a complete configuration; queue a verified SD save; returns `{"applyMicros": n, "persistPending": true}` |
-| `/api/status` | GET | Live telemetry (uptime, fault, ISR cycles, apply time, actual frequency, index, free RAM); `?lite=1` exists (no `analogRead`; settings poll uses this) |
+| `/api/status` | GET | Live telemetry (uptime, fault, ISR cycles, apply time, actual frequency, index, free RAM). `?lite=1` skips `analogRead` but still emits last-window `meterActive`; `powerMw` / `vrmsMv` / `irmsMa` / `pfMilli` / `energyMwh` stay full-status only |
 | `/api/capture` | GET | Min/max envelope of the waveform capture ring (`?count=&bins=`) |
 | `/api/waveform` | GET | Current uploaded custom waveform (type, size, preview) |
 | `/api/waveform` | POST | Upload text, TEGW or gzip; exact-length/time bounded, staged and swapped only after validation; refused during active stepped/streamed playback |
 | `/api/capture/raw` | GET | Binary capture download — 20-byte `TEGC` header + LE `uint16` samples (`?channel=v\|i&count=`) |
-| `/api/spectrum` | GET | FFT magnitudes, fundamental and THD (`?points=`, default 1024); `?format=bin` is 32-byte LE TEGS + u16 bins (unavailable is HTTP 200, flags=0). JSON `mag[]` uses `spectrumWireQuantize` / 10000, ≤128 bins |
+| `/api/spectrum` | GET | FFT magnitudes, fundamental and THD (`?points=`, default 1024); `?format=bin` is 32-byte LE TEGS + u16 bins (unavailable is HTTP 200, flags=0). JSON `mag[]` uses `spectrumWireQuantize` / 10000 (saturates at 65535), ≤128 bins |
 | `/api/scope` | GET | Trigger state, source, edge, level, post-trigger count |
 | `/api/scope/arm` | POST | Arm the single-shot trigger `{source, edge, levelMv, postSamples}` |
 | `/api/scope/release` | POST | Disarm and resume rolling capture |
@@ -199,7 +208,9 @@ secret in a POST keeps the stored value.
 
 > **A PIN is generated on first boot** if none is set — 8 characters from the
 > hardware TRNG, shown on the OLED for two minutes and printed to serial before
-> networking. It must be durably persisted before PWM can be released; entropy
+> networking. `setup()` flushes the OLED while outputs are still inhibited,
+> immediately before `clearFaultTrip(false)`; `flushDisplay()` skips I2C once
+> OUTEN is live. It must be durably persisted before PWM can be released; entropy
 > failure leaves the API locked, while save failure leaves the provisioning
 > interlock asserted and retries from the main loop. Note it down and change it locally.
 > A board that ran a pre-hardening build which exposed the PIN through the event
@@ -419,7 +430,8 @@ counts, chunk-streamed with the watchdog serviced throughout.
 `GET /api/spectrum` runs a Hann-windowed FFT over the most recent capture
 samples and returns normalised magnitudes, the detected fundamental, and **total
 harmonic distortion**. The default GET is JSON; the stats page uses
-`?format=bin` (32-byte LE TEGS header plus u16 bins).
+`?format=bin` (32-byte LE TEGS header plus u16 bins). JSON `mag[]` uses the
+same `spectrumWireQuantize` / 10000 scale and saturates at 65535.
 
 **Portable radix-2** is the tested default. The CMSIS UI picker is gone. JSON
 does not emit `"engine"`. `?engine=cmsis` is compiled out unless someone defines
@@ -569,10 +581,13 @@ exclusive with the closed-loop feedback (same actuator).
 Publishes telemetry to an MQTT broker with **Home Assistant auto-discovery**:
 one retained config per entity, a single shared JSON state topic read via
 `value_template`, and an availability topic wired as the connection's last will.
-A "TEG Inverter" device appears with 17 entities — power, voltage, current,
-power factor, energy, frequency, modulation index, all three temperatures,
-thermal derate, PLL state, four driver-board aux sensors (power, voltage,
-current, energy), and a fault alert.
+A "TEG Inverter" device appears with 17 entities (16 `MqttSensors[]` plus
+fault) — power, voltage, current, power factor, energy, frequency, modulation
+index, all three temperatures, thermal derate, PLL state, four driver-board aux
+sensors (power, voltage, current, energy), and a fault alert. There is no
+`aux_alert` discovery entity. Energy fields use `device_class=energy`,
+`state_class=total_increasing`, and Wh. This is bench telemetry with HA
+discovery, not an energy-dashboard product.
 
 Read-only: there are no command topics, so the PIN-authenticated HTTP API stays
 the only write path. The broker password follows the same secret contract as the
@@ -623,8 +638,10 @@ the current firmware.
 ## Configuration presets, export and import
 
 Save the current settings under a name and switch between them later; presets
-live at `/presets/<name>.json` on the SD card. Also available: a settings
-download, and an import that applies a file.
+live at `/presets/<name>.json` on the SD card. The Settings page fetches presets
+and the waveform preview the first time those panels open, and retries if that
+GET fails. Also available: a settings download (`GET /api/config?download=1`),
+and an import that applies a file.
 
 **Credentials never travel with configuration.** Presets and exports are written
 redacted. Applying a file always restores the write PIN. MQTT password is
@@ -667,8 +684,11 @@ event chronology remains operational telemetry rather than tamper-proof evidence
 ## USB file access (MTP)
 
 Optionally exposes the SD card and QSPI flash over USB so captures, waveforms,
-presets and logs can be copied off without pulling the card. **Off by default**;
-takes effect at reboot.
+presets and logs can be copied off without pulling the card. **`Mtp.Enabled`
+defaults false.** The USB composite is always built (`-DUSB_MTPDISK_SERIAL`,
+never `=1`; PID `0x04D5`). Enabling service does **not** require a reboot: when
+outputs are inhibited, `mtpTask()` calls `MTP.begin()`. Turning the flag off
+does not tear the session down until the next boot.
 
 **Read-only.** Delete, write, move, copy and format are refused at the MTP
 dispatcher. That is a safety property, not a preference: those operations reach
@@ -679,33 +699,44 @@ browse and read, which is the whole use case, and means a host can never damage
 an uploaded waveform. The filesystem adapter also hides `/settings.cfg`, its
 temporary/backup copies, and `/presets` so MTP cannot disclose stored credentials.
 
-`MTP.begin()` and every subsequent service pass are withheld until the global PWM
-state says **all outputs are inhibited**; OTA also excludes it. A host operation
-can run to completion inside one `MTP.loop()` pass, so this strict maintenance
-gate prevents USB filesystem work from freezing control while any bridge is live.
+`MTP.begin()` must run `MTP.loop()` while still inhibited so the 20 Hz
+filesystem timer cannot stay armed across a release. `mtpAllowsPwmRelease()`
+refuses OUTEN until that first loop completes. Later service passes stay
+withheld while any output is live; OTA also excludes it. GetObjectHandles /
+Storage2Store refuse a store index that is not `< get_FSCount()`.
+`TEG_WITH_MTP_SERVICE=0` would later skip begin/loop only; USB stays the same
+composite token.
 
-Teensyduino 1.62's core MTP is compiled from patched copies in
-`scripts/mtp_core162/` — see `lib/MTP_Teensy/PATCHES.md` for exactly what
-diverges from the 1.62 sources and why.
+The installed Teensy framework is copied to `.pio/framework-arduinoteensy-teg`
+(do not patch the global PlatformIO package). Core MTP is compiled from patched
+1.62 sources in `scripts/mtp_core162/` — see `lib/MTP_Teensy/PATCHES.md`.
 
 ## Thermal monitoring and derating
 
 Two DS18B20 probes on a configurable OneWire pin plus the RT1062 die temperature.
 ROM addresses are sorted lexicographically so the displayed probe labels remain
-deterministic across bus-search order. The hottest of **both probes and the die**
-linearly derates the modulation index between *Derate start* and *Derate
-end* — the derate factor acts as a ceiling on both open-loop settings and the
-closed-loop PI output, and the soft-start slew limit shapes recovery. Live
-temperatures and the active derate factor appear in the status bar.
+deterministic across bus-search order. **Die-only is not enough.** When thermal
+is enabled, PWM release waits for a valid DS18B20 sample; missing probes fail
+closed (derate 0), not full output. After that sample exists, the hottest of
+both probes and the die linearly derates the modulation index between *Derate
+start* and *Derate end*. The derate factor is a ceiling on open-loop settings
+and the closed-loop PI output; the soft-start slew limit shapes recovery.
+
+OneWire bit slots run **only while PWM is globally inhibited**. While OUTEN is
+live, harvest is skipped and the last ISR cap is held. `thermalConfigure()`
+keeps a harvested sample when thermal stays enabled on the same OneWire pin
+(so an unrelated settings save does not freeze that cap forever). Pin change or
+first enable fail-closes, pushes derate 0, and if OUTEN is live trips and
+masks **before** `cacheProbeAddresses()`. While inhibited, conversions are
+requested every 4 s when the carrier is ≥ 10 kHz (else 2 s); the 800 ms harvest
+wait is kept.
 
 The UI calls the sorted addresses **probe 1** and **probe 2**; those labels are stable
 but do not identify a physical connector or thermal role. The legacy API/Influx/MQTT
-keys remain `hot`/`cold` for compatibility only. Safety does not depend on either
-label because the maximum of all available sensors wins. Missing probes are
-periodically rediscovered.
-OneWire still masks interrupts during bit slots; `thermalMissedCycles` measures the
-whole request/read/rescan transaction, and validation caps a thermal-enabled carrier
-at 10 kHz until the bench proves a faster acquisition scheme.
+keys remain `hot`/`cold` for compatibility only. Missing probes are
+rediscovered only while inhibited. OneWire still masks interrupts during bit
+slots; `thermalMissedCycles` measures the last harvest. Validation caps a
+thermal-enabled carrier at 10 kHz until the bench proves a faster scheme.
 
 ## Driver board power monitor
 
@@ -844,11 +875,13 @@ device's config file on the SD card, never in firmware source or this repository
   about 65 KiB more ITCM and left unsafe stack headroom without a proven latency win.
 - True N-cell phase-shifted PWM needs RT1170 silicon — the analysis and migration
   checklist are in `docs/RT1170_PSPWM.md`.
-- **The platform, framework and toolchain are pinned** in `platformio.ini`, and
-  the pins are load-bearing rather than tidiness: Teensyduino 1.60+ compiles a
-  core MTP (`scripts/skip_core_mtp.py` compiles the patched 1.62 sources),
-  and the framework and compiler must move together or the core's own
-  `imxrt.h` fails to build. Read the comment there before bumping anything.
+- **The platform, framework and toolchain are pinned** in `platformio.ini`
+  (Teensyduino **1.62** / GCC **15.2.1**). Those pins move together; the Monday
+  PlatformIO updater skips them. Core MTP is compiled from `scripts/mtp_core162/`
+  against a copy-on-write framework at `.pio/framework-arduinoteensy-teg`.
+  `src/teg_features.h` defaults `TEG_WITH_*` to 1; those flags are unused (no
+  `lib_ignore` / call-site `#if` yet). Read the `platformio.ini` comment before
+  bumping anything.
   Library/gitlink pins improve
   repeatability. CI selects the Ubuntu 24.04 runner family and pins actions,
   PlatformIO and gcovr, canonicalises
@@ -868,16 +901,15 @@ Items to confirm on a scope before driving a real power stage:
 
 Everything added in PRs #18–#29 — metering, the scope, the hardware current
 limit, the PLL, MPPT, MQTT, OTA, presets, the event log and USB MTP — is
-**bench-unverified**. See **[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md)** for the
-per-feature checklist, ordered by what goes wrong if you skip it.
+**bench-unverified**. Later build/MTP/CI and review-slice landings (#67/#68)
+are also **not** hardware proof. See
+**[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md)** for the per-feature checklist.
 
-> **Do not put this on a power stage yet.** The historical 2026-07-31 findings and
-> subsequent fixes remain in
-> **[docs/REVIEW_2026-07-31.md](docs/REVIEW_2026-07-31.md)**. The current release
-> decision is the independently challenged six-lane review in
-> **[docs/REVIEW_2026-08-01.md](docs/REVIEW_2026-08-01.md)**. Its confirmed software
-> findings are fixed in this branch, but the decision stays **NO-SHIP** until the
-> hardware checklist passes with the power stage disconnected.
+> **Do not put this on a power stage yet.** Historical findings stay in
+> **[docs/REVIEW_2026-07-31.md](docs/REVIEW_2026-07-31.md)** and
+> **[docs/REVIEW_2026-08-01.md](docs/REVIEW_2026-08-01.md)**. Software leftovers
+> from the 28 August pass are landed; the decision stays **NO-SHIP** until the
+> disconnected checklist passes.
 
 > **The polarity-inverting schemes had unsafe protective states, now fixed and not yet
 > bench-verified.** Schemes 2 (bipolar), 5 (phase-shifted) and 4 (level-shifted) with
@@ -906,14 +938,14 @@ gates rather than caveats:
   carrier ceiling, verify `missedIsrCycles`, ADC miss counters and DWT ISR maxima
   under Ethernet, SD, thermal and USB stress. No non-zero miss count is acceptable
   until its waveform consequence is understood.
-- **OneWire is inherently interrupt-hostile.** The firmware caches ROMs, measures
-  full transaction misses and caps the thermal-enabled carrier, but an oscilloscope
-  must confirm the remaining disturbance or the sensors must move to separate
-  hardware.
+- **OneWire is inherently interrupt-hostile.** Harvest runs only while inhibited;
+  an oscilloscope must still confirm that `thermalMissedCycles` stays acceptable
+  or the sensors must move to separate hardware.
 - **PSRAM is mandatory.** Remove/fault the chip and prove all PWM outputs stay
   inhibited before trusting the 7.0 MiB EXTMEM allocation.
-- **MTP is maintenance-only.** Verify it never starts or services a host while any
-  output is enabled, and stress large read/directory operations with the watchdog.
+- **MTP is maintenance-only.** Verify `MTP.begin()` plus the first `MTP.loop()`
+  happen while inhibited, that `mtpAllowsPwmRelease()` holds OUTEN until then,
+  and stress large read/directory operations with the watchdog.
 - **Remote management is bench-grade.** There is no TLS, OTA is unsigned/single-slot
   when deliberately lab-enabled, credentials are plaintext on SD, and NTP/logs are
   not cryptographic evidence. See [docs/SECURITY.md](docs/SECURITY.md).

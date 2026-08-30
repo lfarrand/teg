@@ -3,7 +3,8 @@
 
 // MACAPD — Masking-Aware Carrier-Blanked Arc Precursor Detector
 // Host-testable math only. Does NOT trip OUTEN. Not UL 1699B / AFDD product code.
-// See docs/FEATURE_AFDD_MACAPD_ALGORITHM.md and docs/FEATURE_AFDD_RESEARCH_2026-08-30.md.
+// See docs/FEATURE_AFDD_MACAPD_ALGORITHM.md, docs/FEATURE_AFDD_RESEARCH_2026-08-30.md,
+// and docs/FEATURE_AFDD_MACAPD_RESEARCH_2026-08-30.md (literature / edge cases).
 
 #include <math.h>
 #include <stddef.h>

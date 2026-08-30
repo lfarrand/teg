@@ -89,6 +89,8 @@ Produce claim-safe research documentation and an IDE canvas for an innovative HF
 ## 8. Related Specifications / Further Reading
 
 - [docs/FEATURE_AFDD_RESEARCH_2026-08-30.md](../docs/FEATURE_AFDD_RESEARCH_2026-08-30.md)
+- [docs/FEATURE_AFDD_MACAPD_ALGORITHM.md](../docs/FEATURE_AFDD_MACAPD_ALGORITHM.md)
+- [docs/FEATURE_AFDD_MACAPD_RESEARCH_2026-08-30.md](../docs/FEATURE_AFDD_MACAPD_RESEARCH_2026-08-30.md)
 - [docs/PRODUCT_READINESS.md](../docs/PRODUCT_READINESS.md)
 - [docs/FEATURE_ROADMAP_2026-08-30.md](../docs/FEATURE_ROADMAP_2026-08-30.md) (when merged)
 - [NXP i.MX RT1060](https://www.nxp.com/products/i.MX-RT1060)

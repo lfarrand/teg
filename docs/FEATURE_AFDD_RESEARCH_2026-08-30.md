@@ -3,7 +3,7 @@
 **Status:** research / claim-safe architecture only. **NO-SHIP.** Host Unity is not ISR/OUTEN proof.  
 **Not a listed AFDD.** This document invents **no** UL 1699B, IEC 62606, or “arc protection” product claims for the Teensy 4.1 image.
 
-**Companion:** multi-role framing in `docs/FEATURE_ROADMAP_2026-08-30.md` (role **R-AFDD-R**) when that doc is on the branch; hard gates in `docs/PRODUCT_READINESS.md` §1–§2; algorithm detail in `docs/FEATURE_AFDD_MACAPD_ALGORITHM.md`.  
+**Companion:** multi-role framing in `docs/FEATURE_ROADMAP_2026-08-30.md` (role **R-AFDD-R**) when that doc is on the branch; hard gates in `docs/PRODUCT_READINESS.md` §1–§2; algorithm detail in `docs/FEATURE_AFDD_MACAPD_ALGORITHM.md`; literature / edge-case deep dive in `docs/FEATURE_AFDD_MACAPD_RESEARCH_2026-08-30.md`.  
 **Canvas:** `feature-afdd-research-2026-08-30.canvas.tsx` (IDE canvas).  
 **MCU sources (operator local PDFs):** i.MX RT1060 RM Rev. 3 (ADC Ch.66, ADC_ETC Ch.67, eDMA, DMAMUX, XBARA), CEC Rev.4, errata Rev.11, Cortex-M7 TRM, ARMv7-M ARM. Product page: [NXP i.MX RT1060](https://www.nxp.com/products/i.MX-RT1060).
 

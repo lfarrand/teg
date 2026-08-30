@@ -2,7 +2,9 @@
 
 **Status:** research / claim-safe. **NO-SHIP.** Host Unity tests of this math are **not** ISR/OUTEN proof and are **not** UL 1699B / IEC AFDD evidence.  
 **Code:** `src/afdd_macapd.h` (header-only, host-testable). **Tests:** `test/test_afdd_macapd/`.  
-**Architecture:** `docs/FEATURE_AFDD_RESEARCH_2026-08-30.md`. Teensy image **must not** drive OUTEN from MACAPD scores.
+**Architecture:** `docs/FEATURE_AFDD_RESEARCH_2026-08-30.md`.  
+**Deep research (literature + edge cases):** `docs/FEATURE_AFDD_MACAPD_RESEARCH_2026-08-30.md`.  
+Teensy image **must not** drive OUTEN from MACAPD scores.
 
 ---
 

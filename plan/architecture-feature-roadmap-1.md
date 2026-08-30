@@ -10,7 +10,7 @@ tags: [docs, architecture, feature, roadmap]
 
 # Introduction
 
-![Status: In progress](https://img.shields.io/badge/status-In%20progress-yellow)
+![Status: Completed](https://img.shields.io/badge/status-Completed-brightgreen)
 
 Publish a claim-safe multi-role feature roadmap (inverter, waveform generator, AFDD research lenses) as `docs/FEATURE_ROADMAP_2026-08-30.md`, align agent memories, and open a docs-only feature-branch PR. No behavioural firmware changes.
 

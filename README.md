@@ -71,10 +71,12 @@ hardware fault protection.
   and scheme-aware forms, served gzip-compressed from flash. `/pico.min.css` is a
   ~2 KB token sheet at that URL, not Pico.css v2
 - **Tested core logic** — host-native Unity covers selected headers only
-  (`test_build_src = no`). Firmware `.cpp` is target-only. The host-safe gate is
-  `test_config_serde`, `test_features`, `test_ota`, `test_spectrum` (including
-  `test_spectrum_wire_quantize_saturates`), `test_thermal_math` and
-  `test_waveform`. `test_mqtt_discovery` is also native; report it separately.
+  (`test_build_src = no`). Firmware `.cpp` is target-only. The six-suite
+  host-safe gate is `test_config_serde`, `test_features`, `test_ota`,
+  `test_spectrum`, `test_thermal_math` and `test_waveform`. Name
+  `test_spectrum_wire_quantize_saturates` separately from that list (Unity case
+  in `test_spectrum`). `test_mqtt_discovery` is also native; report it
+  separately.
   That is not ISR, OUTEN, register, boot-order, or network proof; the native
   environment cannot validate those paths
 

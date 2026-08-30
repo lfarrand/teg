@@ -442,10 +442,11 @@ from here, so calibration errors propagate.
 
 ## What the tests already cover
 
-Host suites exercise headers; they do not prove ISR or OUTEN. The host-safe
-gate is `test_config_serde`, `test_features`, `test_ota`, `test_spectrum`
-(including `test_spectrum_wire_quantize_saturates`), `test_thermal_math`, and
-`test_waveform`. `test_mqtt_discovery` is also native; report it separately.
+Host suites exercise headers; they do not prove ISR or OUTEN. The six-suite
+host-safe gate is `test_config_serde`, `test_features`, `test_ota`,
+`test_spectrum`, `test_thermal_math`, and `test_waveform`. Name
+`test_spectrum_wire_quantize_saturates` separately from that list (Unity case
+in `test_spectrum`). `test_mqtt_discovery` is also native; report it separately.
 Do not publish a numeric test census.
 
 - Modulation maths for all nine schemes, including FFT-verified harmonic

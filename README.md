@@ -173,6 +173,40 @@ single-page app with:
 - Saves apply immediately (no page reload) and the toast reports the measured
   hardware-apply time
 
+### Screenshots
+
+These stills are **operator UI orientation** captured against a local fixture `/api`
+peer (`scripts/readme_ui_fixtures/serve_and_capture.py`). They are **not** bench
+proof, not ISR/OUTEN proof, and not live power-stage telemetry — see
+[docs/BENCH_CHECKS.md](docs/BENCH_CHECKS.md). Fixture status keeps outputs
+inhibited (restart interlock or latched fault).
+
+![Settings: status bar, restart interlock, Unipolar SPWM form](docs/images/readme-ui-settings-inhibited.png)
+
+*Settings — status bar and scheme-aware inverter form while outputs are inhibited
+(restart interlock). Fixture telemetry.*
+
+![Settings: latched fault banner](docs/images/readme-ui-settings-fault-banner.png)
+
+*Settings — latched software fault banner (“all PWM outputs disabled”) with Clear.
+Fixture state; not a measured FAULT0 event.*
+
+![Settings: MTP article showing wait-for-inhibit status](docs/images/readme-ui-settings-mtp.png)
+
+*Settings — USB MTP article: always-composite, enable waits for the next inhibited
+pass (no reboot). Fixture `#mtp-status` string.*
+
+![Stats: chart grid with temperatures and derate](docs/images/readme-ui-stats.png)
+
+*Stats — live chart chrome (index, temps, derate, RAM). Empty power/PLL series are
+expected when metering/PLL are off. Fixture poll data.*
+
+Regenerate the PNGs with:
+
+```powershell
+python scripts/readme_ui_fixtures/serve_and_capture.py
+```
+
 The API underneath is plain JSON:
 
 | Endpoint | Method | Purpose |

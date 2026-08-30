@@ -2,9 +2,11 @@
 
 **Status:** research / claim-safe. **NO-SHIP.** Host Unity tests of this math are **not** ISR/OUTEN proof and are **not** UL 1699B / IEC AFDD evidence.  
 **Code:** `src/afdd_macapd.h` (header-only, host-testable). **Tests:** `test/test_afdd_macapd/`.  
+**WARP sibling:** `src/afdd_warp.h` + `test/test_afdd_warp/` (Haar WPT interim).  
+**MEF (20 channels):** `docs/FEATURE_AFDD_MACAPD_MEF_2026-08-30.md`.  
 **Architecture:** `docs/FEATURE_AFDD_RESEARCH_2026-08-30.md`.  
 **Deep research (literature + edge cases + WARP wavelet precursor):** `docs/FEATURE_AFDD_MACAPD_RESEARCH_2026-08-30.md`.  
-Teensy image **must not** drive OUTEN from MACAPD / WARP scores.
+Teensy image **must not** drive OUTEN from MACAPD / WARP / MEF scores.
 
 ---
 
@@ -70,7 +72,7 @@ Switching edges inject known impulsive EMI. Because this firmware **owns** FlexP
 - For sample index `i`, distance to nearest period edge: `min(i mod P, P − (i mod P))`
 - If distance ≤ `Tb · Fs`, mark **blank** (invalid); else **keep**
 
-Blanked samples are set to **0** before feature extraction (conservative: remove energy rather than interpolate).
+Blanked samples are **zero-stuffed for Goertzel band / tonal energy** (remove edge EMI rather than interpolate). **Time moments (excess kurtosis) and I/V coherence use mask-exclude** — kept samples only — so blank zeros do not fake leptokurtosis. If `keepCount < keepMin` (default auto `max(8, n/4)`), the state machine forces **`Inhibited`** (“Quiet while blind” is forbidden).
 
 If `blankingAvailable == false`, or `ditherActive`, or `afeFault`, the state machine forces **`Inhibited`** and returns a zero score. Dither must stay mutexed off whenever HF sense is armed (see research note).
 
@@ -95,14 +97,14 @@ Goertzel gives a cheap single-bin energy estimate without CMSIS FFT (production 
 ### F2 — Tonal residual `rTonal`
 
 \[
-r_{\mathrm{tonal}} = \frac{\sum_{k=1}^{4} G(k\cdot f_c)}{e_L+e_M+e_H+\varepsilon}
+r_{\mathrm{tonal}} = \frac{\sum_{k=1}^{4}\big(G(k f_c)+G(k f_c-\Delta)+G(k f_c+\Delta)\big)}{e_L+e_M+e_H+\varepsilon}
 \]
 
-where `G(f)` is Goertzel power at frequency `f`. **High** residual ⇒ energy locked to inverter harmonics ⇒ penalize. **Low** residual with high mid-band ⇒ broadband candidate.
+where `G(f)` is Goertzel power and \(\Delta\) defaults to `fs/N` (`tonalDeltaHz` override). **±Δ** fights mild carrier drift. **High** residual ⇒ energy locked to inverter harmonics ⇒ penalize.
 
 ### F3 — Excess kurtosis `kurtosis`
 
-Population excess kurtosis of `i_b`. Gaussian noise ≈ 0; **impulsive intermittent arcs** inflate the fourth moment. Used as the “impulsiveness” feature.
+Population excess kurtosis of **kept** samples only (mask-exclude). Zero-stuffed blanks must **not** enter the fourth moment. Gaussian noise ≈ 0; **impulsive intermittent arcs** inflate kurtosis.
 
 ### F4 — Burst duty `dBurst`
 
@@ -123,7 +125,7 @@ Rising kurtosis and/or mid-band energy **before** a long HIGH persistence window
 
 ### F6 — Coherence (optional)
 
-If `v_b` is present, `|corr(i_b, v_b)|`. Common-mode EMI often shows high coherence; series-arc current-dominant patterns may differ. Exposed for datasets; not heavily weighted in the default score.
+If `v_b` is present, `|corr(i_b, v_b)|` on **kept** samples. Default weight `wCoh=0.25` (MEF channel E19 often default-off in UI). Common-mode EMI often shows high coherence.
 
 ### F7 — Masking penalty (config)
 
@@ -145,11 +147,13 @@ z_{\mathrm{slope}} &= \max(\Delta e_M,0)/\mathrm{EWMA}(e_M) + 0.25\max(\Delta\ka
 \]
 
 \[
-S = w_b z_{\mathrm{band}} + w_k z_{\mathrm{sk}} + w_d z_{\mathrm{burst}} + w_s z_{\mathrm{slope}}
+S = w_b z_{\mathrm{band}} + w_k z_{\mathrm{sk}} + w_d z_{\mathrm{burst}} + w_s z_{\mathrm{slope}} + w_c z_{\mathrm{coh}}
   - w_t r_{\mathrm{tonal}} - w_m \cdot \mathrm{maskingPenalty}
 \]
 
-Default weights live in `afddMacapdDefaultConfig()` (`wBand=1`, `wKurtosis=0.75`, `wBurst=0.5`, `wSlope=0.5`, `wTonal=1`, `wMask=1`).
+Default weights live in `afddMacapdDefaultConfig()` (`wBand=1`, `wKurtosis=0.75`, `wBurst=0.5`, `wSlope=0.5`, `wCoh=0.25`, `wTonal=1`, `wMask=1`).
+
+**EWMA:** while sense is `CandidateLow` / `CandidateHigh` and `freezeEwmaOnCandidate` (default true), the quiet-floor EWMA **does not** adapt into the event.
 
 ---
 
@@ -157,7 +161,7 @@ Default weights live in `afddMacapdDefaultConfig()` (`wBand=1`, `wKurtosis=0.75`
 
 | Condition | Sense |
 |-----------|--------|
-| dither / no blanking / AFE fault | `Inhibited` |
+| dither / no blanking / AFE fault / keepCount &lt; keepMin | `Inhibited` |
 | `S > tHi` for `nPersist` consecutive frames | `CandidateHigh` |
 | else `S > tLo` | `CandidateLow` |
 | else | `Quiet` |

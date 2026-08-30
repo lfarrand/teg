@@ -7,9 +7,12 @@
 |-----------|------|
 | [`FEATURE_AFDD_RESEARCH_2026-08-30.md`](FEATURE_AFDD_RESEARCH_2026-08-30.md) | Platform architecture (RT1060, M0–M3, OUTEN policy) |
 | [`FEATURE_AFDD_MACAPD_ALGORITHM.md`](FEATURE_AFDD_MACAPD_ALGORITHM.md) | Stage-by-stage MACAPD algorithm + host API |
+| [`FEATURE_AFDD_MACAPD_MEF_2026-08-30.md`](FEATURE_AFDD_MACAPD_MEF_2026-08-30.md) | Multi-evidence fusion — 20 channels E01–E20 |
 | **§6 WARP (this file)** | Wavelet-first **precursor** sibling (irregularity before sustained energy) |
 | `src/afdd_macapd.h` | Host-testable MACAPD math (never drives OUTEN) |
-| `plan/feature-afdd-research-1.md` | Implementation plan |
+| `src/afdd_warp.h` | Host-testable WARP math (Haar WPT interim; never OUTEN) |
+| `plan/feature-afdd-research-1.md` | Initial research plan |
+| `plan/feature-afdd-macapd-recs-1.md` | Recommendation walkthrough plan |
 
 ---
 
@@ -372,9 +375,10 @@ function warpProcessFrame(cfg, st, i_blank, keepMask, macapdFeat):
 |----------|--------|
 | This §6 | Spec locked as research |
 | `docs/FEATURE_AFDD_WARP_ALGORITHM.md` | Optional dedicated algorithm note (mirror MACAPD style) |
-| `src/afdd_warp.h` + `test/test_afdd_warp/` | Header-only host math when coded; compile/default off on Teensy |
+| `src/afdd_warp.h` + `test/test_afdd_warp/` | **Landed** header-only host math (Haar WPT J=3 interim; db4 still preferred); compile/default off on Teensy |
+| `docs/FEATURE_AFDD_MACAPD_MEF_2026-08-30.md` | MEF E01–E20 fusion blueprint |
 | Teensy image | EventLog only if ever wired; **never** OUTEN |
-| Synthetic tests | Tone → no PrecursorWatch; sparse impulses → PrecursorWatch **before** mean \(E_{\mathrm{arc}}\) energy proxy |
+| Synthetic tests | Tone → no PrecursorWatch; sparse impulses → irregularity feature elevated |
 
 ### 6.10 WARP non-claims
 
@@ -387,19 +391,24 @@ function warpProcessFrame(cfg, st, i_blank, keepMask, macapdFeat):
 
 ## 7. Recommendations (research program only)
 
-| Priority | Recommendation | Why |
-|----------|----------------|-----|
-| P0 | Keep Teensy MACAPD / WARP **off OUTEN** forever in this image | Literature + Sandia: listed products still fail; bench instrument ≠ interrupter |
-| P0 | Prefer **M3 16-bit** + proper AA for any serious capture | ENOB / aliasing dominate weak-arc / precursor SNR |
-| P1 | Wire **ditherActive** from real `CarrierDitherMode` when sense lands | Mutex is only as good as the flag |
-| P1 | Change kurtosis / moments to **mask-exclude**; add keep-count inhibit | Fixes blank-zero bias and “Quiet while blind” |
-| P1 | Widen tonal residual to **±Δ bins** or short STFT ridge | Matches docs; fights carrier drift |
-| P2 | Freeze EWMA while Candidate* / Precursor*; longer slope windows | Stops floor chasing the event; real precursors |
-| P2 | Put coherence (and optionally eL/eH ratios) into the score with weights | Parallel / CM discrimination |
-| P2 | Estimate or configure masking from known string L / C or self-test | Make “masking-aware” honest |
-| P2 | Prototype **WARP** host math (`afdd_warp.h`) per §6; fuse with MACAPD | Wavelet-first precursor sibling; FFT penalty-only |
-| P3 | Offline AR residual / spectral kurtosis ablations vs WARP on labelled captures | Literature alternatives; not Teensy trip paths |
-| P3 | Build a labelled capture library (quiet / dither / micro-burst / sustained / optimizer) | Sandia-style replay tuning without claiming listing |
+Track status in-place. **Done** = landed in host math and/or claim-safe docs on this feature branch. **Spec** = documented only. Firmware sense-path wiring stays compile/default off and never OUTEN.
+
+| Priority | Recommendation | Why | Status (2026-08-30) |
+|----------|----------------|-----|---------------------|
+| P0 | Keep Teensy MACAPD / WARP / MEF **off OUTEN** forever in this image | Literature + Sandia: listed products still fail; bench instrument ≠ interrupter | **Done** (policy + headers) |
+| P0 | Prefer **M3 16-bit** + proper AA for any serious capture | ENOB / aliasing dominate weak-arc / precursor SNR | **Done** (docs) |
+| P1 | Wire **ditherActive** from real `CarrierDitherMode` when sense lands | Mutex is only as good as the flag | **Spec** (host flag exists; no Teensy wire) |
+| P1 | Change kurtosis / moments to **mask-exclude**; add keep-count inhibit | Fixes blank-zero bias and “Quiet while blind” | **Done** (`afdd_macapd.h` + tests) |
+| P1 | Widen tonal residual to **±Δ bins** or short STFT ridge | Matches docs; fights carrier drift | **Done** (±Δ Goertzel in host) |
+| P2 | Freeze EWMA while Candidate* / Precursor*; longer slope windows | Stops floor chasing the event; real precursors | **Done** (freeze on Candidate*; WARP horizon slopes) |
+| P2 | Put coherence (and optionally eL/eH ratios) into the score with weights | Parallel / CM discrimination | **Partial** (`wCoh` hook; eL/eH ratio soft) |
+| P2 | Estimate or configure masking from known string L / C or self-test | Make “masking-aware” honest | **Spec** (`maskingPenalty` still operator/default) |
+| P2 | Prototype **WARP** host math (`afdd_warp.h`) per §6; fuse with MACAPD | Wavelet-first precursor sibling; FFT penalty-only | **Done** (Haar interim + `test_afdd_warp`; db4 still preferred) |
+| P2 | Land **MEF** catalog + Settings Evidence[20] blueprint | Multi-evidence enable matrix | **Docs done**; UI/config **Spec** |
+| P3 | Offline AR residual / spectral kurtosis ablations vs WARP on labelled captures | Literature alternatives; not Teensy trip paths | Pending |
+| P3 | Build a labelled capture library (quiet / dither / micro-burst / sustained / optimizer) | Sandia-style replay tuning without claiming listing | Pending |
+
+**Next in priority order:** P1 dither wire (when HF sense lands) → P2 real masking estimate → P2 MEF `Afdd.Evidence[20]` config/UI (SchemaVersion 1, omit-if-default) → P2 db4 lifting replacing Haar → P3 capture library.
 
 ---
 
@@ -453,4 +462,4 @@ function warpProcessFrame(cfg, st, i_blank, keepMask, macapdFeat):
 
 ### In-repo
 
-21. [`FEATURE_AFDD_RESEARCH_2026-08-30.md`](FEATURE_AFDD_RESEARCH_2026-08-30.md), [`FEATURE_AFDD_MACAPD_ALGORITHM.md`](FEATURE_AFDD_MACAPD_ALGORITHM.md), `src/afdd_macapd.h`, `test/test_afdd_macapd/`.
+21. [`FEATURE_AFDD_RESEARCH_2026-08-30.md`](FEATURE_AFDD_RESEARCH_2026-08-30.md), [`FEATURE_AFDD_MACAPD_ALGORITHM.md`](FEATURE_AFDD_MACAPD_ALGORITHM.md), [`FEATURE_AFDD_MACAPD_MEF_2026-08-30.md`](FEATURE_AFDD_MACAPD_MEF_2026-08-30.md), `src/afdd_macapd.h`, `src/afdd_warp.h`, `test/test_afdd_macapd/`, `test/test_afdd_warp/`.

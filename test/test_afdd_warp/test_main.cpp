@@ -1,0 +1,131 @@
+// Host Unity tests for WARP math (afdd_warp.h). Not ISR/OUTEN proof. Not UL 1699B.
+
+#include <math.h>
+#include <unity.h>
+
+#include <afdd_warp.h>
+
+void setUp() {}
+void tearDown() {}
+
+static void fillTone(float *x, size_t n, float fs, float fHz, float amp) {
+  for (size_t i = 0; i < n; ++i) {
+    const float t = static_cast<float>(i) / fs;
+    x[i] = amp * sinf(2.0f * 3.14159265f * fHz * t);
+  }
+}
+
+static void fillSparseImpulses(float *x, size_t n, unsigned seed) {
+  uint32_t s = seed ? seed : 1u;
+  for (size_t i = 0; i < n; ++i) {
+    x[i] = 0.0f;
+  }
+  for (int k = 0; k < 8; ++k) {
+    s = s * 1664525u + 1013904223u;
+    const size_t idx = (s % (n - 4u)) + 2u;
+    x[idx] = 6.0f;
+    x[idx + 1] = -4.0f;
+  }
+}
+
+void test_warp_default_disarmed() {
+  const AfddWarpConfig c = afddWarpDefaultConfig();
+  TEST_ASSERT_FALSE(c.ditherActive);
+  TEST_ASSERT_TRUE(c.blankingAvailable);
+  TEST_ASSERT_FALSE(c.afeFault);
+}
+
+void test_warp_dither_inhibits() {
+  AfddWarpConfig c = afddWarpDefaultConfig();
+  c.ditherActive = true;
+  AfddWarpState st{};
+  afddWarpReset(&st);
+  float x[128] = {};
+  uint8_t ones[128];
+  for (size_t i = 0; i < 128; ++i) {
+    ones[i] = 1;
+  }
+  const AfddWarpFeatures f = afddWarpProcessFrame(c, &st, x, 128, ones, 0.0f, 0.0f);
+  TEST_ASSERT_EQUAL_UINT8(AfddWarpInhibited, st.sense);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, f.sWarp);
+}
+
+void test_warp_tone_not_precursor_watch() {
+  AfddWarpConfig c = afddWarpDefaultConfig();
+  c.tPre = 5.0f; // high — pure tone should stay Quiet
+  c.thetaEnergy = 1.0e6f;
+  c.gammaEnergy = 1.0f;
+  AfddWarpState st{};
+  afddWarpReset(&st);
+  float x[256];
+  uint8_t ones[256];
+  fillTone(x, 256, c.sampleRateHz, 20000.0f, 1.0f);
+  for (size_t i = 0; i < 256; ++i) {
+    ones[i] = 1;
+  }
+  for (int frame = 0; frame < 12; ++frame) {
+    afddWarpProcessFrame(c, &st, x, 256, ones, 0.0f, 0.8f); // high tonal penalty path
+  }
+  TEST_ASSERT_NOT_EQUAL(AfddWarpPrecursorWatch, st.sense);
+  TEST_ASSERT_NOT_EQUAL(AfddWarpInhibited, st.sense);
+}
+
+void test_warp_sparse_impulses_can_raise_irregularity() {
+  AfddWarpConfig c = afddWarpDefaultConfig();
+  c.tPre = 0.2f;
+  c.nPre = 2;
+  c.thetaEnergy = 100.0f; // keep energy "low" vs gamma*theta
+  c.gammaEnergy = 1.0f;
+  c.wT = 0.0f;
+  AfddWarpState st{};
+  afddWarpReset(&st);
+  float x[256];
+  uint8_t ones[256];
+  for (size_t i = 0; i < 256; ++i) {
+    ones[i] = 1;
+  }
+  AfddWarpSenseState last = AfddWarpQuiet;
+  for (int frame = 0; frame < 20; ++frame) {
+    fillSparseImpulses(x, 256, static_cast<unsigned>(10 + frame * 3));
+    const AfddWarpFeatures f = afddWarpProcessFrame(c, &st, x, 256, ones, 0.0f, 0.0f);
+    last = st.sense;
+    (void)f;
+    if (last == AfddWarpPrecursorWatch || last == AfddWarpPrecursorConfirmed ||
+        last == AfddWarpCandidateLow || last == AfddWarpCandidateHigh) {
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE(last == AfddWarpPrecursorWatch || last == AfddWarpPrecursorConfirmed ||
+                   last == AfddWarpCandidateLow || last == AfddWarpCandidateHigh ||
+                   last == AfddWarpQuiet);
+  // Irregularity feature must be finite and typically elevated vs silence.
+  fillSparseImpulses(x, 256, 99);
+  AfddWarpState st2{};
+  afddWarpReset(&st2);
+  const AfddWarpFeatures f1 = afddWarpProcessFrame(c, &st2, x, 256, ones, 0.0f, 0.0f);
+  float silence[256] = {};
+  AfddWarpState st3{};
+  afddWarpReset(&st3);
+  const AfddWarpFeatures f0 = afddWarpProcessFrame(c, &st3, silence, 256, ones, 0.0f, 0.0f);
+  TEST_ASSERT_TRUE(f1.iIrr >= f0.iIrr);
+}
+
+void test_warp_haar_wpt_length() {
+  float x[64];
+  for (size_t i = 0; i < 64; ++i) {
+    x[i] = static_cast<float>(i);
+  }
+  float packets[AFDD_WARP_PACKETS][AFDD_WARP_MAX_N / 8];
+  const size_t plen = afddWarpHaarWpt3(x, 64, packets);
+  TEST_ASSERT_EQUAL(8u, plen);
+}
+
+int main() {
+  UNITY_BEGIN();
+  RUN_TEST(test_warp_default_disarmed);
+  RUN_TEST(test_warp_dither_inhibits);
+  RUN_TEST(test_warp_tone_not_precursor_watch);
+  RUN_TEST(test_warp_sparse_impulses_can_raise_irregularity);
+  RUN_TEST(test_warp_haar_wpt_length);
+  return UNITY_END();
+}

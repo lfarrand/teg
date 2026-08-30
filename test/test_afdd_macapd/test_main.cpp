@@ -86,9 +86,62 @@ void test_tonal_carrier_has_higher_residual_than_bursts() {
   afddMacapdApplyBlank(burst, ones, 256, burstB);
 
   // Temporarily lie that blanking is available so we are not inhibited.
-  const AfddMacapdFeatures ft = afddMacapdProcessFrame(c, &stTone, toneB, nullptr, 256);
-  const AfddMacapdFeatures fb = afddMacapdProcessFrame(c, &stBurst, burstB, nullptr, 256);
+  const AfddMacapdFeatures ft = afddMacapdProcessFrame(c, &stTone, toneB, nullptr, 256, ones);
+  const AfddMacapdFeatures fb = afddMacapdProcessFrame(c, &stBurst, burstB, nullptr, 256, ones);
   TEST_ASSERT_TRUE(ft.rTonal > fb.rTonal);
+}
+
+void test_mask_exclude_kurtosis_ignores_blank_zeros() {
+  float x[64];
+  uint8_t mask[64];
+  for (size_t i = 0; i < 64; ++i) {
+    x[i] = (i < 32) ? 0.0f : 1.0f; // half zeros
+    mask[i] = (i < 32) ? 0u : 1u;  // zeros are blanked
+  }
+  const float kAll = afddMacapdExcessKurtosis(x, 64);
+  const float kKeep = afddMacapdExcessKurtosisMasked(x, mask, 64);
+  // Constant kept samples → ~0 excess kurtosis; including blank zeros changes moments.
+  TEST_ASSERT_FLOAT_WITHIN(0.25f, 0.0f, kKeep);
+  TEST_ASSERT_TRUE(fabsf(kAll - kKeep) > 0.5f);
+}
+
+void test_low_keep_count_inhibits() {
+  AfddMacapdConfig c = afddMacapdDefaultConfig();
+  c.keepMin = 40;
+  AfddMacapdState st{};
+  afddMacapdReset(&st);
+  float x[64];
+  uint8_t mask[64];
+  for (size_t i = 0; i < 64; ++i) {
+    x[i] = 1.0f;
+    mask[i] = (i < 8) ? 1u : 0u; // only 8 kept
+  }
+  afddMacapdProcessFrame(c, &st, x, nullptr, 64, mask);
+  TEST_ASSERT_EQUAL_UINT8(AfddMacapdInhibited, st.sense);
+}
+
+void test_ewma_freezes_while_candidate() {
+  AfddMacapdConfig c = afddMacapdDefaultConfig();
+  c.freezeEwmaOnCandidate = true;
+  c.tLo = 0.01f;
+  c.tHi = 0.02f;
+  c.nPersist = 1;
+  c.wBand = 10.0f;
+  c.wTonal = 0.0f;
+  c.blankHalfWidthS = 0.0f;
+  AfddMacapdState st{};
+  afddMacapdReset(&st);
+  float x[128];
+  fillNoiseBursts(x, 128, 55);
+  for (int i = 0; i < 6; ++i) {
+    afddMacapdProcessRaw(c, &st, x, nullptr, 128);
+  }
+  TEST_ASSERT_TRUE(st.sense == AfddMacapdCandidateLow || st.sense == AfddMacapdCandidateHigh);
+  const float ewmaArmed = st.ewmaEm;
+  fillTone(x, 128, c.sampleRateHz, 30000.0f, 50.0f);
+  afddMacapdProcessRaw(c, &st, x, nullptr, 128);
+  // Floor must not chase the huge new energy while still Candidate*.
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, ewmaArmed, st.ewmaEm);
 }
 
 void test_impulsive_bursts_raise_kurtosis() {
@@ -144,6 +197,9 @@ int main() {
   RUN_TEST(test_blank_mask_clears_near_carrier_edges);
   RUN_TEST(test_tonal_carrier_has_higher_residual_than_bursts);
   RUN_TEST(test_impulsive_bursts_raise_kurtosis);
+  RUN_TEST(test_mask_exclude_kurtosis_ignores_blank_zeros);
+  RUN_TEST(test_low_keep_count_inhibits);
+  RUN_TEST(test_ewma_freezes_while_candidate);
   RUN_TEST(test_persist_reaches_high_on_strong_bursts);
   RUN_TEST(test_afe_fault_inhibits);
   return UNITY_END();

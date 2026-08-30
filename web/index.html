@@ -605,7 +605,7 @@ async function pollStatus() {
       (s.fault || s.restartInhibit) && !s.hardwareInhibit && !s.provisioningInhibit ? "inline-block" : "none";
     $("#mtp-status").textContent = s.mtp
       ? (s.mtpPaused ? "· active but paused (inverter busy)" : "· active")
-      : (cfg && cfg.Mtp && cfg.Mtp.Enabled ? "· enabled in settings — reboot to start" : "");
+      : (cfg && cfg.Mtp && cfg.Mtp.Enabled ? "· enabled in settings — waiting for the next inhibited pass" : "");
     $("#mqtt-status").textContent =
       s.mqttConnected ? "· connected" : (s.mqttPublishFailures ? `· ${s.mqttPublishFailures} publish failures` : "");
     $("#mppt-status").textContent = s.mpptEnabled

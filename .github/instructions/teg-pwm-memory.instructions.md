@@ -1,6 +1,6 @@
 ---
 description: TEG PWM release, thermal, and import-safety invariants
-applyTo: "src/**/*.{cpp,h},web/**/*.{html,js,css},scripts/mtp_core162/**"
+applyTo: "src/**/*.{cpp,h},web/**/*.{html,js,css},scripts/mtp_core162/**,scripts/readme_ui_fixtures/**,README.md,docs/images/readme-ui-*.png"
 ---
 
 # TEG PWM Memory

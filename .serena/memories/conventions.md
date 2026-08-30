@@ -6,7 +6,7 @@ Put algorithm/state machines in headers (`*_math.h`, `modulation.h`, `pwm_timing
 
 New host-testable unit: `test/test_<name>/test_main.cpp`, Unity, `setUp`/`tearDown`, `pio test -e native`.
 
-Host six-suite gate: serde/ota/spectrum/thermal_math/waveform/features plus `test_spectrum_wire_quantize_saturates`, not ISR/OUTEN. Also native: `test_mqtt_discovery` (8/8) — report separately. Do not publish a 91/99/six-suite numeric total; dated REVIEW_FIXES 91/91 lines stay as snapshots. Operator docs now name that split.
+Host six-suite gate: serde/ota/spectrum/thermal_math/waveform/features plus `test_spectrum_wire_quantize_saturates`, not ISR/OUTEN. Also native: `test_mqtt_discovery` (8/8) — report separately. Do not publish a 91/99/six-suite numeric total; dated REVIEW_FIXES 91/91 lines stay as snapshots. Operator docs name that split via docs-only PR #69; land further operator-doc / comment / memory refreshes on a feature-branch PR, not a commit on `main`.
 
 `build_src_flags` (`-Wall -Wextra -Wdouble-promotion`) apply to `src/` only so library noise stays out.
 

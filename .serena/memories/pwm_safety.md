@@ -2,7 +2,7 @@
 
 ## Ship gate
 
-NO-SHIP until `docs/BENCH_CHECKS.md` disconnected checklist passes. Host Unity is not ISR/OUTEN proof. Review slices 1–6 Completed (`docs/REVIEW_FIXES_2026-08-28.md` through `-6.md`, plans `refactor-adversarial-fixes-1`–`6`). Dated 91/91 lines in those notes stay as snapshots; operator README/BENCH_CHECKS name six suites plus `test_spectrum_wire_quantize_saturates` without a numeric total. Invariants also in `.github/instructions/teg-pwm-memory.instructions.md`.
+NO-SHIP until `docs/BENCH_CHECKS.md` disconnected checklist passes. Host Unity is not ISR/OUTEN proof. Review slices 1–6 Completed (`docs/REVIEW_FIXES_2026-08-28.md` through `-6.md`, plans `refactor-adversarial-fixes-1`–`6`). Dated 91/91 lines in those notes stay as snapshots; operator README/BENCH_CHECKS name six suites plus `test_spectrum_wire_quantize_saturates` without a numeric total. Host-safe leftover class is empty; do not create `plan/refactor-adversarial-fixes-7.md`. Remaining work is disconnected bench evidence in `docs/BENCH_CHECKS.md`. Invariants also in `.github/instructions/teg-pwm-memory.instructions.md`.
 
 ## Inhibit / release
 

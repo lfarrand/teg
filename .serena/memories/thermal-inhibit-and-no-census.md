@@ -1,4 +1,4 @@
-PR 68 squash-merged to main (e232a62, 2026-08-30). Host Unity is not ISR/OUTEN proof.
+PR 68 squash-merged to main (e232a62, 2026-08-30). PR #69 is the docs/comments/memories-only alignment of operator copy to those #67/#68 contracts (do not commit that class of refresh on `main`). Host Unity is not ISR/OUTEN proof. Do not create `plan/refactor-adversarial-fixes-7.md`.
 
 - thermalConfigure: keep haveValidExternalSample when thermal stays enabled on the same OneWire pin. Pin change or first enable fail-closes, setThermalDerateMilli(0), and if OUTEN is live trip + mask *before* cacheProbeAddresses().
 - Lite /api/status emits last-window meterActive (no analogRead). Power/vrms/irms/pf/energy stay full-status only.

@@ -6,8 +6,9 @@
 | Companion | Role |
 |-----------|------|
 | [`FEATURE_AFDD_RESEARCH_2026-08-30.md`](FEATURE_AFDD_RESEARCH_2026-08-30.md) | Platform architecture (RT1060, M0–M3, OUTEN policy) |
-| [`FEATURE_AFDD_MACAPD_ALGORITHM.md`](FEATURE_AFDD_MACAPD_ALGORITHM.md) | Stage-by-stage algorithm + host API |
-| `src/afdd_macapd.h` | Host-testable math (never drives OUTEN) |
+| [`FEATURE_AFDD_MACAPD_ALGORITHM.md`](FEATURE_AFDD_MACAPD_ALGORITHM.md) | Stage-by-stage MACAPD algorithm + host API |
+| **§6 WARP (this file)** | Wavelet-first **precursor** sibling (irregularity before sustained energy) |
+| `src/afdd_macapd.h` | Host-testable MACAPD math (never drives OUTEN) |
 | `plan/feature-afdd-research-1.md` | Implementation plan |
 
 ---
@@ -18,6 +19,7 @@
 2. **MACAPD’s architecture matches the literature’s hard constraints** for this platform: separate HF path, carrier-aware blanking, multi-feature score (band energy + impulsiveness + burst + precursor slopes), dither mutex, masking honesty, dual-MCU before any trip claim.
 3. **The present host math is a research skeleton, not a field detector.** Several literature-shaped edges are soft or unimplemented: blank zeros bias moments; tonal penalty is single-bin not ±Δ; EWMA adapts into events; `maskingPenalty` / coherence barely drive physics; Fs/Nyquist and AFE aliasing are unchecked; persistence is frame-count not energy-budgeted ride-through.
 4. **Listing / field history is a warning, not a target.** Sandia/Tigo surveys of UL-listed products still found missed arcs and nuisance trips under realistic extras. That is why Teensy MACAPD scores must **never** drive OUTEN.
+5. **FFT-only energy is a late cue.** Intermittent micro-discharges and contact chatter raise **time-local irregularity** (wavelet packet CV, entropy, micro-burst rate) **before** mean mid-band energy would trip a naive FFT/Goertzel detector. **WARP** (§6) is the proposed wavelet-first precursor sibling: primary tool is lifting **db4 WPT**; FFT/Goertzel is **tonal EMI penalty only**. Still research-only; still never OUTEN.
 
 ---
 
@@ -53,7 +55,7 @@ An independent survey of UL-listed / recognised / prototype AFCI–AFD products 
 | **Inductive coupling between arrays** | Parallel conduit runs coupled switching into other strings | Common-mode / multi-string honesty; EventLog only on Teensy |
 | **Short broadband transients** | Products with ~62 ms trip times risk riding poorly through disconnect clicks | Persistence / ride-through before CandidateHigh; energy-before-interrupt is a dual-MCU concern |
 
-The survey’s conclusion — that **wavelet / richer algorithms** may help where FFT-only fails — aligns with later statistical and multi-stage papers, but does **not** authorise product claims here.
+The survey’s conclusion — that **wavelet / richer algorithms** may help where FFT-only fails — aligns with later statistical and multi-stage papers, but does **not** authorise product claims here. That citation is the explicit motivation for **WARP** (§6): keep carrier blanking and unwanted-trip honesty, but replace “mean FFT bin above threshold” as the *early* cue with **multi-scale irregularity**.
 
 ### 2.3 Academic / thesis grounding (filters, standards gaps, pink-noise physics)
 
@@ -73,8 +75,13 @@ These are **research methods**, not recipes we claim to implement on Teensy:
 | **Relative variability + impedance-guided bands** | [IEEE Access-class small-signal band selection](https://ieeexplore.ieee.org/document/9209997) | Choose analysis bands to **avoid** switching noise using plant impedance — motivates adaptive band centres, not only fixed 20/50/100 kHz |
 | **Kurtosis for arc shoulder / leptokurtosis** | [Appl. Sci. 2022 distribution networks](https://doi.org/10.3390/app12062777) | Kurtosis rises when amplitude distribution sharpens; short windows and forced zeros invalidate textbook thresholds |
 | **False-alarm / AGI reduction (instrumentation)** | [IEEE TIM 2025](https://doi.org/10.1109/tim.2025.3635319) | Field products still fight nuisance trips; research trend is multi-evidence fusion + persistence, not faster single features |
+| **Wavelet / WPT + SVM / entropy** | [Yao et al. TPEL 2013](https://doi.org/10.1109/tpel.2013.2273292); [Xia et al. IEEJ 2018](https://doi.org/10.1002/tee.22797); [WT+MFE](https://doi.org/10.1109/phm-qingdao46334.2019.8942846); [fractional wavelet energy entropy](https://doi.org/10.1063/5.0186731); [WPT+RCNN+SVM](https://doi.org/10.1063/5.0205503) | Wavelets localise intermittent bursts better than global FFT; packet energy / entropy / multi-scale fuzzy entropy are standard rich features |
+| **Entropy / Tsallis / Hurst without FFT** | Northeastern survey in [DOI 10.17760/d20449064](https://doi.org/10.17760/d20449064) | Disorder / long-memory cues can flag arc-like noise with linear cost in window length; still EMI-vulnerable without blanking |
+| **Two-stage pre-arc then verify** | Cited in same dissertation (WT+SVM pre-detection then second SVM) | Separates **precursor watch** from **sustained confirm** — the state-machine pattern WARP adopts |
 
 **Field nuisance context** (installer / vendor literature, not peer-reviewed): RSD / optimizers, cable capacitance, and EMI are repeatedly blamed for false AFCI trips ([example overview](https://www.anernstore.com/blogs/diy-solar-guides/false-arc-trips-pv-arrays)). Treat as **scenario checklist**, not as proof of any algorithm.
+
+**Honest limit on “before they happen”:** No algorithm sees a future plasma that has not begun. “Precursor” means detecting **intermittent micro-discharges, rising contact irregularity, and multi-scale disorder** that typically appear **before sustained arc energy** would trip a naive mid-band energy detector — not clairvoyance, and not a certified early-warning product.
 
 ---
 
@@ -198,45 +205,227 @@ Suggested **host synthetic** hardenings (claim only that math responds as coded)
 
 ---
 
-## 6. Recommendations (research program only)
+## 6. WARP — Wavelet-Augmented Rich Precursor
+
+**Status:** research blueprint only. **NO-SHIP.** Not implemented in `src/` yet. Never drives Teensy OUTEN. Host Unity / synthetic “precursor before energy” tests would **not** be bench proof or UL evidence.
+
+### 6.1 Why FFT alone is late
+
+A global FFT (or three Goertzel centres) answers: “is there elevated energy in band X *in this window*?” Sustained arcs often do raise that energy — but **contact degradation and intermittent micro-discharges** first appear as **short, sparse, non-stationary bursts** whose energy averages out over a long FFT window. Wavelets (compact support, multi-resolution) localise those bursts in time *and* scale. Sandia’s unwanted-trip survey ([OSTI 1648697](https://www.osti.gov/servlets/purl/1648697)) explicitly pointed at wavelet / richer methods where FFT-style detectors struggled; PV and EV literature since then routinely uses DWT/WPT energy, wavelet entropy, multi-scale fuzzy entropy, and two-stage pre-detect → verify classifiers ([Yao TPEL 2013](https://doi.org/10.1109/tpel.2013.2273292), [Xia IEEJ 2018](https://doi.org/10.1002/tee.22797), [WT+MFE](https://doi.org/10.1109/phm-qingdao46334.2019.8942846), [fractional wavelet entropy](https://doi.org/10.1063/5.0186731)).
+
+**WARP** keeps MACAPD’s platform spine (separate HF path, carrier blanking, dither inhibit, masking honesty) and adds a **wavelet-first precursor score**. FFT/Goertzel is retained **only** as a tonal EMI **penalty**, not as the early-warning cue.
+
+### 6.2 Name and role beside MACAPD
+
+**WARP** = **W**avelet-**A**ugmented **R**ich **P**recursor.
+
+| Piece | Role |
+|-------|------|
+| MACAPD | Sustained / impulsive arc-like score (Goertzel bands, time kurtosis, burst duty) |
+| WARP | **Pre-energy** irregularity over a **0.5–2 s** horizon (packet CV, entropy, micro-burst rate, packet kurtosis, slopes) |
+| Joint | Soft fusion for logging; `PrecursorWatch` can fire while mean arc-band energy is still below a naive energy trip |
+
+```text
+blanked HF frame i[n]
+        │
+        ├──────────────────────────────┐
+        ▼                              ▼
+   MACAPD features                lifting db4 WPT (J=3)
+   S_macapd                       → packet Ep, Hw, κpkt
+                                  → horizon I_irr, rμ, slopes
+                                  Goertzel rTonal (penalty ONLY)
+                                       │
+                                       ▼
+                                    S_warp
+        │                              │
+        └──────── S_joint ─────────────┘
+                      │
+                      ▼
+         Quiet / PrecursorWatch / Candidate*  → EventLog ONLY
+```
+
+### 6.3 Transform choice (defaults)
+
+| Choice | Default | Why |
+|--------|---------|-----|
+| Primary TF | **Lifting Wavelet Packet Transform** | Splits both low and high branches → uniform resolution in the ~15–100 kHz arc interest band (plain DWT starves HF detail) |
+| Mother | **db4** (`sym4` lab A/B) | Compact, 4 vanishing moments, lifting-friendly on Cortex-M7 offline |
+| Depth | **J = 3** (lab J=4) | 8 terminal packets; ~15.625 kHz each at Fs=250 kHz |
+| Decimation | Decimated WPT default | O(N·J) MACCs; undecimated/SWT optional lab-only for shift invariance |
+| Frame | N=512 (~2.05 ms), optional 50% hop | Overlap mitigates WPT shift variance |
+| Blanking | Same ±Tb as MACAPD; **prefer exclude** blanks from coeff moments | Avoid blank-zero kurtosis bias (§4 #7, §5) |
+
+**Packet map at Fs = 250 kHz, J = 3** (after frequency reordering):
+
+| Packet | Approx Hz | Default use |
+|--------|-----------|-------------|
+| p0 | 0–15.625 | Near-DC / low EMI (`P_lo`) |
+| p1–p4 | 15.625–78.125 | **Arc interest** `P_arc` |
+| p5–p6 | 78.125–109.375 | Upper HF (`P_hi`) |
+| p7 | 109.375–125 | Near Nyquist honesty |
+
+**Complexity:** lifting db4 WPT ≈ \(c\cdot N\cdot J\) MACCs with \(c\sim 8\)–\(12\). At N=512, J=3 → ~15k–20k MACCs/frame — fine for **offline / lab M7**, not for FAULT/OUTEN IRQ or the Teensy control-loop WCET until explicitly budgeted. Prefer DTCM scratch; no EXTMEM dependence for coeffs.
+
+### 6.4 Feature set (rich, wavelet-first)
+
+All on **kept** samples / valid coeff indices.
+
+1. **Packet energies** \(E_p\), \(E_{\mathrm{arc}}=\sum_{p\in P_{\mathrm{arc}}} E_p\).
+2. **Subband irregularity (precursor core)** over horizon \(T_H\in[0.5,2]\) s (default 1 s → \(H\approx 488\) frames at N=512):
+   \[
+   \mathrm{CV}_p=\sigma_p/(\mu_p+\varepsilon),\quad
+   I_{\mathrm{irr}}=\mathrm{mean}_{p\in P_{\mathrm{arc}}}\mathrm{CV}_p
+   \]
+   Intermittent micro-discharges raise **relative variance** of mid/HF packets **before** mean \(E_{\mathrm{arc}}\) crosses a naive energy trip.
+3. **Packet entropy** \(H_w=-\sum q_p\log_2 q_p\), \(H_{\mathrm{norm}}=H_w/\log_2 8\). Pink / multi-packet → high; single PWM ridge → low.
+4. **Micro-burst duty** \(r_\mu\): fraction of horizon frames with \(E_{\mathrm{arc}}>2\mu_{\mathrm{arc}}\). Chatter band is elevated but \(<1\) (not continuous saturation).
+5. **Packet excess kurtosis** \(\kappa_{\mathrm{pkt}}\) on \(P_{\mathrm{arc}}\) — spectral-kurtosis cousin; prefer over time kurtosis on zero-stuffed blanks.
+6. **Horizon slopes** of \(I_{\mathrm{irr}}\) and \(E_{\mathrm{arc}}\) over \(H/2\) (replaces MACAPD’s 1-frame Δ for precursor narrative).
+7. **Tonal EMI penalty (FFT/Goertzel augment only):** reuse MACAPD `rTonal`; optional packet concentration \(r_{\mathrm{pkt}}=\max q_p\). **Never** use FFT band energy alone as the precursor trip cue.
+8. **maskingPenalty / optional coherence** — same honesty hooks as MACAPD.
+
+### 6.5 Score fusion
+
+Soft scalings (clip / triangle as needed):
+
+\[
+\begin{aligned}
+S_{\mathrm{warp}}=&\;
+w_I z_{\mathrm{irr}}+w_H z_H+w_\mu z_\mu+w_\kappa z_\kappa+w_{ps} z_{\mathrm{ps}}\\
+&-w_t\,r_{\mathrm{tonal}}-w_{pk}\,r_{\mathrm{pkt}}-w_m\cdot\mathrm{maskingPenalty}
+\end{aligned}
+\]
+
+**Default weights:** `wI=1.2`, `wH=0.6`, `wμ=0.8`, `wκ=0.5`, `wps=0.7`, `wt=1.0`, `wpk=0.4`, `wm=1.0`.
+
+\[
+S_{\mathrm{joint}}=\beta\,S_{\mathrm{macapd}}+(1-\beta)\,S_{\mathrm{warp}}
+\quad\text{default }\beta=0.45
+\]
+
+**Policy:** precursor path keys on \(S_{\mathrm{warp}}\) + horizon; sustained arc-like path still needs MACAPD energy/kurtosis/burst. Freeze quiet-floor EWMAs while any Candidate* / Precursor* is armed (§5 / §7 P2).
+
+### 6.6 State machine extension
+
+| State | Enter when | Meaning |
+|-------|------------|---------|
+| `Inhibited` | dither / no blanking / AFE / keep-count too low / bad Fs | Features cleared |
+| `Quiet` | \(S_{\mathrm{joint}} < t_{\mathrm{Lo}}\) and \(S_{\mathrm{warp}} < t_{\mathrm{pre}}\) | Armed quiet |
+| **`PrecursorWatch`** | \(S_{\mathrm{warp}} \ge t_{\mathrm{pre}}\) for \(n_{\mathrm{pre}}\) frames **and** \(E_{\mathrm{arc}} < \gamma\cdot\theta_{\mathrm{energy}}\) | Irregularity rising **without** sustained energy trip |
+| `CandidateLow` / `CandidateHigh` | MACAPD-compatible joint thresholds | Watch / strong research flag |
+| `PrecursorConfirmed` (log tag) | `PrecursorWatch` held for \(T_H\) then MACAPD crosses `tLo` | Dataset hypothesis: “ahead of energy” |
+
+**Defaults:** `t_pre=0.9`, `n_pre=5`, `γ=0.7`, MACAPD `tLo=1.0`, `tHi=2.5`, `nPersist=3`.
+
+**Binding rule:** no state may call `releaseOutputInhibit`, fault trip, or OUTEN. Dual-MCU interrupter remains the only future trip owner.
+
+### 6.7 Pseudocode (frame tick)
+
+```text
+function warpProcessFrame(cfg, st, i_blank, keepMask, macapdFeat):
+  if cfg.dither or not cfg.blanking or cfg.afeFault or keepCount < keepMin:
+    st.sense = Inhibited; return zeros
+
+  C = liftingWptDb4(i_blank, keepMask, J=cfg.J)   // J default 3
+  for p in 0..2^J-1:
+    Ep[p] = meanSquare(C[p], keep)
+  Earc = sum(Ep[p] for p in P_arc)
+  Hnorm = packetEntropy(Ep) / log2(2^J)
+  kpkt = meanExcessKurtosis(C[p] for p in P_arc)
+
+  updateEwmaAndCv(st, Ep, Earc)          // freeze if armed
+  Iirr = mean(CVp for p in P_arc)
+  rμ = burstDutyHorizon(st, Earc, H)
+  slopeI, slopeE = horizonSlopes(st, H)
+
+  rTonal = macapdFeat.rTonal             // Goertzel augment only
+  rpkt = max(Ep) / (sum(Ep)+eps)
+
+  S_warp = fuseW(Iirr, Hnorm, rμ, kpkt, slopeI, slopeE)
+           - wt*rTonal - wpk*rpkt - wm*cfg.maskingPenalty
+  S_joint = β*macapdFeat.scoreRaw + (1-β)*S_warp
+
+  return updateSense(st, S_warp, S_joint, Earc)  // + PrecursorWatch
+```
+
+### 6.8 WARP-specific edge cases
+
+| # | Case | Expected WARP behaviour |
+|---|------|-------------------------|
+| 1 | Sustained tonal EMI @ k·fc | High `rTonal` / `r_pkt` → score down; no PrecursorWatch |
+| 2 | Sparse micro-bursts, low mean E | High \(I_{\mathrm{irr}}\), mid \(r_μ\) → PrecursorWatch while \(E_{\mathrm{arc}}<\gamma\theta\) |
+| 3 | Naive FFT energy would trip | WARP may already be PrecursorWatch on labelled data — **hypothesis**, not listing |
+| 4 | Blank zeros into WPT | Prefer exclude; else inhibit / demote κpkt |
+| 5 | Blanking too wide / low keep-count | Inhibited (blind) |
+| 6 | Dither on | Inhibited |
+| 7 | Series L masking | Raise `maskingPenalty`; do not claim visibility |
+| 8 | Irradiance / ΔI_DC step | No DC ΔI feature; rely on persist + irregularity |
+| 9 | Optimizer / RSD chatter | May mimic intermittency → aggressor inhibit window (unmodelled → honesty) |
+| 10 | Burst phase vs decimated grid | 50% overlap; optional SWT lab |
+| 11 | EWMA adapts into event | Freeze floors in Candidate*/Precursor* |
+| 12 | Alias / weak AA | Inhibit / low-trust; M3+AA for serious SNR |
+| 13 | Operator treats Precursor* as protection | Docs + UI: research only |
+
+### 6.9 Later implementation map (feature-branch only)
+
+| Artifact | Action |
+|----------|--------|
+| This §6 | Spec locked as research |
+| `docs/FEATURE_AFDD_WARP_ALGORITHM.md` | Optional dedicated algorithm note (mirror MACAPD style) |
+| `src/afdd_warp.h` + `test/test_afdd_warp/` | Header-only host math when coded; compile/default off on Teensy |
+| Teensy image | EventLog only if ever wired; **never** OUTEN |
+| Synthetic tests | Tone → no PrecursorWatch; sparse impulses → PrecursorWatch **before** mean \(E_{\mathrm{arc}}\) energy proxy |
+
+### 6.10 WARP non-claims
+
+- Not AFDD/AFCI; not UL/IEC compliance; not “detects arcs before they exist.”
+- “Precursor ahead of FFT energy” is a **labelled-capture research hypothesis**, not a product claim.
+- Wavelets are not proven superior on TEG hardware until M3 replay evidence exists.
+- Host tests ≠ bench proof ≠ ISR/OUTEN proof.
+
+---
+
+## 7. Recommendations (research program only)
 
 | Priority | Recommendation | Why |
 |----------|----------------|-----|
-| P0 | Keep Teensy MACAPD **off OUTEN** forever in this image | Literature + Sandia: listed products still fail; bench instrument ≠ interrupter |
-| P0 | Prefer **M3 16-bit** + proper AA for any serious capture | ENOB / aliasing dominate weak-arc SNR |
+| P0 | Keep Teensy MACAPD / WARP **off OUTEN** forever in this image | Literature + Sandia: listed products still fail; bench instrument ≠ interrupter |
+| P0 | Prefer **M3 16-bit** + proper AA for any serious capture | ENOB / aliasing dominate weak-arc / precursor SNR |
 | P1 | Wire **ditherActive** from real `CarrierDitherMode` when sense lands | Mutex is only as good as the flag |
 | P1 | Change kurtosis / moments to **mask-exclude**; add keep-count inhibit | Fixes blank-zero bias and “Quiet while blind” |
 | P1 | Widen tonal residual to **±Δ bins** or short STFT ridge | Matches docs; fights carrier drift |
-| P2 | Freeze EWMA while Candidate*; longer slope windows | Stops floor chasing the arc; real precursors |
+| P2 | Freeze EWMA while Candidate* / Precursor*; longer slope windows | Stops floor chasing the event; real precursors |
 | P2 | Put coherence (and optionally eL/eH ratios) into the score with weights | Parallel / CM discrimination |
 | P2 | Estimate or configure masking from known string L / C or self-test | Make “masking-aware” honest |
-| P3 | Explore AR residual / spectral kurtosis / wavelet as **offline** competitors | Literature alternatives; not Teensy trip paths |
-| P3 | Build a labelled capture library (quiet / dither / arc-like / optimizer) | Sandia-style replay tuning without claiming listing |
+| P2 | Prototype **WARP** host math (`afdd_warp.h`) per §6; fuse with MACAPD | Wavelet-first precursor sibling; FFT penalty-only |
+| P3 | Offline AR residual / spectral kurtosis ablations vs WARP on labelled captures | Literature alternatives; not Teensy trip paths |
+| P3 | Build a labelled capture library (quiet / dither / micro-burst / sustained / optimizer) | Sandia-style replay tuning without claiming listing |
 
 ---
 
-## 7. Non-claims (repeat for claim hygiene)
+## 8. Non-claims (repeat for claim hygiene)
 
 - This document is **not** evidence of UL 1699B / IEC AFDD compliance.
-- Host tests of MACAPD are **not** disconnected-bench proof and **not** ISR/OUTEN proof.
-- CandidateHigh is **not** a trip command.
+- Host tests of MACAPD (or future WARP) are **not** disconnected-bench proof and **not** ISR/OUTEN proof.
+- CandidateHigh / PrecursorWatch / PrecursorConfirmed are **not** trip commands.
 - Preferring ADS8860 / AD7380-class parts is a **lab instrumentation** recommendation, not a certified BOM for AFCI.
-- Citing Sandia / IEEE / ACM work acknowledges **problem structure**, not that MACAPD reproduces their results on TEG hardware.
+- Citing Sandia / IEEE / ACM work acknowledges **problem structure**, not that MACAPD or WARP reproduces their results on TEG hardware.
+- “Detect ARC faults BEFORE they happen” in operator language must be qualified as **precursor irregularity research**, not clairvoyant protection.
 
 ---
 
-## 8. Sources
+## 9. Sources
 
 ### National lab / standards-context (primary)
 
 1. J. Johnson et al., *Photovoltaic DC Arc Fault Detector Testing at Sandia National Laboratories* — [OSTI 1120327](https://www.osti.gov/servlets/purl/1120327).
 2. Sandia work on PV module/line frequency response for robust detectors — [OSTI 1119759](https://www.osti.gov/servlets/purl/1119759).
-3. J. Johnson et al., *Unwanted Tripping Survey of UL 1699B-Listed / Related PV Arc-Fault Products* (masking & nuisance classes) — [OSTI 1648697](https://www.osti.gov/servlets/purl/1648697).
+3. J. Johnson et al., *Unwanted Tripping Survey of UL 1699B-Listed / Related PV Arc-Fault Products* (masking & nuisance classes; wavelet/richer suggestion) — [OSTI 1648697](https://www.osti.gov/servlets/purl/1648697).
 
 ### Theses
 
 4. UBC thesis: digital filters for PV arc-fault detection — [DOI 10.14288/1.0445539](https://doi.org/10.14288/1.0445539).
-5. Northeastern dissertation: pink-noise propagation / masking in PV DC — [DOI 10.17760/d20449064](https://doi.org/10.17760/d20449064).
+5. Northeastern dissertation: pink-noise propagation / masking / wavelet & entropy survey in PV DC — [DOI 10.17760/d20449064](https://doi.org/10.17760/d20449064).
 
 ### Recent methods (illustrative)
 
@@ -248,10 +437,20 @@ Suggested **host synthetic** hardenings (claim only that math responds as coded)
 11. Relative variability / impedance-guided bands vs inverter switching — [IEEE Xplore 9209997](https://ieeexplore.ieee.org/document/9209997).
 12. Instrumentation false-alarm reduction (IEEE TIM 2025) — [DOI 10.1109/tim.2025.3635319](https://doi.org/10.1109/tim.2025.3635319).
 
+### Wavelet / rich precursor methods
+
+13. Yao et al., time-domain DWT hybrid series DC arc detection — [DOI 10.1109/tpel.2013.2273292](https://doi.org/10.1109/tpel.2013.2273292).
+14. Xia et al., wavelet packet + SVM for PV series DC arc — [DOI 10.1002/tee.22797](https://doi.org/10.1002/tee.22797).
+15. WT + multi-scale fuzzy entropy for DC arc — [IEEE PHM-Qingdao 2019](https://doi.org/10.1109/phm-qingdao46334.2019.8942846).
+16. Multiple wavelet + fractional wavelet energy entropy — [DOI 10.1063/5.0186731](https://doi.org/10.1063/5.0186731).
+17. WPT + residual CNN + SVM series arc detection — [DOI 10.1063/5.0205503](https://doi.org/10.1063/5.0205503).
+18. Wang & Balog, arc fault / flash detection with WT + SVM (PVSC) — [DOI 10.1109/PVSC.2016.7750271](https://doi.org/10.1109/PVSC.2016.7750271).
+19. Wang et al., FFT vs wavelet decomposition on synthesized arc data (PVSC) — [DOI 10.1109/PVSC.2014.6925625](https://doi.org/10.1109/PVSC.2014.6925625).
+
 ### Field / installer context (non-peer-reviewed checklist)
 
-13. Example discussion of PV AFCI false trips (RSD / capacitance / EMI) — [Anern overview](https://www.anernstore.com/blogs/diy-solar-guides/false-arc-trips-pv-arrays).
+20. Example discussion of PV AFCI false trips (RSD / capacitance / EMI) — [Anern overview](https://www.anernstore.com/blogs/diy-solar-guides/false-arc-trips-pv-arrays).
 
 ### In-repo
 
-14. [`FEATURE_AFDD_RESEARCH_2026-08-30.md`](FEATURE_AFDD_RESEARCH_2026-08-30.md), [`FEATURE_AFDD_MACAPD_ALGORITHM.md`](FEATURE_AFDD_MACAPD_ALGORITHM.md), `src/afdd_macapd.h`, `test/test_afdd_macapd/`.
+21. [`FEATURE_AFDD_RESEARCH_2026-08-30.md`](FEATURE_AFDD_RESEARCH_2026-08-30.md), [`FEATURE_AFDD_MACAPD_ALGORITHM.md`](FEATURE_AFDD_MACAPD_ALGORITHM.md), `src/afdd_macapd.h`, `test/test_afdd_macapd/`.

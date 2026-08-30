@@ -3,7 +3,7 @@
 **Status:** research / claim-safe architecture only. **NO-SHIP.** Host Unity is not ISR/OUTEN proof.  
 **Not a listed AFDD.** This document invents **no** UL 1699B, IEC 62606, or “arc protection” product claims for the Teensy 4.1 image.
 
-**Companion:** multi-role framing in `docs/FEATURE_ROADMAP_2026-08-30.md` (role **R-AFDD-R**) when that doc is on the branch; hard gates in `docs/PRODUCT_READINESS.md` §1–§2.  
+**Companion:** multi-role framing in `docs/FEATURE_ROADMAP_2026-08-30.md` (role **R-AFDD-R**) when that doc is on the branch; hard gates in `docs/PRODUCT_READINESS.md` §1–§2; algorithm detail in `docs/FEATURE_AFDD_MACAPD_ALGORITHM.md`.  
 **Canvas:** `feature-afdd-research-2026-08-30.canvas.tsx` (IDE canvas).  
 **MCU sources (operator local PDFs):** i.MX RT1060 RM Rev. 3 (ADC Ch.66, ADC_ETC Ch.67, eDMA, DMAMUX, XBARA), CEC Rev.4, errata Rev.11, Cortex-M7 TRM, ARMv7-M ARM. Product page: [NXP i.MX RT1060](https://www.nxp.com/products/i.MX-RT1060).
 
@@ -162,9 +162,32 @@ Until these exist, “protection” language stays forbidden:
 | **M0 Production** | Owns ADC1/2 | Off | Default forever until Phase R hardware |
 | **M1 Lab inhibit** | Paused | Owns ADC via ADC_ETC+DMA | Safest bring-up; OUTEN masked |
 | **M2 Time-share** | ISR path | Burst windows via ADC_ETC priority | Hard; only after arbitration proven |
-| **M3 External ADC** | Unchanged | SPI/I2S DMA @ 16-bit | Preferred for serious sensitivity |
+| **M3 External ADC** | Unchanged | SPI (+ eDMA) @ 16-bit | **Preferred** for serious sensitivity |
 
-**Recommendation:** Phase R starts **M1** then migrates to **M3**. Do not ship M2 in operator builds.
+**Recommendation:** Phase R may use **M1** only for pipeline bring-up; migrate to **M3** before trusting any sensitivity claims. Do not ship M2 in operator builds.
+
+### 5.1.1 Recommended M3 parts (external 16-bit)
+
+On-chip RT1060 SAR is **12-bit / ~10 ENOB** — fine for proving DMA wiring, not for weak arc signatures under inverter EMI. Prefer an external **≥16-bit** converter clocked independently of `captureTick`.
+
+| Role | Part (recommendation) | Why it fits TEG / RT1060 |
+|------|------------------------|---------------------------|
+| **Primary single-channel HF current** | **TI ADS8860** (16-bit, 1 MSPS, SPI, True-SPI / CONVST) | Matches 250–500 kSPS research Fs with headroom; LPSPI + eDMA friendly on Teensy 4.1; wide availability; EVM path for lab bring-up (`ADS8860EVM`-class) |
+| **Preferred dual simultaneous I+V** | **ADI AD7380** (dual 16-bit simultaneous SAR, SPI, multi-MSPS class) | One package for HF current + HF voltage coherence (MACAPD F6); shared conversion instant replaces ADC_ETC SyncMode at the analog boundary |
+| **Alt dual** | **TI ADS9224R** (dual simultaneous 16-bit SAR, SPI) | Similar dual-channel story if ADI supply is constrained |
+
+**AFE (required with any of the above):** HF CT or isolated shunt → gain (e.g. instrumentation amp) → anti-alias LPF with **f_c ≈ 0.4·Fs** (≈100 kHz at 250 kSPS) → ADC full-scale clamp. Keep this chain off the metering pins used by `captureTick`.
+
+**Interface sketch (not shipped firmware):** GPT/PIT or FlexPWM-derived CONVST/CS → ADS8860/AD7380 → LPSPI RX eDMA into DTCM ping-pong → `afddMacapdProcessRaw` on completed frames. Metering ADCs stay with the PWM ISR (M0/M3 coexistence).
+
+**BOM note:** treat the table as an engineering starting point, not a certified AFDD reference design. Validate SNR, CMRR, and aliasing on the actual AFE before claiming detection probability.
+
+### 5.1.2 Host-testable MACAPD math (no trip wiring)
+
+- Header: `src/afdd_macapd.h` — blanking, Goertzel band energies, kurtosis, burst duty, precursor slopes, persistence state machine.
+- Detail: `docs/FEATURE_AFDD_MACAPD_ALGORITHM.md`.
+- Native test: `test/test_afdd_macapd/` (not part of the six-suite gate; report separately if run).
+- **Must not** call OUTEN / fault trip paths. Compile/default remains “unused” until an explicit lab flag and AFE exist.
 
 ### 5.2 Memory / CPU budget (order-of-magnitude)
 
@@ -203,17 +226,17 @@ Until these exist, “protection” language stays forbidden:
 | Dual-MCU | Architecture + handshake stub only until board | Trip from Ethernet MCU alone |
 | Listing | Never on this program phase | UL 1699B language |
 
-**Near-term firmware PR policy:** **NO-GO** for AFDD behavioural code. Docs and host-testable *math prototypes* (kurtosis, band energy on synthetic vectors) may land behind tests without claiming hardware.
+**Near-term firmware PR policy:** **NO-GO** for AFDD trip / OUTEN wiring. Docs, M3 part recommendation, and host-testable MACAPD math (`src/afdd_macapd.h` + `test/test_afdd_macapd`) may land without claiming hardware detection.
 
 ---
 
 ## 8. Suggested research sequence
 
-1. **Phase N (this PR):** claim-safe algorithm + MCU mapping + canvas.  
-2. **Host math:** `test_afdd_features` on synthetic bursts vs tonal carriers (Unity native).  
-3. **Bench AFE:** design note + BOM; measure transfer; inject known HF.  
-4. **M1 DMA bring-up:** inhibited PWM; stream rings to MTP/SD; offline MACAPD in Python.  
-5. **On-target features:** IIR + blanking + score logging.  
+1. **Phase N:** claim-safe algorithm + MCU mapping + canvas + MACAPD header/tests + M3 part pick.  
+2. **Host math:** `test/test_afdd_macapd` on synthetic bursts vs tonal carriers (Unity native) — landed.  
+3. **Bench AFE + ADS8860 (or AD7380):** BOM; measure transfer; inject known HF.  
+4. **M1 DMA bring-up (optional):** inhibited PWM; stream rings; compare to M3.  
+5. **M3 LPSPI+eDMA:** feed frames into `afddMacapdProcessRaw`; EventLog research states only.  
 6. **Nuisance + masking corpus.**  
 7. **Dual-MCU program** (separate repo/hardware) if productisation is ever funded.
 
@@ -234,7 +257,8 @@ Until these exist, “protection” language stays forbidden:
 
 - NXP i.MX RT1060 product / RM Ch.66–67, CEC, errata (local PDFs cited above).  
 - Sandia / OSTI PV arc-fault detection and **masking** literature (series L, capacitance to ground, inverter noise, unwanted trip). Cite as research context only.  
-- In-repo: `docs/PRODUCT_READINESS.md`, `docs/FEATURE_ROADMAP_2026-08-30.md` (R-AFDD-R), `src/capture.cpp` / `capture.h`.
+- In-repo: `docs/PRODUCT_READINESS.md`, `docs/FEATURE_ROADMAP_2026-08-30.md` (R-AFDD-R), `docs/FEATURE_AFDD_MACAPD_ALGORITHM.md`, `src/afdd_macapd.h`, `src/capture.cpp` / `capture.h`.
+- M3 ADC datasheets: TI ADS8860; ADI AD7380 (and TI ADS9224R as alt).
 
 ---
 
@@ -243,7 +267,8 @@ Until these exist, “protection” language stays forbidden:
 | Field | Value |
 |-------|--------|
 | Date | 2026-08-30 |
-| Branch class | Feature-branch docs PR |
+| Branch class | Feature-branch docs + host math PR |
 | Algorithm name | MACAPD |
 | Default Fs / N | 250 kHz / 512 |
+| M3 primary part | TI ADS8860 (dual: ADI AD7380) |
 | Trip authority on Teensy image | **None** |

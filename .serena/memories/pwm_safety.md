@@ -24,7 +24,7 @@ NO-SHIP until `docs/BENCH_CHECKS.md` disconnected checklist passes. Host Unity i
 
 ## MTP
 
-- USB is always composite (`-DUSB_MTPDISK_SERIAL`, never `=1`). `Mtp.Enabled` defaults false; enabling does not require a reboot (`mtpTask()` `MTP.begin()` while inhibited).
+- USB is always composite (`-DUSB_MTPDISK_SERIAL`, never `=1`). `Mtp.Enabled` defaults false; enabling does not require a reboot (`mtpTask()` `MTP.begin()` while inhibited). Settings `#mtp-status` waits for the next inhibited pass (do not restore "reboot to start").
 - `MTP.begin()` must `MTP.loop()` while still inhibited so the 20 Hz filesystem timer cannot stay armed across a release.
 - `mtpAllowsPwmRelease()` gates OUTEN.
 - GetObjectHandles / Storage2Store: store index must be `< get_FSCount()`.

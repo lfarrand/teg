@@ -39,7 +39,7 @@ Settings UI: `/api/status?lite=1` (no analogRead; last-window `meterActive`); po
 
 `serviceControlTasks()` from long HTTP handlers. It must not re-enter network/USB stacks.
 
-USB is always composite (`-DUSB_MTPDISK_SERIAL`, never `=1`). `Mtp.Enabled` defaults false; enabling does not require a reboot (`mtpTask()` `MTP.begin()` while inhibited). MTP write opcodes stay refused at the dispatcher (`0x100B/C/D/F`, `0x1019/1A`, `0x9804`). Descriptor must not advertise refused ops. Adapter also refuses mutating FS calls. `MTP.begin()` must `MTP.loop()` while still inhibited; `mtpAllowsPwmRelease()` gates OUTEN. GetObjectHandles / Storage2Store store index must be `< get_FSCount()`.
+USB is always composite (`-DUSB_MTPDISK_SERIAL`, never `=1`). `Mtp.Enabled` defaults false; enabling does not require a reboot (`mtpTask()` `MTP.begin()` while inhibited). Settings `#mtp-status` waits for the next inhibited pass (do not restore "reboot to start"). MTP write opcodes stay refused at the dispatcher (`0x100B/C/D/F`, `0x1019/1A`, `0x9804`). Descriptor must not advertise refused ops. Adapter also refuses mutating FS calls. `MTP.begin()` must `MTP.loop()` while still inhibited; `mtpAllowsPwmRelease()` gates OUTEN. GetObjectHandles / Storage2Store store index must be `< get_FSCount()`.
 
 ## Libraries and pins
 

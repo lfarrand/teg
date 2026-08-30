@@ -44,8 +44,8 @@ Publish a claim-safe multi-role feature roadmap (inverter, waveform generator, A
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-005 | Commit roadmap + memories on branch `docs/feature-roadmap-2026-08-30` | |  |
-| TASK-006 | Push and open PR to `main` with claim-safe summary and test plan (docs review only) | |  |
+| TASK-005 | Commit roadmap + memories on branch `docs/feature-roadmap-2026-08-30` | ✅ | 2026-08-30 |
+| TASK-006 | Push and open PR to `main` with claim-safe summary and test plan (docs review only) | ✅ | 2026-08-30 |
 
 ## 3. Alternatives
 

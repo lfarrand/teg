@@ -329,6 +329,7 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
   if (st == nullptr || iBlanked == nullptr || n == 0 || n > AFDD_MACAPD_MAX_N) {
     if (st != nullptr) {
       st->sense = AfddMacapdInhibited;
+      st->highPersist = 0;
     }
     return f;
   }
@@ -417,6 +418,13 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
 // Convenience: blank + process (stack temps — n <= AFDD_MACAPD_MAX_N).
 inline AfddMacapdFeatures afddMacapdProcessRaw(const AfddMacapdConfig &cfg, AfddMacapdState *st,
                                                const float *iRaw, const float *vRaw, size_t n) {
+  if (iRaw == nullptr || n == 0) {
+    if (st != nullptr) {
+      st->sense = AfddMacapdInhibited;
+      st->highPersist = 0;
+    }
+    return AfddMacapdFeatures{};
+  }
   float iBuf[AFDD_MACAPD_MAX_N];
   float vBuf[AFDD_MACAPD_MAX_N];
   uint8_t mask[AFDD_MACAPD_MAX_N];

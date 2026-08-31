@@ -190,6 +190,34 @@ void test_afe_fault_inhibits() {
   TEST_ASSERT_EQUAL_UINT8(AfddMacapdInhibited, st.sense);
 }
 
+void test_invalid_frame_clears_high_persist() {
+  AfddMacapdConfig c = afddMacapdDefaultConfig();
+  AfddMacapdState st{};
+  afddMacapdReset(&st);
+  st.highPersist = 4;
+  st.sense = AfddMacapdCandidateLow;
+  const AfddMacapdFeatures f = afddMacapdProcessFrame(c, &st, nullptr, nullptr, 64, nullptr);
+  TEST_ASSERT_EQUAL_UINT8(AfddMacapdInhibited, st.sense);
+  TEST_ASSERT_EQUAL_UINT16(0, st.highPersist);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, f.scoreRaw);
+
+  st.highPersist = 3;
+  st.sense = AfddMacapdCandidateHigh;
+  afddMacapdProcessFrame(c, &st, nullptr, nullptr, 0, nullptr);
+  TEST_ASSERT_EQUAL_UINT16(0, st.highPersist);
+}
+
+void test_process_raw_null_current_inhibits() {
+  AfddMacapdConfig c = afddMacapdDefaultConfig();
+  AfddMacapdState st{};
+  afddMacapdReset(&st);
+  st.highPersist = 5;
+  const AfddMacapdFeatures f = afddMacapdProcessRaw(c, &st, nullptr, nullptr, 64);
+  TEST_ASSERT_EQUAL_UINT8(AfddMacapdInhibited, st.sense);
+  TEST_ASSERT_EQUAL_UINT16(0, st.highPersist);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, f.scoreRaw);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_default_config_is_disarmed_friendly);
@@ -202,5 +230,7 @@ int main() {
   RUN_TEST(test_ewma_freezes_while_candidate);
   RUN_TEST(test_persist_reaches_high_on_strong_bursts);
   RUN_TEST(test_afe_fault_inhibits);
+  RUN_TEST(test_invalid_frame_clears_high_persist);
+  RUN_TEST(test_process_raw_null_current_inhibits);
   return UNITY_END();
 }

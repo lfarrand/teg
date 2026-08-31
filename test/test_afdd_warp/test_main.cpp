@@ -120,6 +120,27 @@ void test_warp_haar_wpt_length() {
   TEST_ASSERT_EQUAL(8u, plen);
 }
 
+void test_warp_half_horizon_delta_survives_ring_wrap() {
+  float hist[AFDD_WARP_HORIZON];
+  for (uint16_t i = 0; i < AFDD_WARP_HORIZON; ++i) {
+    hist[i] = static_cast<float>(i);
+  }
+  const float unrotated = afddWarpHalfHorizonDelta(hist, AFDD_WARP_HORIZON, 0);
+  TEST_ASSERT_TRUE(unrotated > 0.0f);
+
+  // Rotate so physical index 0 is the newest sample (the first wrap case).
+  float rotated[AFDD_WARP_HORIZON];
+  const uint16_t oldest = 1;
+  for (uint16_t chrono = 0; chrono < AFDD_WARP_HORIZON; ++chrono) {
+    rotated[(oldest + chrono) % AFDD_WARP_HORIZON] = static_cast<float>(chrono);
+  }
+  const float wrapped = afddWarpHalfHorizonDelta(rotated, AFDD_WARP_HORIZON, oldest);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-5f, unrotated, wrapped);
+
+  // Physical-index halves on the rotated buffer would flip sign; chronological must not.
+  TEST_ASSERT_TRUE(wrapped > 0.0f);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_warp_default_disarmed);
@@ -127,5 +148,6 @@ int main() {
   RUN_TEST(test_warp_tone_not_precursor_watch);
   RUN_TEST(test_warp_sparse_impulses_can_raise_irregularity);
   RUN_TEST(test_warp_haar_wpt_length);
+  RUN_TEST(test_warp_half_horizon_delta_survives_ring_wrap);
   return UNITY_END();
 }

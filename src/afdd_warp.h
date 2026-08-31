@@ -240,6 +240,27 @@ inline float afddWarpMeanExcessKurtosisPackets(float packets[AFDD_WARP_PACKETS][
   return static_cast<float>(acc / static_cast<double>(count));
 }
 
+// Mean(newer half) - mean(older half) over a circular history of `filled` samples.
+// `oldestIdx` is the index of the oldest sample (histIdx after write+advance when full).
+inline float afddWarpHalfHorizonDelta(const float *hist, uint16_t filled, uint16_t oldestIdx) {
+  if (hist == nullptr || filled < 4) {
+    return 0.0f;
+  }
+  const uint16_t half = static_cast<uint16_t>(filled / 2);
+  const uint16_t cap = AFDD_WARP_HORIZON;
+  double older = 0.0;
+  double newer = 0.0;
+  for (uint16_t k = 0; k < half; ++k) {
+    older += hist[(oldestIdx + k) % cap];
+  }
+  for (uint16_t k = half; k < filled; ++k) {
+    newer += hist[(oldestIdx + k) % cap];
+  }
+  older /= half;
+  newer /= static_cast<double>(filled - half);
+  return static_cast<float>(newer - older);
+}
+
 inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarpState *st,
                                              const float *iBlanked, size_t n, const uint8_t *mask,
                                              float macapdScoreRaw, float macapdRTonal) {
@@ -347,30 +368,10 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
   }
   f.rMu = (st->histFilled > 0) ? (static_cast<float>(ones) / static_cast<float>(st->histFilled)) : 0.0f;
 
-  // Horizon slopes: half-horizon mean delta.
-  f.slopeI = 0.0f;
-  f.slopeE = 0.0f;
-  if (st->histFilled >= 4) {
-    const uint16_t half = static_cast<uint16_t>(st->histFilled / 2);
-    double mI0 = 0.0;
-    double mI1 = 0.0;
-    double mE0 = 0.0;
-    double mE1 = 0.0;
-    for (uint16_t i = 0; i < half; ++i) {
-      mI0 += st->histIirr[i];
-      mE0 += st->histEarc[i];
-    }
-    for (uint16_t i = half; i < st->histFilled; ++i) {
-      mI1 += st->histIirr[i];
-      mE1 += st->histEarc[i];
-    }
-    mI0 /= half;
-    mE0 /= half;
-    mI1 /= (st->histFilled - half);
-    mE1 /= (st->histFilled - half);
-    f.slopeI = static_cast<float>(mI1 - mI0);
-    f.slopeE = static_cast<float>(mE1 - mE0);
-  }
+  // Horizon slopes: half-horizon mean delta in chronological order (not physical index).
+  const uint16_t oldest = (st->histFilled >= AFDD_WARP_HORIZON) ? st->histIdx : 0;
+  f.slopeI = afddWarpHalfHorizonDelta(st->histIirr, st->histFilled, oldest);
+  f.slopeE = afddWarpHalfHorizonDelta(st->histEarc, st->histFilled, oldest);
 
   const float zI = f.iIrr;
   const float zH = f.hNorm;

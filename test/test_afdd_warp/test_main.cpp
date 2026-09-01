@@ -165,6 +165,45 @@ void test_warp_persist_ms_helpers() {
   TEST_ASSERT_EQUAL_UINT16(AFDD_WARP_HORIZON, need); // host ring caps research H
 }
 
+void test_warp_inhibit_clears_temporal_history() {
+  AfddWarpConfig c = afddWarpDefaultConfig();
+  AfddWarpState st{};
+  afddWarpReset(&st);
+  st.initialized = true;
+  st.ewmaEarc = 4.0f;
+  st.ewmaEp[1] = 1.5f;
+  st.histFilled = 12;
+  st.histIdx = 4;
+  st.histEarc[0] = 3.5f;
+  st.histIirr[0] = 0.8f;
+  st.histEp[1][0] = 2.25f;
+  st.burstHist[0] = 1;
+  st.prePersist = 5;
+  st.highPersist = 6;
+  st.watchAge = 9;
+  st.sense = AfddWarpPrecursorWatch;
+  c.ditherActive = true;
+  float x[128] = {};
+  uint8_t ones[128];
+  for (size_t i = 0; i < 128; ++i) {
+    ones[i] = 1;
+  }
+  afddWarpProcessFrame(c, &st, x, 128, ones, 0.0f, 0.0f);
+  TEST_ASSERT_EQUAL_UINT8(AfddWarpInhibited, st.sense);
+  TEST_ASSERT_FALSE(st.initialized);
+  TEST_ASSERT_EQUAL_UINT16(0, st.prePersist);
+  TEST_ASSERT_EQUAL_UINT16(0, st.highPersist);
+  TEST_ASSERT_EQUAL_UINT16(0, st.watchAge);
+  TEST_ASSERT_EQUAL_UINT16(0, st.histFilled);
+  TEST_ASSERT_EQUAL_UINT16(0, st.histIdx);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, st.ewmaEarc);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, st.ewmaEp[1]);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, st.histEarc[0]);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, st.histIirr[0]);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, st.histEp[1][0]);
+  TEST_ASSERT_EQUAL_UINT8(0, st.burstHist[0]);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_warp_default_disarmed);
@@ -175,5 +214,6 @@ int main() {
   RUN_TEST(test_warp_half_horizon_delta_survives_ring_wrap);
   RUN_TEST(test_warp_arc_packets_are_freq_midband);
   RUN_TEST(test_warp_persist_ms_helpers);
+  RUN_TEST(test_warp_inhibit_clears_temporal_history);
   return UNITY_END();
 }

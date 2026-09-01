@@ -165,6 +165,15 @@ inline void afddWarpReset(AfddWarpState *s) {
   s->sense = AfddWarpQuiet;
 }
 
+// Drop EWMA / horizon / persist memory so an inhibit gap cannot stitch a later precursor.
+inline void afddWarpEnterInhibited(AfddWarpState *s) {
+  if (s == nullptr) {
+    return;
+  }
+  *s = AfddWarpState{};
+  s->sense = AfddWarpInhibited;
+}
+
 // One Haar analysis step: even/odd → approx / detail (length n must be even).
 inline void afddWarpHaarStep(const float *in, size_t n, float *approx, float *detail) {
   const size_t half = n / 2;
@@ -327,9 +336,7 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
                                              float macapdScoreRaw, float macapdRTonal) {
   AfddWarpFeatures f{};
   if (st == nullptr || iBlanked == nullptr || n == 0 || n > AFDD_WARP_MAX_N) {
-    if (st != nullptr) {
-      st->sense = AfddWarpInhibited;
-    }
+    afddWarpEnterInhibited(st);
     return f;
   }
 
@@ -345,24 +352,21 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
   f.rTonal = macapdRTonal;
 
   if (cfg.ditherActive || !cfg.blankingAvailable || cfg.afeFault || f.keepCount < keepFloor) {
-    st->sense = AfddWarpInhibited;
-    st->prePersist = 0;
-    st->highPersist = 0;
-    st->watchAge = 0;
+    afddWarpEnterInhibited(st);
     return f;
   }
 
   // Ensure length divisible by 8 for Haar WPT.
   size_t nUse = n - (n % 8);
   if (nUse < 8) {
-    st->sense = AfddWarpInhibited;
+    afddWarpEnterInhibited(st);
     return f;
   }
 
   float packets[AFDD_WARP_PACKETS][AFDD_WARP_MAX_N / 8];
   const size_t plen = afddWarpHaarWpt3(iBlanked, nUse, packets);
   if (plen == 0) {
-    st->sense = AfddWarpInhibited;
+    afddWarpEnterInhibited(st);
     return f;
   }
 

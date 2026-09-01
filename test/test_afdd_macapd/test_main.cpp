@@ -50,12 +50,31 @@ void test_blank_mask_clears_near_carrier_edges() {
   c.sampleRateHz = 200000.0f;
   c.carrierHz = 20000.0f;
   c.blankHalfWidthS = 5.0e-6f; // 1 sample at 200 kHz
+  c.dutyCycle = 0.5f;
+  c.carrierPhaseSamples = 0.0f;
   uint8_t mask[20];
   afddMacapdBuildBlankMask(c, 20, mask);
-  // Sample 0 is on a carrier edge → blanked
+  // Sample 0 is on a reload edge → blanked
   TEST_ASSERT_EQUAL_UINT8(0, mask[0]);
-  // Mid-period sample 5 (period=10) should be valid
-  TEST_ASSERT_EQUAL_UINT8(1, mask[5]);
+  // Sample 5 is on the 50% compare edge (period=10) → blanked
+  TEST_ASSERT_EQUAL_UINT8(0, mask[5]);
+  // Midway between edges (sample 2 or 3) should be valid
+  TEST_ASSERT_EQUAL_UINT8(1, mask[2]);
+}
+
+void test_blank_mask_tracks_carrier_phase() {
+  AfddMacapdConfig c = afddMacapdDefaultConfig();
+  c.sampleRateHz = 200000.0f;
+  c.carrierHz = 20000.0f;
+  c.blankHalfWidthS = 5.0e-6f;
+  c.dutyCycle = 0.5f;
+  c.carrierPhaseSamples = 5.0f; // frame starts at former mid-period
+  uint8_t mask[10];
+  afddMacapdBuildBlankMask(c, 10, mask);
+  // Index 0 now sits on the compare edge → blanked
+  TEST_ASSERT_EQUAL_UINT8(0, mask[0]);
+  // Index 5 sits on the reload edge → blanked
+  TEST_ASSERT_EQUAL_UINT8(0, mask[5]);
 }
 
 void test_tonal_carrier_has_higher_residual_than_bursts() {
@@ -253,8 +272,10 @@ void test_inhibit_clears_temporal_history() {
   afddMacapdReset(&st);
   st.initialized = true;
   st.ewmaEm = 4.0f;
-  st.prevEm = 3.5f;
-  st.prevSk = 1.25f;
+  st.histFilled = 12;
+  st.histIdx = 4;
+  st.histEm[0] = 3.5f;
+  st.histSk[0] = 1.25f;
   st.highPersist = 6;
   st.burstFilled = 8;
   st.burstIdx = 3;
@@ -269,9 +290,9 @@ void test_inhibit_clears_temporal_history() {
   TEST_ASSERT_EQUAL_UINT16(0, st.highPersist);
   TEST_ASSERT_EQUAL_UINT16(0, st.burstFilled);
   TEST_ASSERT_EQUAL_UINT16(0, st.burstIdx);
+  TEST_ASSERT_EQUAL_UINT16(0, st.histFilled);
+  TEST_ASSERT_EQUAL_UINT16(0, st.histIdx);
   TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, st.ewmaEm);
-  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, st.prevEm);
-  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, st.prevSk);
 }
 
 int main() {
@@ -279,6 +300,7 @@ int main() {
   RUN_TEST(test_default_config_is_disarmed_friendly);
   RUN_TEST(test_dither_inhibits_scoring);
   RUN_TEST(test_blank_mask_clears_near_carrier_edges);
+  RUN_TEST(test_blank_mask_tracks_carrier_phase);
   RUN_TEST(test_tonal_carrier_has_higher_residual_than_bursts);
   RUN_TEST(test_impulsive_bursts_raise_kurtosis);
   RUN_TEST(test_mask_exclude_kurtosis_ignores_blank_zeros);

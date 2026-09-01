@@ -127,9 +127,9 @@ Rising kurtosis and/or mid-band energy **before** a long HIGH persistence window
 
 If `v_b` is present, `|corr(i_b, v_b)|` on **kept** samples. Default weight `wCoh=0.25` (MEF channel E19 often default-off in UI). Common-mode EMI often shows high coherence.
 
-### F7 — Masking penalty (config)
+### F7 — Masking / observability (config)
 
-Operator / later impedance probe supplies `maskingPenalty ∈ [0,1]`. High series inductance or C-to-ground **reduces trust** in a clean detection claim — the score is reduced rather than pretending the arc is always visible.
+Operator / later impedance probe supplies `maskingPenalty ∈ [0,1]`. Host math exposes `observability = 1 − maskingPenalty` **separately** from the presence score. Low observability keeps the state machine in Quiet (does not arm Candidate*) rather than subtracting masking from presence and pretending the residual is a detection cue.
 
 ---
 
@@ -142,16 +142,18 @@ Soft (non-z) feature scaling for host stability:
 z_{\mathrm{band}} &= e_M / \mathrm{EWMA}(e_M) \\
 z_{\mathrm{sk}} &= \max(\kappa, 0) \\
 z_{\mathrm{burst}} &= d_{\mathrm{burst}} \\
-z_{\mathrm{slope}} &= \max(\Delta e_M,0)/\mathrm{EWMA}(e_M) + 0.25\max(\Delta\kappa,0)
+z_{\mathrm{slope}} &= \max(\mathrm{slope}_{e_M},0)/\mathrm{EWMA}(e_M) + 0.25\max(\mathrm{slope}_{\kappa},0)
 \end{aligned}
 \]
 
+Precursor slopes use a hop-aware half-horizon ring (default ~1 s), not a 1-frame Δ.
+
 \[
 S = w_b z_{\mathrm{band}} + w_k z_{\mathrm{sk}} + w_d z_{\mathrm{burst}} + w_s z_{\mathrm{slope}} + w_c z_{\mathrm{coh}}
-  - w_t r_{\mathrm{tonal}} - w_m \cdot \mathrm{maskingPenalty}
+  - w_t r_{\mathrm{tonal}}
 \]
 
-Default weights live in `afddMacapdDefaultConfig()` (`wBand=1`, `wKurtosis=0.75`, `wBurst=0.5`, `wSlope=0.5`, `wCoh=0.25`, `wTonal=1`, `wMask=1`).
+Default weights live in `afddMacapdDefaultConfig()` (`wBand=1`, `wKurtosis=0.75`, `wBurst=0.5`, `wSlope=0.5`, `wCoh=0.25`, `wTonal=1`). Band energy uses dense Goertzel probes across each advertised band.
 
 **EWMA:** while sense is `CandidateLow` / `CandidateHigh` and `freezeEwmaOnCandidate` (default true), the quiet-floor EWMA **does not** adapt into the event.
 
@@ -161,12 +163,13 @@ Default weights live in `afddMacapdDefaultConfig()` (`wBand=1`, `wKurtosis=0.75`
 
 | Condition | Sense |
 |-----------|--------|
-| dither / no blanking / AFE fault / keepCount &lt; keepMin | `Inhibited` |
-| `S > tHi` for `nPersist` consecutive frames | `CandidateHigh` |
+| dither / no blanking / AFE fault / keepCount &lt; keepMin / bad Fs·carrier | `Inhibited` |
+| `observability < observabilityMin` | `Quiet` (no Candidate*) |
+| `S > tHi` for hop-derived `persistMs` (~80 ms default; or explicit `nPersist`) | `CandidateHigh` |
 | else `S > tLo` | `CandidateLow` |
 | else | `Quiet` |
 
-Defaults: `tLo=1.0`, `tHi=2.5`, `nPersist=3`. Persistence exists specifically to reject single-frame EMI spikes (UL-style unwanted-trip mindset), **not** to authorize a product trip on this MCU.
+Defaults: `tLo=1.0`, `tHi=2.5`, `persistMs=80`, `nPersist=0` (auto). Persistence rejects sub-window EMI spikes (UL-style unwanted-trip mindset), **not** to authorize a product trip on this MCU.
 
 **Binding rule:** firmware that includes this header must **not** call `releaseOutputInhibit` / fault / OUTEN paths from MACAPD sense. Research EventLog / offline analysis only until a dual-MCU interrupter program exists.
 

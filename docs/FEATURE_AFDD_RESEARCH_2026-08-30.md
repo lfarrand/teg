@@ -59,7 +59,7 @@ Grounded in RM Rev.3 / CEC (local extracts). Numbers are **design envelopes**, n
 
 ### 3.4 eDMA + DMAMUX
 
-- Circular / ping-pong transfers from ADC_ETC result buffers into **DTCM** (preferred for DSP) or OCRAM; PSRAM only for cold archive, not the real-time feature window (PSRAM latency + contention with capture/Ethernet).
+- Circular / ping-pong DMA destinations must be **OCRAM / `DMAMEM`** (eDMA cannot write DTCM). Optional **CPU copy into DTCM** for DSP scratch after the frame lands. PSRAM only for cold archive, not the real-time feature window (PSRAM latency + contention with capture/Ethernet).
 
 ### 3.5 Cortex-M7 DSP
 
@@ -79,9 +79,9 @@ Grounded in RM Rev.3 / CEC (local extracts). Numbers are **design envelopes**, n
 
 ### 4.1 Sensing model
 
-1. **Analog (board — does not exist yet):** HF current transducer (CT or shunt + isolation) → band-pass **~5–150 kHz** → gain → clamp into ADC full-scale. Optional second channel: HF voltage across a sense window.
+1. **Analog (board — does not exist yet):** HF current transducer (CT or shunt + isolation) → anti-alias / band-pass with cutoff **below Nyquist** (at default Fs=250 kSPS, Nyquist=125 kHz → prefer **f_c ≈ 0.4·Fs ≈ 100 kHz**, not a 150 kHz passband that aliases) → gain → clamp into ADC full-scale. Optional second channel: HF voltage across a sense window.
 2. **Digital sample clock:** PIT or GPT → XBAR → ADC_ETC TRIG → SyncMode dual ADC @ **Fs = 250 kHz** (phase R default) or **500 kHz** (lab stretch). Frame length **N = 512** (2.048 ms @ 250 kHz) with **50% overlap**.
-3. **Carrier blanking:** FlexPWM reload / compare → XBAR flag → firmware marks samples in ±*T_blank* of each switching edge as **invalid for scoring** (zero them or exclude from moments). This is the platform-specific novelty: the detector *knows* the aggressor schedule because it *is* the aggressor MCU (or receives phase from the PWM MCU over a dual-MCU link).
+3. **Carrier blanking:** FlexPWM reload **and** compare edges → XBAR flag → firmware marks samples in ±*T_blank* of each switching edge as **invalid for scoring**. Prefer **exclude** blanks from moments / STFT energy (zero-filling creates sidebands). Track absolute carrier phase across overlapping frames. This is the platform-specific novelty: the detector *knows* the aggressor schedule because it *is* the aggressor MCU (or receives phase from the PWM MCU over a dual-MCU link).
 4. **Dither mutex:** if `CarrierDitherMode != Off`, HF scoring is **forced inactive** (same validate / mode bit as roadmap P1). Sense mode requires dither off and a stable carrier for blanking.
 
 ### 4.2 Feature vector (per valid frame)
@@ -103,12 +103,17 @@ Adaptive noise floor θ_adapt: EWMA of E_M during **armed-but-quiet** windows (n
 ### 4.3 Decision logic (research score, not a trip)
 
 ```text
+# Presence score (masking is NOT subtracted here)
 S_raw = w1·z(E_M) + w2·z(SK) + w3·z(D_burst) + w4·z(slope)
-      − w5·z(R_tonal) − w6·M
+      + w_coh·z(coherence) − w5·z(R_tonal)
+
+observability = 1 − M   # F7 masking honesty, separate from presence
 
 if dither_active or blanking_unavailable or AFE_fault:
     S = 0; state = INHIBITED_SENSE
-elif S_raw > T_hi for N_persist frames:
+elif observability < observability_min:
+    state = QUIET                 # low coverage — do not arm Candidate*
+elif S_raw > T_hi for persist_ms (hop-derived frames, ~50–150 ms):
     state = ARC_CANDIDATE_HIGH   # research event log only
 elif S_raw > T_lo:
     state = ARC_CANDIDATE_LOW
@@ -145,7 +150,7 @@ Until these exist, “protection” language stays forbidden:
 │ Teensy 4.1 (this repo) — bench PWM + research capture       │
 │  FlexPWM / OUTEN / fault / thermal / Ethernet / MTP         │
 │  captureTick @ carrier ──► metering / portable spectrum     │
-│  [LAB FLAG] HF path: PIT→XBAR→ADC_ETC→eDMA→DTCM→MACAPD     │
+│  [LAB FLAG] HF path: PIT→XBAR→ADC_ETC→eDMA→OCRAM/DMAMEM→(copy DTCM)→MACAPD │
 │            EventLog research states only; no OUTEN trip     │
 └───────────────────────────┬─────────────────────────────────┘
                             │ future: SPI/UART ARC_CANDIDATE
@@ -191,7 +196,7 @@ On-chip RT1060 SAR is **12-bit / ~10 ENOB** — fine for proving DMA wiring, not
 
 ### 5.2 Memory / CPU budget (order-of-magnitude)
 
-- 250 kSPS × 2 ch × 2 bytes ≈ **1 MB/s** into DTCM ring (e.g. 8 KiB ping-pong).
+- 250 kSPS × 2 ch × 2 bytes ≈ **1 MB/s** into OCRAM/`DMAMEM` ping-pong (e.g. 8 KiB), then optional DTCM copy for DSP.
 - 512-pt real FFT ~ every 1 ms overlap → feasible on 600 MHz M7 if FFT is occasional; prefer **IIR band energies + Goertzel notches at k·f_c** for continuous duty.
 - Keep research DSP out of FAULT/OUTEN IRQ paths; run from main loop or a low-priority PIT soft IRQ with WDOG-aware budgets.
 

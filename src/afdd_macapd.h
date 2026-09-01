@@ -18,9 +18,18 @@
 #define AFDD_MACAPD_BURST_HIST 64
 #endif
 
+#ifndef AFDD_MACAPD_SLOPE_HIST
+#define AFDD_MACAPD_SLOPE_HIST 64
+#endif
+
 // Advertised HF bands go to 100 kHz; Nyquist must sit strictly above that.
 #ifndef AFDD_MACAPD_FEATURE_BAND_MAX_HZ
 #define AFDD_MACAPD_FEATURE_BAND_MAX_HZ 100000.0f
+#endif
+
+// Dense Goertzel probes per advertised band (not three center taps).
+#ifndef AFDD_MACAPD_BAND_PROBES
+#define AFDD_MACAPD_BAND_PROBES 12
 #endif
 
 enum AfddMacapdSenseState : uint8_t {
@@ -34,24 +43,29 @@ struct AfddMacapdConfig {
   float sampleRateHz;     // e.g. 250000
   float carrierHz;        // FlexPWM carrier for tonal notches / blanking
   float blankHalfWidthS;  // ± blank around each edge (seconds)
+  float carrierPhaseSamples; // absolute phase at frame start (samples, may wrap)
+  float dutyCycle;        // 0..1 FlexPWM duty — blank reload AND compare edges
+  float hopSamples;       // frame hop length (N/2 for 50% overlap); drives persist/slopes
+  float persistMs;        // HIGH needs tHi for this many ms (0 → use nPersist frames)
+  float slopeHorizonMs;   // precursor slope window (default ~1 s, capped by hist)
   float ewmaAlpha;        // 0..1 adaptive floor / slope smoothing
   float wBand;            // weight on mid-band energy z-score proxy
   float wKurtosis;        // weight on excess kurtosis
   float wBurst;           // weight on burst duty
   float wSlope;           // weight on precursor slope
   float wTonal;           // penalty weight on tonal residual
-  float wMask;            // penalty weight on maskingPenalty
   float wCoh;             // weight on I/V coherence (parallel / CM cue)
   float tLo;              // low candidate threshold on raw score
   float tHi;              // high candidate threshold on raw score
-  uint16_t nPersist;      // frames above tHi before HIGH
+  float observabilityMin; // inhibit Candidate* when observability below this
+  uint16_t nPersist;      // frames above tHi before HIGH (0 → derive from persistMs)
   uint16_t keepMin;       // inhibit if kept samples < keepMin (0 → auto n/4)
   float tonalDeltaHz;     // ±Δ around each k·fc for residual (0 → fs/N)
   bool freezeEwmaOnCandidate; // freeze quiet floor while Candidate*
   bool ditherActive;      // if true → inhibited
   bool blankingAvailable; // if false → inhibited
   bool afeFault;          // if true → inhibited
-  float maskingPenalty;   // 0..1 (series L / C-to-ground honesty)
+  float maskingPenalty;   // 0..1 honesty — lowers observability, not presence score
 };
 
 struct AfddMacapdFeatures {
@@ -63,15 +77,18 @@ struct AfddMacapdFeatures {
   float dBurst;     // recent burst duty (0..1)
   float slopeEm;    // dE_M / dt proxy
   float slopeSk;    // d kurtosis / dt proxy
-  float coherence;  // |corr(i,v)| on kept samples if v present, else 0
-  float scoreRaw;   // combined score before state machine
+  float coherence;     // |corr(i,v)| on kept samples if v present, else 0
+  float observability; // 1 - maskingPenalty (separate from presence score)
+  float scoreRaw;      // presence score (no masking subtract)
   uint16_t keepCount;
 };
 
 struct AfddMacapdState {
   float ewmaEm;
-  float prevEm;
-  float prevSk;
+  float histEm[AFDD_MACAPD_SLOPE_HIST];
+  float histSk[AFDD_MACAPD_SLOPE_HIST];
+  uint16_t histIdx;
+  uint16_t histFilled;
   uint16_t highPersist;
   uint8_t burstHist[AFDD_MACAPD_BURST_HIST];
   uint16_t burstIdx;
@@ -85,18 +102,23 @@ inline AfddMacapdConfig afddMacapdDefaultConfig() {
   c.sampleRateHz = 250000.0f;
   c.carrierHz = 20000.0f;
   c.blankHalfWidthS = 2.0e-6f;
+  c.carrierPhaseSamples = 0.0f;
+  c.dutyCycle = 0.5f;
+  c.hopSamples = 256.0f; // 50% of N=512
+  c.persistMs = 80.0f;   // ~50–150 ms ride-through
+  c.slopeHorizonMs = 1000.0f;
   c.ewmaAlpha = 0.05f;
   c.wBand = 1.0f;
   c.wKurtosis = 0.75f;
   c.wBurst = 0.5f;
   c.wSlope = 0.5f;
   c.wTonal = 1.0f;
-  c.wMask = 1.0f;
   c.wCoh = 0.25f;
   c.tLo = 1.0f;
   c.tHi = 2.5f;
-  c.nPersist = 3;
-  c.keepMin = 0; // auto: max(8, n/4)
+  c.observabilityMin = 0.25f;
+  c.nPersist = 0; // auto from persistMs
+  c.keepMin = 0;  // auto: max(8, n/4)
   c.tonalDeltaHz = 0.0f; // auto: fs/n
   c.freezeEwmaOnCandidate = true;
   c.ditherActive = false;
@@ -104,6 +126,32 @@ inline AfddMacapdConfig afddMacapdDefaultConfig() {
   c.afeFault = false;
   c.maskingPenalty = 0.0f;
   return c;
+}
+
+inline float afddMacapdHopSeconds(const AfddMacapdConfig &cfg) {
+  if (cfg.sampleRateHz <= 1.0f) {
+    return 0.0f;
+  }
+  const float hop = (cfg.hopSamples > 1.0f) ? cfg.hopSamples : 256.0f;
+  return hop / cfg.sampleRateHz;
+}
+
+inline uint16_t afddMacapdPersistFrames(const AfddMacapdConfig &cfg) {
+  if (cfg.nPersist > 0) {
+    return cfg.nPersist;
+  }
+  const float hopS = afddMacapdHopSeconds(cfg);
+  if (hopS <= 1.0e-9f || cfg.persistMs <= 0.0f) {
+    return 3;
+  }
+  const float frames = cfg.persistMs * 1.0e-3f / hopS;
+  if (frames < 1.0f) {
+    return 1;
+  }
+  if (frames > 60000.0f) {
+    return 60000;
+  }
+  return static_cast<uint16_t>(frames + 0.5f);
 }
 
 inline void afddMacapdReset(AfddMacapdState *s) {
@@ -128,8 +176,9 @@ inline bool afddMacapdScoringConfigValid(const AfddMacapdConfig &cfg) {
   return cfg.sampleRateHz > (2.0f * AFDD_MACAPD_FEATURE_BAND_MAX_HZ) && cfg.carrierHz > 1.0f;
 }
 
-// Zero samples within ±blankHalfWidth of each integer carrier period edge.
+// Zero samples within ±blankHalfWidth of reload AND compare edges.
 // maskOut[i] = 1 if sample is valid for scoring, 0 if blanked.
+// carrierPhaseSamples advances absolute phase across overlapping frames.
 inline void afddMacapdBuildBlankMask(const AfddMacapdConfig &cfg, size_t n, uint8_t *maskOut) {
   if (maskOut == nullptr || n == 0) {
     return;
@@ -145,13 +194,34 @@ inline void afddMacapdBuildBlankMask(const AfddMacapdConfig &cfg, size_t n, uint
   const float fc = cfg.carrierHz;
   const float period = fs / fc;
   const float halfBlank = cfg.blankHalfWidthS * fs;
+  float duty = cfg.dutyCycle;
+  if (duty < 0.05f) {
+    duty = 0.05f;
+  } else if (duty > 0.95f) {
+    duty = 0.95f;
+  }
+  const float comparePhase = duty * period;
+  float phase0 = cfg.carrierPhaseSamples;
+  // Normalize phase0 into [0, period).
+  if (period > 1.0e-6f) {
+    phase0 = fmodf(phase0, period);
+    if (phase0 < 0.0f) {
+      phase0 += period;
+    }
+  }
   for (size_t i = 0; i < n; ++i) {
     if (!cfg.blankingAvailable) {
       maskOut[i] = 1;
       continue;
     }
-    const float phase = fmodf(static_cast<float>(i), period);
-    const float dist = fminf(phase, period - phase);
+    float phase = fmodf(phase0 + static_cast<float>(i), period);
+    if (phase < 0.0f) {
+      phase += period;
+    }
+    const float distReload = fminf(phase, period - phase);
+    float dCmp = fabsf(phase - comparePhase);
+    dCmp = fminf(dCmp, period - dCmp);
+    const float dist = fminf(distReload, dCmp);
     maskOut[i] = (dist > halfBlank) ? 1u : 0u;
   }
 }
@@ -170,6 +240,8 @@ inline uint16_t afddMacapdKeepCount(const uint8_t *mask, size_t n) {
 }
 
 inline void afddMacapdApplyBlank(const float *x, const uint8_t *mask, size_t n, float *yOut) {
+  // Zero-stuff for tonal Goertzel only. Moments / kurtosis / coherence MUST use the mask
+  // (exclude blanks). Prefer mask-aware STFT on target firmware — zeros create sidebands.
   if (x == nullptr || yOut == nullptr || n == 0) {
     return;
   }
@@ -296,16 +368,50 @@ inline float afddMacapdAbsCorr(const float *a, const float *b, size_t n) {
   return afddMacapdAbsCorrMasked(a, b, nullptr, n);
 }
 
-// Crude band energy: sum of Goertzel power at band centers (FFT-free).
+// Band energy: dense Goertzel probes across [f0,f1] (full advertised band, not 3 taps).
 inline float afddMacapdBandEnergy(const float *x, size_t n, float fs, float f0, float f1) {
-  if (f1 <= f0) {
+  if (f1 <= f0 || x == nullptr || n < 4 || fs <= 0.0f) {
     return 0.0f;
   }
-  const float c0 = 0.25f * f0 + 0.75f * ((f0 + f1) * 0.5f);
-  const float c1 = (f0 + f1) * 0.5f;
-  const float c2 = 0.75f * ((f0 + f1) * 0.5f) + 0.25f * f1;
-  return afddMacapdGoertzelPower(x, n, fs, c0) + afddMacapdGoertzelPower(x, n, fs, c1) +
-         afddMacapdGoertzelPower(x, n, fs, c2);
+  const float nyq = fs * 0.45f;
+  float lo = f0;
+  float hi = f1;
+  if (lo < 1.0f) {
+    lo = 1.0f;
+  }
+  if (hi > nyq) {
+    hi = nyq;
+  }
+  if (hi <= lo) {
+    return 0.0f;
+  }
+  float acc = 0.0f;
+  for (int k = 0; k < AFDD_MACAPD_BAND_PROBES; ++k) {
+    const float t = (static_cast<float>(k) + 0.5f) / static_cast<float>(AFDD_MACAPD_BAND_PROBES);
+    const float fk = lo + t * (hi - lo);
+    acc += afddMacapdGoertzelPower(x, n, fs, fk);
+  }
+  return acc;
+}
+
+// Chronological half-horizon mean delta (circular hist).
+inline float afddMacapdHalfHorizonDelta(const float *hist, uint16_t filled, uint16_t oldestIdx,
+                                        uint16_t cap) {
+  if (hist == nullptr || filled < 4 || cap == 0) {
+    return 0.0f;
+  }
+  const uint16_t half = static_cast<uint16_t>(filled / 2);
+  double older = 0.0;
+  double newer = 0.0;
+  for (uint16_t k = 0; k < half; ++k) {
+    older += hist[(oldestIdx + k) % cap];
+  }
+  for (uint16_t k = half; k < filled; ++k) {
+    newer += hist[(oldestIdx + k) % cap];
+  }
+  older /= half;
+  newer /= static_cast<double>(filled - half);
+  return static_cast<float>(newer - older);
 }
 
 // Tonal residual: sum Goertzel at k·fc and ±Δ (carrier-drift honest), / totalEnergy.
@@ -363,6 +469,12 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
   }
 
   f.keepCount = afddMacapdKeepCount(mask, n);
+  f.observability = 1.0f - cfg.maskingPenalty;
+  if (f.observability < 0.0f) {
+    f.observability = 0.0f;
+  } else if (f.observability > 1.0f) {
+    f.observability = 1.0f;
+  }
   const uint16_t keepFloor =
       (cfg.keepMin > 0) ? cfg.keepMin : static_cast<uint16_t>(fmaxf(8.0f, static_cast<float>(n) * 0.25f));
 
@@ -383,8 +495,6 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
 
   if (!st->initialized) {
     st->ewmaEm = f.eM;
-    st->prevEm = f.eM;
-    st->prevSk = f.kurtosis;
     st->initialized = true;
   }
 
@@ -395,10 +505,37 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
   if (!freeze) {
     st->ewmaEm = (1.0f - a) * st->ewmaEm + a * f.eM;
   }
-  f.slopeEm = f.eM - st->prevEm;
-  f.slopeSk = f.kurtosis - st->prevSk;
-  st->prevEm = f.eM;
-  st->prevSk = f.kurtosis;
+
+  st->histEm[st->histIdx] = f.eM;
+  st->histSk[st->histIdx] = f.kurtosis;
+  st->histIdx = static_cast<uint16_t>((st->histIdx + 1u) % AFDD_MACAPD_SLOPE_HIST);
+  if (st->histFilled < AFDD_MACAPD_SLOPE_HIST) {
+    ++st->histFilled;
+  }
+
+  // Use as many hist slots as fit under slopeHorizonMs (hop-aware), min 4.
+  const float hopS = afddMacapdHopSeconds(cfg);
+  uint16_t useFilled = st->histFilled;
+  if (hopS > 1.0e-9f && cfg.slopeHorizonMs > 0.0f) {
+    const float want = cfg.slopeHorizonMs * 1.0e-3f / hopS;
+    if (want >= 4.0f && want < static_cast<float>(useFilled)) {
+      useFilled = static_cast<uint16_t>(want);
+    }
+  }
+  // When not yet wrapped, oldest is 0; after wrap, histIdx is the next write (= oldest).
+  const uint16_t oldestUse =
+      (st->histFilled >= AFDD_MACAPD_SLOPE_HIST)
+          ? static_cast<uint16_t>((st->histIdx + AFDD_MACAPD_SLOPE_HIST - useFilled) %
+                                  AFDD_MACAPD_SLOPE_HIST)
+          : 0;
+  f.slopeEm = afddMacapdHalfHorizonDelta(st->histEm, useFilled, oldestUse, AFDD_MACAPD_SLOPE_HIST);
+  f.slopeSk = afddMacapdHalfHorizonDelta(st->histSk, useFilled, oldestUse, AFDD_MACAPD_SLOPE_HIST);
+  // Convert half-horizon Δ to per-second proxy.
+  const float halfT = 0.5f * static_cast<float>(useFilled) * hopS;
+  if (halfT > 1.0e-6f) {
+    f.slopeEm /= halfT;
+    f.slopeSk /= halfT;
+  }
 
   // Adaptive floor: burst if mid-band exceeds EWMA by 2× (or absolute floor).
   const float floor = fmaxf(ewmaPrev * 2.0f, 1.0e-6f);
@@ -419,9 +556,16 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
   // High I/V coherence on HF can flag parallel / CM coupling (research cue).
   const float zCoh = f.coherence;
 
+  // Presence score only — masking is observability, not a subtractive presence cue.
   f.scoreRaw = cfg.wBand * zBand + cfg.wKurtosis * zSk + cfg.wBurst * zBurst +
-               cfg.wSlope * zSlope + cfg.wCoh * zCoh - cfg.wTonal * f.rTonal -
-               cfg.wMask * cfg.maskingPenalty;
+               cfg.wSlope * zSlope + cfg.wCoh * zCoh - cfg.wTonal * f.rTonal;
+
+  if (f.observability < cfg.observabilityMin) {
+    // Low coverage honesty: do not arm Candidate*; keep Quiet research state.
+    st->highPersist = 0;
+    st->sense = AfddMacapdQuiet;
+    return f;
+  }
 
   if (f.scoreRaw > cfg.tHi) {
     if (st->highPersist < 0xffffu) {
@@ -431,7 +575,8 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
     st->highPersist = 0;
   }
 
-  if (st->highPersist >= cfg.nPersist) {
+  const uint16_t needPersist = afddMacapdPersistFrames(cfg);
+  if (st->highPersist >= needPersist) {
     st->sense = AfddMacapdCandidateHigh;
   } else if (f.scoreRaw > cfg.tLo) {
     st->sense = AfddMacapdCandidateLow;

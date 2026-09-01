@@ -274,7 +274,7 @@ blanked HF frame i[n]
 All on **kept** samples / valid coeff indices.
 
 1. **Packet energies** \(E_p\), \(E_{\mathrm{arc}}=\sum_{p\in P_{\mathrm{arc}}} E_p\).
-2. **Subband irregularity (precursor core)** over horizon \(T_H\in[0.5,2]\) s (default 1 s → \(H\approx 488\) frames at N=512):
+2. **Subband irregularity (precursor core)** over horizon \(T_H\in[0.5,2]\) s (default 1 s → hop-derived \(H\): at N=512 with **50% overlap** hop=256 → \(H\approx 977\) frames @ 250 kSPS; non-overlapped hop=N → \(H\approx 488\)):
    \[
    \mathrm{CV}_p=\sigma_p/(\mu_p+\varepsilon),\quad
    I_{\mathrm{irr}}=\mathrm{mean}_{p\in P_{\mathrm{arc}}}\mathrm{CV}_p

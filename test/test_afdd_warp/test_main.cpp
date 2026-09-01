@@ -141,6 +141,23 @@ void test_warp_half_horizon_delta_survives_ring_wrap() {
   TEST_ASSERT_TRUE(wrapped > 0.0f);
 }
 
+void test_warp_arc_packets_are_freq_midband() {
+  TEST_ASSERT_FALSE(afddWarpIsArcPacket(0));
+  TEST_ASSERT_TRUE(afddWarpIsArcPacket(1));
+  TEST_ASSERT_TRUE(afddWarpIsArcPacket(4));
+  TEST_ASSERT_FALSE(afddWarpIsArcPacket(5));
+  TEST_ASSERT_FALSE(afddWarpIsArcPacket(7));
+}
+
+void test_warp_persist_ms_helpers() {
+  AfddWarpConfig c = afddWarpDefaultConfig();
+  c.hopSamples = 256.0f;
+  c.sampleRateHz = 250000.0f;
+  c.watchHorizonMs = 1000.0f;
+  const uint16_t need = afddWarpWatchFramesNeeded(c);
+  TEST_ASSERT_EQUAL_UINT16(AFDD_WARP_HORIZON, need); // host ring caps research H
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_warp_default_disarmed);
@@ -149,5 +166,7 @@ int main() {
   RUN_TEST(test_warp_sparse_impulses_can_raise_irregularity);
   RUN_TEST(test_warp_haar_wpt_length);
   RUN_TEST(test_warp_half_horizon_delta_survives_ring_wrap);
+  RUN_TEST(test_warp_arc_packets_are_freq_midband);
+  RUN_TEST(test_warp_persist_ms_helpers);
   return UNITY_END();
 }

@@ -21,10 +21,18 @@
 #define AFDD_WARP_J 3
 #endif
 
-#ifndef AFDD_WARP_PACKETS
-#define AFDD_WARP_PACKETS (1 << AFDD_WARP_J) // 8
+// Haar WPT host path is hardcoded to J=3 → 8 terminal packets. Do not retarget J alone.
+#if AFDD_WARP_J != 3
+#error "afdd_warp.h Haar host path requires AFDD_WARP_J == 3 (db4/generic WPT is future work)"
 #endif
 
+#ifndef AFDD_WARP_PACKETS
+#define AFDD_WARP_PACKETS 8
+#elif AFDD_WARP_PACKETS != 8
+#error "AFDD_WARP_PACKETS must be 8 while Haar WPT J=3 is hardcoded"
+#endif
+
+// Abbreviated host horizon (full research H is hop-derived; see hopSamples / watchHorizonMs).
 #ifndef AFDD_WARP_HORIZON
 #define AFDD_WARP_HORIZON 32
 #endif
@@ -55,6 +63,8 @@ struct AfddWarpConfig {
   float tHi;
   float gammaEnergy; // PrecursorWatch requires Earc < gamma * thetaEnergy
   float thetaEnergy; // energy trip proxy (research floor)
+  float hopSamples;  // frame hop (N/2 @ 50% overlap)
+  float watchHorizonMs; // PrecursorConfirmed needs full watch age (~T_H)
   uint16_t nPre;
   uint16_t nPersist;
   uint16_t keepMin;
@@ -63,6 +73,7 @@ struct AfddWarpConfig {
   bool blankingAvailable;
   bool afeFault;
   float maskingPenalty;
+  float observabilityMin;
 };
 
 struct AfddWarpFeatures {
@@ -77,6 +88,7 @@ struct AfddWarpFeatures {
   float sWarp;
   float sJoint;
   float rTonal;
+  float observability;
   uint16_t keepCount;
 };
 
@@ -85,11 +97,13 @@ struct AfddWarpState {
   float ewmaEp[AFDD_WARP_PACKETS];
   float histEarc[AFDD_WARP_HORIZON];
   float histIirr[AFDD_WARP_HORIZON];
+  float histEp[AFDD_WARP_PACKETS][AFDD_WARP_HORIZON]; // frequency-ordered packet energies
   uint8_t burstHist[AFDD_WARP_HORIZON];
   uint16_t histIdx;
   uint16_t histFilled;
   uint16_t prePersist;
   uint16_t highPersist;
+  uint16_t watchAge; // frames spent in PrecursorWatch
   AfddWarpSenseState sense;
   bool initialized;
 };
@@ -112,6 +126,8 @@ inline AfddWarpConfig afddWarpDefaultConfig() {
   c.tHi = 2.5f;
   c.gammaEnergy = 0.7f;
   c.thetaEnergy = 1.0e-3f;
+  c.hopSamples = 256.0f;
+  c.watchHorizonMs = 1000.0f; // research T_H default; host ring may be shorter
   c.nPre = 5;
   c.nPersist = 3;
   c.keepMin = 0;
@@ -120,7 +136,25 @@ inline AfddWarpConfig afddWarpDefaultConfig() {
   c.blankingAvailable = true;
   c.afeFault = false;
   c.maskingPenalty = 0.0f;
+  c.observabilityMin = 0.25f;
   return c;
+}
+
+inline uint16_t afddWarpWatchFramesNeeded(const AfddWarpConfig &cfg) {
+  if (cfg.sampleRateHz <= 1.0f || cfg.hopSamples <= 1.0f || cfg.watchHorizonMs <= 0.0f) {
+    return AFDD_WARP_HORIZON;
+  }
+  const float hopS = cfg.hopSamples / cfg.sampleRateHz;
+  const float frames = cfg.watchHorizonMs * 1.0e-3f / hopS;
+  // Host ring is abbreviated; require min(full research H, AFDD_WARP_HORIZON).
+  float need = frames;
+  if (need > static_cast<float>(AFDD_WARP_HORIZON)) {
+    need = static_cast<float>(AFDD_WARP_HORIZON);
+  }
+  if (need < 4.0f) {
+    need = 4.0f;
+  }
+  return static_cast<uint16_t>(need + 0.5f);
 }
 
 inline void afddWarpReset(AfddWarpState *s) {
@@ -168,21 +202,28 @@ inline size_t afddWarpHaarWpt3(const float *x, size_t n, float packets[AFDD_WARP
   afddWarpHaarStep(H, n1, HL, HH);
   const size_t n2 = n1 / 2;
 
-  // Level 3 → 8 packets
+  // Level 3 → 8 packets in natural tree order (LLL,LLH,LHL,LHH,HLL,HLH,HHL,HHH).
   float *parents[4] = {LL, LH, HL, HH};
+  float natural[AFDD_WARP_PACKETS][AFDD_WARP_MAX_N / 8];
   for (int p = 0; p < 4; ++p) {
     afddWarpHaarStep(parents[p], n2, bufA, bufB);
     const size_t n3 = n2 / 2;
-    memcpy(packets[2 * p], bufA, n3 * sizeof(float));
-    memcpy(packets[2 * p + 1], bufB, n3 * sizeof(float));
+    memcpy(natural[2 * p], bufA, n3 * sizeof(float));
+    memcpy(natural[2 * p + 1], bufB, n3 * sizeof(float));
   }
-  return n / 8;
+  // Frequency reorder via Gray-code map (ascending Hz for equal Haar bands).
+  // natural indices in freq order: 0,1,3,2,6,7,5,4
+  static const int kNatFromFreq[AFDD_WARP_PACKETS] = {0, 1, 3, 2, 6, 7, 5, 4};
+  const size_t n3 = n / 8;
+  for (int f = 0; f < AFDD_WARP_PACKETS; ++f) {
+    memcpy(packets[f], natural[kNatFromFreq[f]], n3 * sizeof(float));
+  }
+  return n3;
 }
 
-// Arc-oriented packet set for Haar WPT J=3 (mid/high detail indices). Research default.
-inline bool afddWarpIsArcPacket(int p) {
-  // Skip coarsest approx (0); use 2..7 as broadband-ish packets.
-  return p >= 2 && p < AFDD_WARP_PACKETS;
+// Arc interest after frequency reorder: p1–p4 (15.6–78 kHz @ 250 kSPS).
+inline bool afddWarpIsArcPacket(int freqPacket) {
+  return freqPacket >= 1 && freqPacket <= 4;
 }
 
 inline float afddWarpPacketEnergy(const float *c, size_t len, const uint8_t *keepMaskParent,
@@ -261,6 +302,26 @@ inline float afddWarpHalfHorizonDelta(const float *hist, uint16_t filled, uint16
   return static_cast<float>(newer - older);
 }
 
+inline float afddWarpHorizonPacketCv(const float *hist, uint16_t filled, uint16_t oldestIdx) {
+  if (hist == nullptr || filled < 4) {
+    return 0.0f;
+  }
+  const uint16_t cap = AFDD_WARP_HORIZON;
+  double mean = 0.0;
+  for (uint16_t k = 0; k < filled; ++k) {
+    mean += hist[(oldestIdx + k) % cap];
+  }
+  mean /= static_cast<double>(filled);
+  double var = 0.0;
+  for (uint16_t k = 0; k < filled; ++k) {
+    const double d = hist[(oldestIdx + k) % cap] - mean;
+    var += d * d;
+  }
+  var /= static_cast<double>(filled);
+  const double mu = fmax(mean, 1.0e-12);
+  return static_cast<float>(sqrt(var) / mu);
+}
+
 inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarpState *st,
                                              const float *iBlanked, size_t n, const uint8_t *mask,
                                              float macapdScoreRaw, float macapdRTonal) {
@@ -273,6 +334,12 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
   }
 
   f.keepCount = afddMacapdKeepCount(mask, n);
+  f.observability = 1.0f - cfg.maskingPenalty;
+  if (f.observability < 0.0f) {
+    f.observability = 0.0f;
+  } else if (f.observability > 1.0f) {
+    f.observability = 1.0f;
+  }
   const uint16_t keepFloor =
       (cfg.keepMin > 0) ? cfg.keepMin : static_cast<uint16_t>(fmaxf(8.0f, static_cast<float>(n) * 0.25f));
   f.rTonal = macapdRTonal;
@@ -281,6 +348,7 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
     st->sense = AfddWarpInhibited;
     st->prePersist = 0;
     st->highPersist = 0;
+    st->watchAge = 0;
     return f;
   }
 
@@ -330,46 +398,50 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
     st->initialized = true;
   }
 
-  float iIrr = 0.0f;
-  int nArcPkt = 0;
-  for (int p = 0; p < AFDD_WARP_PACKETS; ++p) {
-    if (!freeze) {
+  if (!freeze) {
+    for (int p = 0; p < AFDD_WARP_PACKETS; ++p) {
       st->ewmaEp[p] = (1.0f - a) * st->ewmaEp[p] + a * ep[p];
     }
-    if (afddWarpIsArcPacket(p)) {
-      const float mu = fmaxf(st->ewmaEp[p], 1.0e-12f);
-      const float cv = fabsf(ep[p] - st->ewmaEp[p]) / mu;
-      iIrr += cv;
-      ++nArcPkt;
-    }
-  }
-  if (nArcPkt > 0) {
-    iIrr /= static_cast<float>(nArcPkt);
-  }
-  f.iIrr = iIrr;
-
-  if (!freeze) {
     st->ewmaEarc = (1.0f - a) * st->ewmaEarc + a * eArc;
   }
 
   const float floor = fmaxf(st->ewmaEarc * 2.0f, 1.0e-9f);
   const uint8_t burst = (eArc > floor) ? 1u : 0u;
-  st->burstHist[st->histIdx] = burst;
-  st->histEarc[st->histIdx] = eArc;
-  st->histIirr[st->histIdx] = iIrr;
+  const uint16_t writeIdx = st->histIdx;
+  st->burstHist[writeIdx] = burst;
+  st->histEarc[writeIdx] = eArc;
+  for (int p = 0; p < AFDD_WARP_PACKETS; ++p) {
+    st->histEp[p][writeIdx] = ep[p];
+  }
   st->histIdx = static_cast<uint16_t>((st->histIdx + 1u) % AFDD_WARP_HORIZON);
   if (st->histFilled < AFDD_WARP_HORIZON) {
     ++st->histFilled;
   }
 
+  const uint16_t oldest = (st->histFilled >= AFDD_WARP_HORIZON) ? st->histIdx : 0;
+
+  // Horizon packet CV (σ/μ) over filled history — precursor irregularity core.
+  float iIrr = 0.0f;
+  int nArcPkt = 0;
+  for (int p = 0; p < AFDD_WARP_PACKETS; ++p) {
+    if (!afddWarpIsArcPacket(p)) {
+      continue;
+    }
+    iIrr += afddWarpHorizonPacketCv(st->histEp[p], st->histFilled, oldest);
+    ++nArcPkt;
+  }
+  if (nArcPkt > 0) {
+    iIrr /= static_cast<float>(nArcPkt);
+  }
+  f.iIrr = iIrr;
+  st->histIirr[writeIdx] = iIrr;
+
   uint32_t ones = 0;
   for (uint16_t i = 0; i < st->histFilled; ++i) {
-    ones += st->burstHist[i];
+    ones += st->burstHist[(oldest + i) % AFDD_WARP_HORIZON];
   }
   f.rMu = (st->histFilled > 0) ? (static_cast<float>(ones) / static_cast<float>(st->histFilled)) : 0.0f;
 
-  // Horizon slopes: half-horizon mean delta in chronological order (not physical index).
-  const uint16_t oldest = (st->histFilled >= AFDD_WARP_HORIZON) ? st->histIdx : 0;
   f.slopeI = afddWarpHalfHorizonDelta(st->histIirr, st->histFilled, oldest);
   f.slopeE = afddWarpHalfHorizonDelta(st->histEarc, st->histFilled, oldest);
 
@@ -379,9 +451,18 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
   const float zK = fmaxf(f.kPkt, 0.0f);
   const float zPs = fmaxf(f.slopeI, 0.0f) + 0.5f * fmaxf(f.slopeE, 0.0f);
 
+  // Presence-oriented warp score; masking stays on observability.
   f.sWarp = cfg.wI * zI + cfg.wH * zH + cfg.wMu * zMu + cfg.wK * zK + cfg.wPs * zPs -
-            cfg.wT * f.rTonal - cfg.wPk * f.rPkt - cfg.wM * cfg.maskingPenalty;
+            cfg.wT * f.rTonal - cfg.wPk * f.rPkt;
   f.sJoint = cfg.beta * macapdScoreRaw + (1.0f - cfg.beta) * f.sWarp;
+
+  if (f.observability < cfg.observabilityMin) {
+    st->prePersist = 0;
+    st->highPersist = 0;
+    st->watchAge = 0;
+    st->sense = AfddWarpQuiet;
+    return f;
+  }
 
   // State machine (research log only — never OUTEN).
   const bool energyLow = (f.eArc < cfg.gammaEnergy * cfg.thetaEnergy);
@@ -401,18 +482,29 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
     st->highPersist = 0;
   }
 
+  const uint16_t needWatch = afddWarpWatchFramesNeeded(cfg);
+
   if (st->highPersist >= cfg.nPersist) {
     st->sense = AfddWarpCandidateHigh;
+    st->watchAge = 0;
   } else if (f.sJoint > cfg.tLo) {
-    if (st->sense == AfddWarpPrecursorWatch) {
+    if (st->sense == AfddWarpPrecursorWatch && st->watchAge >= needWatch) {
       st->sense = AfddWarpPrecursorConfirmed;
-    } else {
+    } else if (st->sense != AfddWarpPrecursorConfirmed) {
       st->sense = AfddWarpCandidateLow;
+      st->watchAge = 0;
     }
   } else if (st->prePersist >= cfg.nPre) {
+    if (st->sense != AfddWarpPrecursorWatch) {
+      st->watchAge = 0;
+    }
     st->sense = AfddWarpPrecursorWatch;
+    if (st->watchAge < 0xffffu) {
+      ++st->watchAge;
+    }
   } else {
     st->sense = AfddWarpQuiet;
+    st->watchAge = 0;
   }
 
   return f;

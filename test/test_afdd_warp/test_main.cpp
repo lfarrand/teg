@@ -127,6 +127,68 @@ void test_warp_haar_wpt_length() {
   TEST_ASSERT_EQUAL(8u, plen);
 }
 
+void test_warp_packet_energy_excludes_blank_haar_windows() {
+  // Constant frame + one blanked sample per Haar support. Zero-stuffing those
+  // blanks before WPT creates edges that leak into arc packets if the mask is
+  // ignored; mask-exclude must drop those contaminated coeffs.
+  const size_t n = 256;
+  float x[n];
+  uint8_t mask[n];
+  for (size_t i = 0; i < n; ++i) {
+    x[i] = 1.0f;
+    mask[i] = 1u;
+  }
+  for (size_t i = 0; i < n; i += 8) {
+    x[i] = 0.0f;
+    mask[i] = 0u;
+  }
+  float packets[AFDD_WARP_PACKETS][AFDD_WARP_MAX_N / 8];
+  const size_t plen = afddWarpHaarWpt3(x, n, packets);
+  TEST_ASSERT_EQUAL(32u, plen);
+
+  float eArcIgnored = 0.0f;
+  float eArcMasked = 0.0f;
+  for (int p = 0; p < AFDD_WARP_PACKETS; ++p) {
+    if (!afddWarpIsArcPacket(p)) {
+      continue;
+    }
+    eArcIgnored += afddWarpPacketEnergy(packets[p], plen, nullptr, n, static_cast<size_t>(p));
+    eArcMasked += afddWarpPacketEnergy(packets[p], plen, mask, n, static_cast<size_t>(p));
+  }
+  TEST_ASSERT_TRUE(eArcIgnored > 1.0e-4f);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, eArcMasked);
+}
+
+void test_warp_process_frame_mask_stops_blank_precursor() {
+  AfddWarpConfig c = afddWarpDefaultConfig();
+  c.keepMin = 8;
+  const size_t n = 256;
+  float x[n];
+  uint8_t keepAll[n];
+  uint8_t blankMask[n];
+  for (size_t i = 0; i < n; ++i) {
+    x[i] = 1.0f;
+    keepAll[i] = 1u;
+    blankMask[i] = 1u;
+  }
+  for (size_t i = 0; i < n; i += 8) {
+    x[i] = 0.0f;
+    blankMask[i] = 0u;
+  }
+
+  AfddWarpState stIgnore{};
+  afddWarpReset(&stIgnore);
+  const AfddWarpFeatures ignored = afddWarpProcessFrame(c, &stIgnore, x, n, keepAll, 0.0f, 0.0f);
+  AfddWarpState stMask{};
+  afddWarpReset(&stMask);
+  const AfddWarpFeatures masked = afddWarpProcessFrame(c, &stMask, x, n, blankMask, 0.0f, 0.0f);
+
+  TEST_ASSERT_NOT_EQUAL(AfddWarpInhibited, stIgnore.sense);
+  TEST_ASSERT_NOT_EQUAL(AfddWarpInhibited, stMask.sense);
+  TEST_ASSERT_TRUE(ignored.eArc > 1.0e-4f);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, masked.eArc);
+}
+
 void test_warp_half_horizon_delta_survives_ring_wrap() {
   float hist[AFDD_WARP_HORIZON];
   for (uint16_t i = 0; i < AFDD_WARP_HORIZON; ++i) {
@@ -211,6 +273,8 @@ int main() {
   RUN_TEST(test_warp_tone_not_precursor_watch);
   RUN_TEST(test_warp_sparse_impulses_can_raise_irregularity);
   RUN_TEST(test_warp_haar_wpt_length);
+  RUN_TEST(test_warp_packet_energy_excludes_blank_haar_windows);
+  RUN_TEST(test_warp_process_frame_mask_stops_blank_precursor);
   RUN_TEST(test_warp_half_horizon_delta_survives_ring_wrap);
   RUN_TEST(test_warp_arc_packets_are_freq_midband);
   RUN_TEST(test_warp_persist_ms_helpers);

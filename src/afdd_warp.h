@@ -235,20 +235,56 @@ inline bool afddWarpIsArcPacket(int freqPacket) {
   return freqPacket >= 1 && freqPacket <= 4;
 }
 
+// Haar J=3: packet coeff i is a linear combination of x[8*i .. 8*i+8) only
+// (compact, non-overlapping support). Valid iff every parent sample is kept.
+// Zero-stuffed blanks still enter Haar, but contaminated coeffs are excluded
+// from energy / kurtosis so periodic zeros cannot mint a broadband precursor.
+inline bool afddWarpHaarCoeffKept(const uint8_t *keepMaskParent, size_t parentN, size_t coeffIndex) {
+  if (keepMaskParent == nullptr) {
+    return true;
+  }
+  const size_t base = coeffIndex * 8u;
+  if (base + 8u > parentN) {
+    return false;
+  }
+  for (size_t k = 0; k < 8u; ++k) {
+    if (keepMaskParent[base + k] == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+inline void afddWarpHaarFillCoeffMask(const uint8_t *keepMaskParent, size_t parentN, uint8_t *coeffMask,
+                                      size_t plen) {
+  if (coeffMask == nullptr) {
+    return;
+  }
+  for (size_t i = 0; i < plen; ++i) {
+    coeffMask[i] = afddWarpHaarCoeffKept(keepMaskParent, parentN, i) ? 1u : 0u;
+  }
+}
+
 inline float afddWarpPacketEnergy(const float *c, size_t len, const uint8_t *keepMaskParent,
                                   size_t parentN, size_t packetIndex) {
-  (void)keepMaskParent;
-  (void)parentN;
-  (void)packetIndex;
+  (void)packetIndex; // Haar time support is packet-independent; reserved for db4.
   if (c == nullptr || len == 0) {
     return 0.0f;
   }
   double acc = 0.0;
+  size_t keep = 0;
   for (size_t i = 0; i < len; ++i) {
+    if (!afddWarpHaarCoeffKept(keepMaskParent, parentN, i)) {
+      continue;
+    }
     const double v = c[i];
     acc += v * v;
+    ++keep;
   }
-  return static_cast<float>(acc / static_cast<double>(len));
+  if (keep == 0) {
+    return 0.0f;
+  }
+  return static_cast<float>(acc / static_cast<double>(keep));
 }
 
 inline float afddWarpPacketEntropyNorm(const float *ep, int nPkt) {
@@ -274,14 +310,19 @@ inline float afddWarpPacketEntropyNorm(const float *ep, int nPkt) {
 }
 
 inline float afddWarpMeanExcessKurtosisPackets(float packets[AFDD_WARP_PACKETS][AFDD_WARP_MAX_N / 8],
-                                              size_t len) {
+                                              size_t len, const uint8_t *keepMaskParent, size_t parentN) {
+  if (len == 0 || len > AFDD_WARP_MAX_N / 8) {
+    return 0.0f;
+  }
+  uint8_t coeffMask[AFDD_WARP_MAX_N / 8];
+  afddWarpHaarFillCoeffMask(keepMaskParent, parentN, coeffMask, len);
   double acc = 0.0;
   int count = 0;
   for (int p = 0; p < AFDD_WARP_PACKETS; ++p) {
     if (!afddWarpIsArcPacket(p)) {
       continue;
     }
-    acc += afddMacapdExcessKurtosis(packets[p], len);
+    acc += afddMacapdExcessKurtosisMasked(packets[p], coeffMask, len);
     ++count;
   }
   if (count == 0) {
@@ -386,7 +427,7 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
   }
   f.eArc = eArc;
   f.hNorm = afddWarpPacketEntropyNorm(ep, AFDD_WARP_PACKETS);
-  f.kPkt = afddWarpMeanExcessKurtosisPackets(packets, plen);
+  f.kPkt = afddWarpMeanExcessKurtosisPackets(packets, plen, mask, nUse);
   f.rPkt = (eSum > 1.0e-20f) ? (eMax / eSum) : 0.0f;
 
   const bool armed = (st->sense == AfddWarpPrecursorWatch || st->sense == AfddWarpCandidateLow ||

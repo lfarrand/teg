@@ -183,7 +183,7 @@ On-chip RT1060 SAR is **12-bit / ~10 ENOB** — fine for proving DMA wiring, not
 
 **AFE (required with any of the above):** HF CT or isolated shunt → gain (e.g. instrumentation amp) → anti-alias LPF with **f_c ≈ 0.4·Fs** (≈100 kHz at 250 kSPS) → ADC full-scale clamp. Keep this chain off the metering pins used by `captureTick`.
 
-**Interface sketch (not shipped firmware):** GPT/PIT or FlexPWM-derived CONVST/CS → ADS8860/AD7380 → LPSPI RX eDMA into DTCM ping-pong → `afddMacapdProcessRaw` on completed frames. Metering ADCs stay with the PWM ISR (M0/M3 coexistence).
+**Interface sketch (not shipped firmware):** GPT/PIT or FlexPWM-derived CONVST/CS → ADS8860/AD7380 → LPSPI RX eDMA into OCRAM/`DMAMEM` ping-pong (optional CPU copy into DTCM for DSP) → `afddMacapdProcessRaw` on completed frames. Metering ADCs stay with the PWM ISR (M0/M3 coexistence).
 
 **BOM note:** treat the table as an engineering starting point, not a certified AFDD reference design. Validate SNR, CMRR, and aliasing on the actual AFE before claiming detection probability.
 

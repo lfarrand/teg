@@ -96,18 +96,25 @@ void test_warp_sparse_impulses_can_raise_irregularity() {
     }
   }
   TEST_ASSERT_TRUE(last == AfddWarpPrecursorWatch || last == AfddWarpPrecursorConfirmed ||
-                   last == AfddWarpCandidateLow || last == AfddWarpCandidateHigh ||
-                   last == AfddWarpQuiet);
-  // Irregularity feature must be finite and typically elevated vs silence.
-  fillSparseImpulses(x, 256, 99);
+                   last == AfddWarpCandidateLow || last == AfddWarpCandidateHigh);
+  // Horizon packet CV is zero until four history entries exist. Feed enough
+  // frames that I_irr can rise; silence must stay strictly below impulses.
   AfddWarpState st2{};
   afddWarpReset(&st2);
-  const AfddWarpFeatures f1 = afddWarpProcessFrame(c, &st2, x, 256, ones, 0.0f, 0.0f);
+  AfddWarpFeatures f1{};
+  for (int frame = 0; frame < 8; ++frame) {
+    fillSparseImpulses(x, 256, static_cast<unsigned>(99 + frame));
+    f1 = afddWarpProcessFrame(c, &st2, x, 256, ones, 0.0f, 0.0f);
+  }
   float silence[256] = {};
   AfddWarpState st3{};
   afddWarpReset(&st3);
-  const AfddWarpFeatures f0 = afddWarpProcessFrame(c, &st3, silence, 256, ones, 0.0f, 0.0f);
-  TEST_ASSERT_TRUE(f1.iIrr >= f0.iIrr);
+  AfddWarpFeatures f0{};
+  for (int frame = 0; frame < 8; ++frame) {
+    f0 = afddWarpProcessFrame(c, &st3, silence, 256, ones, 0.0f, 0.0f);
+  }
+  TEST_ASSERT_TRUE(isfinite(f1.iIrr));
+  TEST_ASSERT_TRUE(f1.iIrr > f0.iIrr);
 }
 
 void test_warp_haar_wpt_length() {

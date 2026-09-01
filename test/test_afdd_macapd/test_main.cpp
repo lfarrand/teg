@@ -218,6 +218,62 @@ void test_process_raw_null_current_inhibits() {
   TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, f.scoreRaw);
 }
 
+void test_zero_carrier_inhibits_without_inventing_timing() {
+  AfddMacapdConfig c = afddMacapdDefaultConfig();
+  c.carrierHz = 0.0f;
+  AfddMacapdState st{};
+  afddMacapdReset(&st);
+  float x[64];
+  fillNoiseBursts(x, 64, 3);
+  uint8_t mask[8];
+  afddMacapdBuildBlankMask(c, 8, mask);
+  for (size_t i = 0; i < 8; ++i) {
+    TEST_ASSERT_EQUAL_UINT8(1, mask[i]);
+  }
+  const AfddMacapdFeatures f = afddMacapdProcessRaw(c, &st, x, nullptr, 64);
+  TEST_ASSERT_EQUAL_UINT8(AfddMacapdInhibited, st.sense);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, f.scoreRaw);
+}
+
+void test_nyquist_below_feature_band_inhibits() {
+  AfddMacapdConfig c = afddMacapdDefaultConfig();
+  c.sampleRateHz = 10000.0f; // Nyquist 5 kHz — none of the 5–100 kHz bands exist
+  AfddMacapdState st{};
+  afddMacapdReset(&st);
+  float x[64];
+  fillNoiseBursts(x, 64, 11);
+  const AfddMacapdFeatures f = afddMacapdProcessRaw(c, &st, x, nullptr, 64);
+  TEST_ASSERT_EQUAL_UINT8(AfddMacapdInhibited, st.sense);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, f.scoreRaw);
+}
+
+void test_inhibit_clears_temporal_history() {
+  AfddMacapdConfig c = afddMacapdDefaultConfig();
+  AfddMacapdState st{};
+  afddMacapdReset(&st);
+  st.initialized = true;
+  st.ewmaEm = 4.0f;
+  st.prevEm = 3.5f;
+  st.prevSk = 1.25f;
+  st.highPersist = 6;
+  st.burstFilled = 8;
+  st.burstIdx = 3;
+  st.burstHist[0] = 1;
+  st.sense = AfddMacapdCandidateHigh;
+  c.ditherActive = true;
+  float x[64];
+  fillNoiseBursts(x, 64, 19);
+  afddMacapdProcessRaw(c, &st, x, nullptr, 64);
+  TEST_ASSERT_EQUAL_UINT8(AfddMacapdInhibited, st.sense);
+  TEST_ASSERT_FALSE(st.initialized);
+  TEST_ASSERT_EQUAL_UINT16(0, st.highPersist);
+  TEST_ASSERT_EQUAL_UINT16(0, st.burstFilled);
+  TEST_ASSERT_EQUAL_UINT16(0, st.burstIdx);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, st.ewmaEm);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, st.prevEm);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, st.prevSk);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_default_config_is_disarmed_friendly);
@@ -232,5 +288,8 @@ int main() {
   RUN_TEST(test_afe_fault_inhibits);
   RUN_TEST(test_invalid_frame_clears_high_persist);
   RUN_TEST(test_process_raw_null_current_inhibits);
+  RUN_TEST(test_zero_carrier_inhibits_without_inventing_timing);
+  RUN_TEST(test_nyquist_below_feature_band_inhibits);
+  RUN_TEST(test_inhibit_clears_temporal_history);
   return UNITY_END();
 }

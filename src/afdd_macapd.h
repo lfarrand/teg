@@ -18,6 +18,11 @@
 #define AFDD_MACAPD_BURST_HIST 64
 #endif
 
+// Advertised HF bands go to 100 kHz; Nyquist must sit strictly above that.
+#ifndef AFDD_MACAPD_FEATURE_BAND_MAX_HZ
+#define AFDD_MACAPD_FEATURE_BAND_MAX_HZ 100000.0f
+#endif
+
 enum AfddMacapdSenseState : uint8_t {
   AfddMacapdInhibited = 0,
   AfddMacapdQuiet = 1,
@@ -109,14 +114,35 @@ inline void afddMacapdReset(AfddMacapdState *s) {
   s->sense = AfddMacapdQuiet;
 }
 
+// Drop EWMA / burst / slope memory so an inhibit gap cannot stitch a later candidate.
+inline void afddMacapdEnterInhibited(AfddMacapdState *s) {
+  if (s == nullptr) {
+    return;
+  }
+  *s = AfddMacapdState{};
+  s->sense = AfddMacapdInhibited;
+}
+
+// Scoring needs a real Fs above 2× the 100 kHz band and a real carrier (no 20 kHz stand-in).
+inline bool afddMacapdScoringConfigValid(const AfddMacapdConfig &cfg) {
+  return cfg.sampleRateHz > (2.0f * AFDD_MACAPD_FEATURE_BAND_MAX_HZ) && cfg.carrierHz > 1.0f;
+}
+
 // Zero samples within ±blankHalfWidth of each integer carrier period edge.
 // maskOut[i] = 1 if sample is valid for scoring, 0 if blanked.
 inline void afddMacapdBuildBlankMask(const AfddMacapdConfig &cfg, size_t n, uint8_t *maskOut) {
   if (maskOut == nullptr || n == 0) {
     return;
   }
-  const float fs = (cfg.sampleRateHz > 1.0f) ? cfg.sampleRateHz : 250000.0f;
-  const float fc = (cfg.carrierHz > 1.0f) ? cfg.carrierHz : 20000.0f;
+  // Do not invent 250 kHz / 20 kHz timing; callers inhibit when scoring config is invalid.
+  if (cfg.sampleRateHz <= 1.0f || cfg.carrierHz <= 1.0f) {
+    for (size_t i = 0; i < n; ++i) {
+      maskOut[i] = 1;
+    }
+    return;
+  }
+  const float fs = cfg.sampleRateHz;
+  const float fc = cfg.carrierHz;
   const float period = fs / fc;
   const float halfBlank = cfg.blankHalfWidthS * fs;
   for (size_t i = 0; i < n; ++i) {
@@ -327,10 +353,12 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
                                                  size_t n, const uint8_t *mask) {
   AfddMacapdFeatures f{};
   if (st == nullptr || iBlanked == nullptr || n == 0 || n > AFDD_MACAPD_MAX_N) {
-    if (st != nullptr) {
-      st->sense = AfddMacapdInhibited;
-      st->highPersist = 0;
-    }
+    afddMacapdEnterInhibited(st);
+    return f;
+  }
+
+  if (!afddMacapdScoringConfigValid(cfg)) {
+    afddMacapdEnterInhibited(st);
     return f;
   }
 
@@ -339,8 +367,7 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
       (cfg.keepMin > 0) ? cfg.keepMin : static_cast<uint16_t>(fmaxf(8.0f, static_cast<float>(n) * 0.25f));
 
   if (cfg.ditherActive || !cfg.blankingAvailable || cfg.afeFault || f.keepCount < keepFloor) {
-    st->sense = AfddMacapdInhibited;
-    st->highPersist = 0;
+    afddMacapdEnterInhibited(st);
     return f;
   }
 
@@ -418,11 +445,8 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
 // Convenience: blank + process (stack temps — n <= AFDD_MACAPD_MAX_N).
 inline AfddMacapdFeatures afddMacapdProcessRaw(const AfddMacapdConfig &cfg, AfddMacapdState *st,
                                                const float *iRaw, const float *vRaw, size_t n) {
-  if (iRaw == nullptr || n == 0) {
-    if (st != nullptr) {
-      st->sense = AfddMacapdInhibited;
-      st->highPersist = 0;
-    }
+  if (iRaw == nullptr || n == 0 || !afddMacapdScoringConfigValid(cfg)) {
+    afddMacapdEnterInhibited(st);
     return AfddMacapdFeatures{};
   }
   float iBuf[AFDD_MACAPD_MAX_N];

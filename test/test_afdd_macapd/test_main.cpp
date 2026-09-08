@@ -295,6 +295,47 @@ void test_inhibit_clears_temporal_history() {
   TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, st.ewmaEm);
 }
 
+void test_slope_window_uses_newest_hop_aware_samples() {
+  AfddMacapdConfig c = afddMacapdDefaultConfig();
+  c.sampleRateHz = 250000.0f;
+  c.hopSamples = 250.0f;   // hopS = 1 ms
+  c.slopeHorizonMs = 4.0f; // want = 4 slots, shorter than histFilled
+  c.blankHalfWidthS = 0.0f;
+  c.wTonal = 0.0f;
+  c.tLo = 1.0e9f;
+  c.tHi = 1.0e9f;
+
+  AfddMacapdState st{};
+  afddMacapdReset(&st);
+
+  const size_t n = 128;
+  float quiet[128] = {};
+  float loud[128];
+  fillTone(loud, n, c.sampleRateHz, 30000.0f, 2.0f);
+  uint8_t ones[128];
+  for (size_t i = 0; i < n; ++i) {
+    ones[i] = 1;
+  }
+
+  AfddMacapdFeatures last{};
+  for (int frame = 0; frame < 10; ++frame) {
+    last = afddMacapdProcessFrame(c, &st, quiet, nullptr, n, ones);
+  }
+  last = afddMacapdProcessFrame(c, &st, loud, nullptr, n, ones);
+  last = afddMacapdProcessFrame(c, &st, loud, nullptr, n, ones);
+
+  TEST_ASSERT_EQUAL_UINT16(12, st.histFilled);
+  TEST_ASSERT_EQUAL_UINT16(12, st.histIdx);
+
+  const float hopS = afddMacapdHopSeconds(c);
+  const float halfT = 0.5f * 4.0f * hopS;
+  const float staleDelta = afddMacapdHalfHorizonDelta(st.histEm, 4, 0, AFDD_MACAPD_SLOPE_HIST);
+  const float newestDelta = afddMacapdHalfHorizonDelta(st.histEm, 4, 8, AFDD_MACAPD_SLOPE_HIST);
+  TEST_ASSERT_TRUE(newestDelta > staleDelta + 1.0e-6f);
+  TEST_ASSERT_TRUE(halfT > 1.0e-6f);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-5f, newestDelta / halfT, last.slopeEm);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_default_config_is_disarmed_friendly);
@@ -313,5 +354,6 @@ int main() {
   RUN_TEST(test_zero_carrier_inhibits_without_inventing_timing);
   RUN_TEST(test_nyquist_below_feature_band_inhibits);
   RUN_TEST(test_inhibit_clears_temporal_history);
+  RUN_TEST(test_slope_window_uses_newest_hop_aware_samples);
   return UNITY_END();
 }

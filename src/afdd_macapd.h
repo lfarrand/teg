@@ -522,12 +522,11 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
       useFilled = static_cast<uint16_t>(want);
     }
   }
-  // When not yet wrapped, oldest is 0; after wrap, histIdx is the next write (= oldest).
+  // Newest `useFilled` slots. histIdx is the next write, so this start
+  // works before wrap (histIdx == histFilled) and after wrap.
   const uint16_t oldestUse =
-      (st->histFilled >= AFDD_MACAPD_SLOPE_HIST)
-          ? static_cast<uint16_t>((st->histIdx + AFDD_MACAPD_SLOPE_HIST - useFilled) %
-                                  AFDD_MACAPD_SLOPE_HIST)
-          : 0;
+      static_cast<uint16_t>((st->histIdx + AFDD_MACAPD_SLOPE_HIST - useFilled) %
+                            AFDD_MACAPD_SLOPE_HIST);
   f.slopeEm = afddMacapdHalfHorizonDelta(st->histEm, useFilled, oldestUse, AFDD_MACAPD_SLOPE_HIST);
   f.slopeSk = afddMacapdHalfHorizonDelta(st->histSk, useFilled, oldestUse, AFDD_MACAPD_SLOPE_HIST);
   // Convert half-horizon Δ to per-second proxy.

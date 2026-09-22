@@ -184,9 +184,32 @@ void test_warp_process_frame_mask_stops_blank_precursor() {
   const AfddWarpFeatures masked = afddWarpProcessFrame(c, &stMask, x, n, blankMask, 0.0f, 0.0f);
 
   TEST_ASSERT_NOT_EQUAL(AfddWarpInhibited, stIgnore.sense);
-  TEST_ASSERT_NOT_EQUAL(AfddWarpInhibited, stMask.sense);
+  TEST_ASSERT_EQUAL_UINT8(AfddWarpInhibited, stMask.sense);
   TEST_ASSERT_TRUE(ignored.eArc > 1.0e-4f);
   TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, masked.eArc);
+}
+
+void test_warp_default_blanking_inhibits_when_haar_blind() {
+  // Default 250 kSPS / 20 kHz / 50% / 2 µs blanks every 8-sample Haar support
+  // while sample keepCount still clears the frame floor.
+  const AfddMacapdConfig mac = afddMacapdDefaultConfig();
+  const size_t n = 256;
+  float x[n];
+  uint8_t mask[n];
+  for (size_t i = 0; i < n; ++i) {
+    x[i] = 1.0f;
+  }
+  afddMacapdBuildBlankMask(mac, n, mask);
+  const uint16_t keep = afddMacapdKeepCount(mask, n);
+  TEST_ASSERT_TRUE(keep > n / 4);
+  TEST_ASSERT_EQUAL(0u, afddWarpHaarKeptCoeffCount(mask, n, n / 8));
+
+  AfddWarpConfig c = afddWarpDefaultConfig();
+  AfddWarpState st{};
+  afddWarpReset(&st);
+  const AfddWarpFeatures f = afddWarpProcessFrame(c, &st, x, n, mask, 0.0f, 0.0f);
+  TEST_ASSERT_EQUAL_UINT8(AfddWarpInhibited, st.sense);
+  TEST_ASSERT_FLOAT_WITHIN(1.0e-6f, 0.0f, f.sWarp);
 }
 
 void test_warp_half_horizon_delta_survives_ring_wrap() {
@@ -275,6 +298,7 @@ int main() {
   RUN_TEST(test_warp_haar_wpt_length);
   RUN_TEST(test_warp_packet_energy_excludes_blank_haar_windows);
   RUN_TEST(test_warp_process_frame_mask_stops_blank_precursor);
+  RUN_TEST(test_warp_default_blanking_inhibits_when_haar_blind);
   RUN_TEST(test_warp_half_horizon_delta_survives_ring_wrap);
   RUN_TEST(test_warp_arc_packets_are_freq_midband);
   RUN_TEST(test_warp_persist_ms_helpers);

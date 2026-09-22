@@ -239,6 +239,8 @@ inline bool afddWarpIsArcPacket(int freqPacket) {
 // (compact, non-overlapping support). Valid iff every parent sample is kept.
 // Zero-stuffed blanks still enter Haar, but contaminated coeffs are excluded
 // from energy / kurtosis so periodic zeros cannot mint a broadband precursor.
+// Default FlexPWM blanking (20 kHz / 250 kSPS / 2 µs) hits every 8-sample
+// support; ProcessFrame then inhibits (Quiet-while-blind), not score-zero.
 inline bool afddWarpHaarCoeffKept(const uint8_t *keepMaskParent, size_t parentN, size_t coeffIndex) {
   if (keepMaskParent == nullptr) {
     return true;
@@ -263,6 +265,16 @@ inline void afddWarpHaarFillCoeffMask(const uint8_t *keepMaskParent, size_t pare
   for (size_t i = 0; i < plen; ++i) {
     coeffMask[i] = afddWarpHaarCoeffKept(keepMaskParent, parentN, i) ? 1u : 0u;
   }
+}
+
+inline size_t afddWarpHaarKeptCoeffCount(const uint8_t *keepMaskParent, size_t parentN, size_t plen) {
+  size_t keep = 0;
+  for (size_t i = 0; i < plen; ++i) {
+    if (afddWarpHaarCoeffKept(keepMaskParent, parentN, i)) {
+      ++keep;
+    }
+  }
+  return keep;
 }
 
 inline float afddWarpPacketEnergy(const float *c, size_t len, const uint8_t *keepMaskParent,
@@ -407,6 +419,14 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
   float packets[AFDD_WARP_PACKETS][AFDD_WARP_MAX_N / 8];
   const size_t plen = afddWarpHaarWpt3(iBlanked, nUse, packets);
   if (plen == 0) {
+    afddWarpEnterInhibited(st);
+    return f;
+  }
+
+  // Sample keepCount can still clear keepMin while every Haar support is
+  // contaminated (default reload+compare spacing < 8 samples). Do not score
+  // a zero precursor as Quiet.
+  if (afddWarpHaarKeptCoeffCount(mask, nUse, plen) == 0) {
     afddWarpEnterInhibited(st);
     return f;
   }

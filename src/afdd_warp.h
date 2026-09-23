@@ -157,6 +157,11 @@ inline uint16_t afddWarpWatchFramesNeeded(const AfddWarpConfig &cfg) {
   return static_cast<uint16_t>(need + 0.5f);
 }
 
+// nPersist==0 is auto (research default 3), never a zero-frame High trip.
+inline uint16_t afddWarpPersistFrames(const AfddWarpConfig &cfg) {
+  return (cfg.nPersist > 0) ? cfg.nPersist : 3;
+}
+
 inline void afddWarpReset(AfddWarpState *s) {
   if (s == nullptr) {
     return;
@@ -463,6 +468,9 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
     st->initialized = true;
   }
 
+  // Burst vs the pre-update quiet floor (MACAPD ewmaPrev). Updating first
+  // would miss a ~2× jump of the previous μ.
+  const float ewmaPrev = st->ewmaEarc;
   if (!freeze) {
     for (int p = 0; p < AFDD_WARP_PACKETS; ++p) {
       st->ewmaEp[p] = (1.0f - a) * st->ewmaEp[p] + a * ep[p];
@@ -470,7 +478,7 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
     st->ewmaEarc = (1.0f - a) * st->ewmaEarc + a * eArc;
   }
 
-  const float floor = fmaxf(st->ewmaEarc * 2.0f, 1.0e-9f);
+  const float floor = fmaxf(ewmaPrev * 2.0f, 1.0e-9f);
   const uint8_t burst = (eArc > floor) ? 1u : 0u;
   const uint16_t writeIdx = st->histIdx;
   st->burstHist[writeIdx] = burst;
@@ -548,17 +556,13 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
   }
 
   const uint16_t needWatch = afddWarpWatchFramesNeeded(cfg);
+  const uint16_t needPersist = afddWarpPersistFrames(cfg);
 
-  if (st->highPersist >= cfg.nPersist) {
+  // PrecursorWatch is pre-energy (sWarp + low Earc). Check it before the
+  // sJoint>tLo Low branch so a large sWarp cannot steal the watch window.
+  if (st->highPersist >= needPersist) {
     st->sense = AfddWarpCandidateHigh;
     st->watchAge = 0;
-  } else if (f.sJoint > cfg.tLo) {
-    if (st->sense == AfddWarpPrecursorWatch && st->watchAge >= needWatch) {
-      st->sense = AfddWarpPrecursorConfirmed;
-    } else if (st->sense != AfddWarpPrecursorConfirmed) {
-      st->sense = AfddWarpCandidateLow;
-      st->watchAge = 0;
-    }
   } else if (st->prePersist >= cfg.nPre) {
     if (st->sense != AfddWarpPrecursorWatch) {
       st->watchAge = 0;
@@ -566,6 +570,13 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
     st->sense = AfddWarpPrecursorWatch;
     if (st->watchAge < 0xffffu) {
       ++st->watchAge;
+    }
+  } else if (f.sJoint > cfg.tLo) {
+    if (st->sense == AfddWarpPrecursorWatch && st->watchAge >= needWatch) {
+      st->sense = AfddWarpPrecursorConfirmed;
+    } else if (st->sense != AfddWarpPrecursorConfirmed) {
+      st->sense = AfddWarpCandidateLow;
+      st->watchAge = 0;
     }
   } else {
     st->sense = AfddWarpQuiet;

@@ -248,6 +248,84 @@ void test_warp_persist_ms_helpers() {
   c.watchHorizonMs = 1000.0f;
   const uint16_t need = afddWarpWatchFramesNeeded(c);
   TEST_ASSERT_EQUAL_UINT16(AFDD_WARP_HORIZON, need); // host ring caps research H
+  TEST_ASSERT_EQUAL_UINT16(3, afddWarpPersistFrames(c));
+  c.nPersist = 0;
+  TEST_ASSERT_EQUAL_UINT16(3, afddWarpPersistFrames(c));
+  c.nPersist = 8;
+  TEST_ASSERT_EQUAL_UINT16(8, afddWarpPersistFrames(c));
+}
+
+void test_warp_zero_persist_is_not_zero_frame_high() {
+  AfddWarpConfig c = afddWarpDefaultConfig();
+  c.nPersist = 0;
+  c.tHi = 100.0f;
+  AfddWarpState st{};
+  afddWarpReset(&st);
+  float x[256] = {};
+  uint8_t ones[256];
+  for (size_t i = 0; i < 256; ++i) {
+    ones[i] = 1;
+  }
+  afddWarpProcessFrame(c, &st, x, 256, ones, 0.0f, 0.0f);
+  TEST_ASSERT_NOT_EQUAL(AfddWarpCandidateHigh, st.sense);
+  TEST_ASSERT_EQUAL_UINT16(0, st.highPersist);
+}
+
+void test_warp_burst_uses_pre_update_ewma() {
+  AfddWarpConfig c = afddWarpDefaultConfig();
+  c.freezeEwmaOnArm = false;
+  c.ewmaAlpha = 0.05f;
+  uint8_t ones[256];
+  float seed[256];
+  fillSparseImpulses(seed, 256, 7);
+  for (size_t i = 0; i < 256; ++i) {
+    ones[i] = 1;
+  }
+  AfddWarpState st{};
+  afddWarpReset(&st);
+  afddWarpProcessFrame(c, &st, seed, 256, ones, 0.0f, 0.0f);
+  const float mu = st.ewmaEarc;
+  TEST_ASSERT_TRUE(mu > 1.0e-12f);
+
+  // eArc scales with amp^2. 2.05× previous μ is a spec burst; the updated
+  // floor would already be ~2.105× and miss.
+  const float scale = sqrtf(2.05f);
+  float jump[256];
+  for (size_t i = 0; i < 256; ++i) {
+    jump[i] = seed[i] * scale;
+  }
+  afddWarpProcessFrame(c, &st, jump, 256, ones, 0.0f, 0.0f);
+  const uint16_t last = static_cast<uint16_t>((st.histIdx + AFDD_WARP_HORIZON - 1u) % AFDD_WARP_HORIZON);
+  TEST_ASSERT_EQUAL_UINT8(1, st.burstHist[last]);
+}
+
+void test_warp_strong_irregularity_holds_precursor_watch() {
+  AfddWarpConfig c = afddWarpDefaultConfig();
+  c.tPre = 0.01f;
+  c.nPre = 2;
+  c.tLo = 0.01f;
+  c.tHi = 100.0f;
+  c.nPersist = 8;
+  c.thetaEnergy = 100.0f;
+  c.gammaEnergy = 1.0f;
+  c.wT = 0.0f;
+  c.beta = 0.0f; // sJoint == sWarp; old Low-first order would skip Watch
+  AfddWarpState st{};
+  afddWarpReset(&st);
+  float x[256];
+  uint8_t ones[256];
+  for (size_t i = 0; i < 256; ++i) {
+    ones[i] = 1;
+  }
+  for (int frame = 0; frame < 20; ++frame) {
+    fillSparseImpulses(x, 256, static_cast<unsigned>(10 + frame * 3));
+    afddWarpProcessFrame(c, &st, x, 256, ones, 0.0f, 0.0f);
+    if (st.sense == AfddWarpPrecursorWatch) {
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8(AfddWarpPrecursorWatch, st.sense);
+  TEST_ASSERT_TRUE(st.watchAge >= 1);
 }
 
 void test_warp_inhibit_clears_temporal_history() {
@@ -302,6 +380,9 @@ int main() {
   RUN_TEST(test_warp_half_horizon_delta_survives_ring_wrap);
   RUN_TEST(test_warp_arc_packets_are_freq_midband);
   RUN_TEST(test_warp_persist_ms_helpers);
+  RUN_TEST(test_warp_zero_persist_is_not_zero_frame_high);
+  RUN_TEST(test_warp_burst_uses_pre_update_ewma);
+  RUN_TEST(test_warp_strong_irregularity_holds_precursor_watch);
   RUN_TEST(test_warp_inhibit_clears_temporal_history);
   return UNITY_END();
 }

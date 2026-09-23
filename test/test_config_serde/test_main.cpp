@@ -80,9 +80,10 @@ void test_defaults_from_empty_document() {
   TEST_ASSERT_EQUAL_UINT16(200, cfg.Pll.BandwidthDeciHz);
   TEST_ASSERT_EQUAL_UINT16(1650, cfg.Pll.ZeroMillivolts);
   TEST_ASSERT_EQUAL_UINT16(100, cfg.Pll.MinLevelMillivolts);
-  TEST_ASSERT_EQUAL_STRING("ub-1.lan", cfg.Influx.Host);
+  TEST_ASSERT_EQUAL_STRING("", cfg.Influx.Host);
   TEST_ASSERT_EQUAL_UINT16(8086, cfg.Influx.Port);
-  TEST_ASSERT_EQUAL_STRING("power_generator", cfg.Influx.Bucket);
+  TEST_ASSERT_EQUAL_STRING("", cfg.Influx.Org);
+  TEST_ASSERT_EQUAL_STRING("", cfg.Influx.Bucket);
   TEST_ASSERT_EQUAL_STRING("", cfg.Influx.Token); // no token in source or defaults
   TEST_ASSERT_EQUAL_UINT16(10, cfg.Influx.IntervalSeconds);
   TEST_ASSERT_FALSE(cfg.Meter.Enabled);
@@ -238,6 +239,7 @@ void test_partial_document_keeps_defaults_elsewhere() {
 
 void test_redact_secrets_blanks_only_the_secrets() {
   MainConfig cfg;
+  copyConfigString(cfg.Influx.Host, sizeof(cfg.Influx.Host), "metrics.example");
   copyConfigString(cfg.Influx.Token, sizeof(cfg.Influx.Token), "super-secret==");
   copyConfigString(cfg.Security.WritePin, sizeof(cfg.Security.WritePin), "1234");
   copyConfigString(cfg.Mqtt.Password, sizeof(cfg.Mqtt.Password), "mqtt-pass");
@@ -249,7 +251,7 @@ void test_redact_secrets_blanks_only_the_secrets() {
   TEST_ASSERT_EQUAL_STRING("", doc["Config"]["Influx"]["Token"] | "x");
   TEST_ASSERT_EQUAL_STRING("", doc["Config"]["Security"]["WritePin"] | "x");
   TEST_ASSERT_EQUAL_STRING("", doc["Config"]["Mqtt"]["Password"] | "x");
-  TEST_ASSERT_EQUAL_STRING("ub-1.lan", doc["Config"]["Influx"]["Host"] | ""); // untouched
+  TEST_ASSERT_EQUAL_STRING("metrics.example", doc["Config"]["Influx"]["Host"] | ""); // untouched
   TEST_ASSERT_EQUAL_STRING("mqtt-user", doc["Config"]["Mqtt"]["Username"] | ""); // not a secret
 }
 

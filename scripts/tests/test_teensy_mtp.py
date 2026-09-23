@@ -10,7 +10,7 @@ from scripts.teensy_mtp import (
 class TeensyMtpTests(unittest.TestCase):
     def test_recognises_framework_core_sources(self):
         path = (
-            "C:/Users/lee/.platformio/packages/framework-arduinoteensy/"
+            "C:/Users/builder/.platformio/packages/framework-arduinoteensy/"
             "cores/teensy4/MTP_Teensy.cpp"
         )
         self.assertTrue(is_framework_core_mtp_source(path))

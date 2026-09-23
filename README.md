@@ -843,12 +843,12 @@ target is configured in the *InfluxDB Metrics* section of the web UI (or the
 
 | Option | Meaning |
 |---|---|
-| **Host / Port** | InfluxDB server (default `ub-1.lan:8086`) |
-| **Org / Bucket** | InfluxDB v2 organisation ID and target bucket |
+| **Host / Port** | InfluxDB server. Host is blank until set; port defaults to 8086 |
+| **Org / Bucket** | InfluxDB v2 organisation ID and target bucket. Both blank until set |
 | **Token** | API token with write access to the bucket |
 
-Metrics are **disabled until a token is set** — the token is stored only in the
-device's config file on the SD card, never in firmware source or this repository.
+Metrics stay off until a host and a token are set. The token is stored only in
+the device's config file on the SD card, never in firmware source or this repository.
 
 ## Timings
 

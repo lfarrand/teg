@@ -21,7 +21,7 @@ No further host-testable errors were found. No further host-safe performance
 work remains; remaining perf needs a bench or is a stay-off.
 
 Canvas (open beside the chat):
-`C:\Users\lee\.cursor\projects\d-git-teg\canvases\review-fixes-2026-08-28-6.canvas.tsx`
+`review-fixes-2026-08-28-6.canvas.tsx`
 
 ---
 

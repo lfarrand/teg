@@ -35,6 +35,9 @@ All `/api/*` methods, including diagnostic GETs, now pass through one policy:
 - when a browser sends `Origin`, it must be exactly `http://` plus that `Host`;
 - five failed PIN attempts from one address in 60 seconds block it for 60
   seconds; the first failure and block event are logged;
+- a rejected request calls `Response::end()` after `sendStatus`. aWOT keeps
+  dispatching until `end()`, so `sendStatus` alone would still run the handler
+  and append its body after 401, 403, or 429;
 - config, log, crash, capture, spectrum, preset and OTA endpoints receive the
   same policy; only the static UI assets remain public;
 - secret fields are redacted from JSON responses and exports. Empty secret

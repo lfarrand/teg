@@ -13,7 +13,7 @@ Stats HTML was opened against a local static server (APIs absent). The page
 parses; binary spectrum needs the device (`?format=bin`).
 
 Canvas (open beside the chat):
-`C:\Users\lee\.cursor\projects\d-git-teg\canvases\review-fixes-2026-08-28-3.canvas.tsx`
+`review-fixes-2026-08-28-3.canvas.tsx`
 
 ---
 

@@ -235,9 +235,21 @@ inline size_t afddWarpHaarWpt3(const float *x, size_t n, float packets[AFDD_WARP
   return n3;
 }
 
-// Arc interest after frequency reorder: p1–p4 (15.6–78 kHz @ 250 kSPS).
-inline bool afddWarpIsArcPacket(int freqPacket) {
-  return freqPacket >= 1 && freqPacket <= 4;
+// Arc interest is the fixed 15.625–78.125 kHz band (p1–p4 at 250 kSPS).
+// Packet width is fs/16, so the same indices are the wrong hertz at 500 kSPS.
+// A packet counts only when a strict majority of its bin overlaps that band.
+inline bool afddWarpIsArcPacket(int freqPacket, float sampleRateHz) {
+  if (freqPacket < 0 || freqPacket >= AFDD_WARP_PACKETS || sampleRateHz <= 1.0f) {
+    return false;
+  }
+  constexpr float kArcLoHz = 15625.0f;
+  constexpr float kArcHiHz = 78125.0f;
+  const float width = sampleRateHz / 16.0f;
+  const float lo = static_cast<float>(freqPacket) * width;
+  const float hi = lo + width;
+  const float overlapLo = fmaxf(lo, kArcLoHz);
+  const float overlapHi = fminf(hi, kArcHiHz);
+  return (overlapHi - overlapLo) > (0.5f * width);
 }
 
 // Haar J=3: packet coeff i is a linear combination of x[8*i .. 8*i+8) only
@@ -327,7 +339,8 @@ inline float afddWarpPacketEntropyNorm(const float *ep, int nPkt) {
 }
 
 inline float afddWarpMeanExcessKurtosisPackets(float packets[AFDD_WARP_PACKETS][AFDD_WARP_MAX_N / 8],
-                                              size_t len, const uint8_t *keepMaskParent, size_t parentN) {
+                                              size_t len, const uint8_t *keepMaskParent, size_t parentN,
+                                              float sampleRateHz) {
   if (len == 0 || len > AFDD_WARP_MAX_N / 8) {
     return 0.0f;
   }
@@ -336,7 +349,7 @@ inline float afddWarpMeanExcessKurtosisPackets(float packets[AFDD_WARP_PACKETS][
   double acc = 0.0;
   int count = 0;
   for (int p = 0; p < AFDD_WARP_PACKETS; ++p) {
-    if (!afddWarpIsArcPacket(p)) {
+    if (!afddWarpIsArcPacket(p, sampleRateHz)) {
       continue;
     }
     acc += afddMacapdExcessKurtosisMasked(packets[p], coeffMask, len);
@@ -414,6 +427,18 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
     return f;
   }
 
+  int arcPackets = 0;
+  for (int p = 0; p < AFDD_WARP_PACKETS; ++p) {
+    if (afddWarpIsArcPacket(p, cfg.sampleRateHz)) {
+      ++arcPackets;
+    }
+  }
+  if (arcPackets == 0) {
+    // Packet grid does not cover the fixed arc band (unsupported Fs).
+    afddWarpEnterInhibited(st);
+    return f;
+  }
+
   // Ensure length divisible by 8 for Haar WPT.
   size_t nUse = n - (n % 8);
   if (nUse < 8) {
@@ -446,13 +471,13 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
     if (ep[p] > eMax) {
       eMax = ep[p];
     }
-    if (afddWarpIsArcPacket(p)) {
+    if (afddWarpIsArcPacket(p, cfg.sampleRateHz)) {
       eArc += ep[p];
     }
   }
   f.eArc = eArc;
   f.hNorm = afddWarpPacketEntropyNorm(ep, AFDD_WARP_PACKETS);
-  f.kPkt = afddWarpMeanExcessKurtosisPackets(packets, plen, mask, nUse);
+  f.kPkt = afddWarpMeanExcessKurtosisPackets(packets, plen, mask, nUse, cfg.sampleRateHz);
   f.rPkt = (eSum > 1.0e-20f) ? (eMax / eSum) : 0.0f;
 
   const bool armed = (st->sense == AfddWarpPrecursorWatch || st->sense == AfddWarpCandidateLow ||
@@ -497,7 +522,7 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
   float iIrr = 0.0f;
   int nArcPkt = 0;
   for (int p = 0; p < AFDD_WARP_PACKETS; ++p) {
-    if (!afddWarpIsArcPacket(p)) {
+    if (!afddWarpIsArcPacket(p, cfg.sampleRateHz)) {
       continue;
     }
     iIrr += afddWarpHorizonPacketCv(st->histEp[p], st->histFilled, oldest);
@@ -558,11 +583,17 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
   const uint16_t needWatch = afddWarpWatchFramesNeeded(cfg);
   const uint16_t needPersist = afddWarpPersistFrames(cfg);
 
-  // PrecursorWatch is pre-energy (sWarp + low Earc). Check it before the
-  // sJoint>tLo Low branch so a large sWarp cannot steal the watch window.
+  // Confirm a finished PrecursorWatch before the watch-retain branch. If
+  // prePersist is still true when sJoint crosses tLo, the old order never
+  // left PrecursorWatch, so CandidateHigh could replace it with no dataset tag.
   if (st->highPersist >= needPersist) {
     st->sense = AfddWarpCandidateHigh;
     st->watchAge = 0;
+  } else if (st->sense == AfddWarpPrecursorWatch && st->watchAge >= needWatch &&
+             f.sJoint > cfg.tLo) {
+    st->sense = AfddWarpPrecursorConfirmed;
+  } else if (st->sense == AfddWarpPrecursorConfirmed && f.sJoint > cfg.tLo) {
+    st->sense = AfddWarpPrecursorConfirmed;
   } else if (st->prePersist >= cfg.nPre) {
     if (st->sense != AfddWarpPrecursorWatch) {
       st->watchAge = 0;
@@ -572,12 +603,8 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
       ++st->watchAge;
     }
   } else if (f.sJoint > cfg.tLo) {
-    if (st->sense == AfddWarpPrecursorWatch && st->watchAge >= needWatch) {
-      st->sense = AfddWarpPrecursorConfirmed;
-    } else if (st->sense != AfddWarpPrecursorConfirmed) {
-      st->sense = AfddWarpCandidateLow;
-      st->watchAge = 0;
-    }
+    st->sense = AfddWarpCandidateLow;
+    st->watchAge = 0;
   } else {
     st->sense = AfddWarpQuiet;
     st->watchAge = 0;

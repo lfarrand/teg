@@ -62,6 +62,76 @@ void test_blank_mask_clears_near_carrier_edges() {
   TEST_ASSERT_EQUAL_UINT8(1, mask[2]);
 }
 
+void test_blank_mask_honours_edge_schedule() {
+  AfddMacapdConfig c = afddMacapdDefaultConfig();
+  c.sampleRateHz = 200000.0f;
+  c.carrierHz = 20000.0f;
+  c.blankHalfWidthS = 5.0e-6f; // 1 sample at 200 kHz
+  c.dutyCycle = 0.5f;          // ignored once a schedule is set
+  c.edgeCount = 2;
+  c.edgePhaseFrac[0] = 0.2f; // sample 2 of a 10-sample period
+  c.edgePhaseFrac[1] = 0.7f; // sample 7
+  c.carrierPhaseSamples = 0.0f;
+  uint8_t mask[20];
+  afddMacapdBuildBlankMask(c, 20, mask);
+  TEST_ASSERT_EQUAL_UINT8(0, mask[0]); // reload
+  TEST_ASSERT_EQUAL_UINT8(0, mask[2]);
+  TEST_ASSERT_EQUAL_UINT8(0, mask[7]);
+  TEST_ASSERT_EQUAL_UINT8(1, mask[5]); // old single 50% compare is not in the schedule
+  TEST_ASSERT_EQUAL_UINT8(1, mask[4]);
+}
+
+void test_coherence_penalizes_common_mode() {
+  AfddMacapdConfig c = afddMacapdDefaultConfig();
+  c.blankHalfWidthS = 0.0f;
+  c.wCoh = 2.0f;
+  c.wTonal = 0.0f;
+  float i[128];
+  float vSame[128];
+  float vQuad[128];
+  fillTone(i, 128, c.sampleRateHz, 30000.0f, 1.0f);
+  fillTone(vSame, 128, c.sampleRateHz, 30000.0f, 1.0f);
+  fillTone(vQuad, 128, c.sampleRateHz, 30000.0f, 1.0f);
+  for (size_t n = 0; n < 128; ++n) {
+    const float t = static_cast<float>(n) / c.sampleRateHz;
+    vQuad[n] = cosf(2.0f * 3.14159265f * 30000.0f * t);
+  }
+  uint8_t ones[128];
+  for (size_t n = 0; n < 128; ++n) {
+    ones[n] = 1;
+  }
+  AfddMacapdState stSame{};
+  AfddMacapdState stQuad{};
+  afddMacapdReset(&stSame);
+  afddMacapdReset(&stQuad);
+  const AfddMacapdFeatures cm = afddMacapdProcessFrame(c, &stSame, i, vSame, 128, ones);
+  const AfddMacapdFeatures ortho = afddMacapdProcessFrame(c, &stQuad, i, vQuad, 128, ones);
+  TEST_ASSERT_TRUE(cm.coherence > 0.9f);
+  TEST_ASSERT_TRUE(ortho.coherence < 0.2f);
+  TEST_ASSERT_TRUE(cm.scoreRaw < ortho.scoreRaw);
+}
+
+void test_band_energy_interpolation_limits_blank_sidebands() {
+  float tone[256];
+  fillTone(tone, 256, 250000.0f, 30000.0f, 1.0f);
+  uint8_t mask[256];
+  float stuffed[256];
+  float recon[256];
+  for (size_t i = 0; i < 256; ++i) {
+    mask[i] = ((i % 10u) == 0u) ? 0u : 1u;
+  }
+  afddMacapdApplyBlank(tone, mask, 256, stuffed);
+  afddMacapdInterpolateBlanks(stuffed, mask, 256, recon);
+  const float eM0 = afddMacapdBandEnergy(stuffed, 256, 250000.0f, 20000.0f, 50000.0f);
+  const float eH0 = afddMacapdBandEnergy(stuffed, 256, 250000.0f, 50000.0f, 100000.0f);
+  const float eM1 = afddMacapdBandEnergy(recon, 256, 250000.0f, 20000.0f, 50000.0f);
+  const float eH1 = afddMacapdBandEnergy(recon, 256, 250000.0f, 50000.0f, 100000.0f);
+  const float ratio0 = eM0 / (eH0 + 1.0e-12f);
+  const float ratio1 = eM1 / (eH1 + 1.0e-12f);
+  TEST_ASSERT_TRUE(ratio1 > ratio0);
+  TEST_ASSERT_TRUE(eM1 > eM0 * 0.5f);
+}
+
 void test_blank_mask_tracks_carrier_phase() {
   AfddMacapdConfig c = afddMacapdDefaultConfig();
   c.sampleRateHz = 200000.0f;
@@ -195,8 +265,7 @@ void test_persist_reaches_high_on_strong_bursts() {
       break;
     }
   }
-  TEST_ASSERT_TRUE(last == AfddMacapdCandidateLow || last == AfddMacapdCandidateHigh);
-  TEST_ASSERT_NOT_EQUAL(AfddMacapdInhibited, last);
+  TEST_ASSERT_EQUAL_UINT8(AfddMacapdCandidateHigh, last);
 }
 
 void test_afe_fault_inhibits() {
@@ -341,7 +410,10 @@ int main() {
   RUN_TEST(test_default_config_is_disarmed_friendly);
   RUN_TEST(test_dither_inhibits_scoring);
   RUN_TEST(test_blank_mask_clears_near_carrier_edges);
+  RUN_TEST(test_blank_mask_honours_edge_schedule);
   RUN_TEST(test_blank_mask_tracks_carrier_phase);
+  RUN_TEST(test_coherence_penalizes_common_mode);
+  RUN_TEST(test_band_energy_interpolation_limits_blank_sidebands);
   RUN_TEST(test_tonal_carrier_has_higher_residual_than_bursts);
   RUN_TEST(test_impulsive_bursts_raise_kurtosis);
   RUN_TEST(test_mask_exclude_kurtosis_ignores_blank_zeros);

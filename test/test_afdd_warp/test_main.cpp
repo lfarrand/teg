@@ -66,8 +66,7 @@ void test_warp_tone_not_precursor_watch() {
   for (int frame = 0; frame < 12; ++frame) {
     afddWarpProcessFrame(c, &st, x, 256, ones, 0.0f, 0.8f); // high tonal penalty path
   }
-  TEST_ASSERT_NOT_EQUAL(AfddWarpPrecursorWatch, st.sense);
-  TEST_ASSERT_NOT_EQUAL(AfddWarpInhibited, st.sense);
+  TEST_ASSERT_EQUAL_UINT8(AfddWarpQuiet, st.sense);
 }
 
 void test_warp_sparse_impulses_can_raise_irregularity() {
@@ -149,7 +148,7 @@ void test_warp_packet_energy_excludes_blank_haar_windows() {
   float eArcIgnored = 0.0f;
   float eArcMasked = 0.0f;
   for (int p = 0; p < AFDD_WARP_PACKETS; ++p) {
-    if (!afddWarpIsArcPacket(p)) {
+    if (!afddWarpIsArcPacket(p, 250000.0f)) {
       continue;
     }
     eArcIgnored += afddWarpPacketEnergy(packets[p], plen, nullptr, n, static_cast<size_t>(p));
@@ -234,11 +233,15 @@ void test_warp_half_horizon_delta_survives_ring_wrap() {
 }
 
 void test_warp_arc_packets_are_freq_midband() {
-  TEST_ASSERT_FALSE(afddWarpIsArcPacket(0));
-  TEST_ASSERT_TRUE(afddWarpIsArcPacket(1));
-  TEST_ASSERT_TRUE(afddWarpIsArcPacket(4));
-  TEST_ASSERT_FALSE(afddWarpIsArcPacket(5));
-  TEST_ASSERT_FALSE(afddWarpIsArcPacket(7));
+  TEST_ASSERT_FALSE(afddWarpIsArcPacket(0, 250000.0f));
+  TEST_ASSERT_TRUE(afddWarpIsArcPacket(1, 250000.0f));
+  TEST_ASSERT_TRUE(afddWarpIsArcPacket(4, 250000.0f));
+  TEST_ASSERT_FALSE(afddWarpIsArcPacket(5, 250000.0f));
+  TEST_ASSERT_FALSE(afddWarpIsArcPacket(7, 250000.0f));
+  // 500 kSPS doubles packet width. Index 4 is 125–156 kHz, outside 15.6–78 kHz.
+  TEST_ASSERT_TRUE(afddWarpIsArcPacket(1, 500000.0f));
+  TEST_ASSERT_FALSE(afddWarpIsArcPacket(4, 500000.0f));
+  TEST_ASSERT_FALSE(afddWarpIsArcPacket(0, 500000.0f));
 }
 
 void test_warp_persist_ms_helpers() {
@@ -328,6 +331,54 @@ void test_warp_strong_irregularity_holds_precursor_watch() {
   TEST_ASSERT_TRUE(st.watchAge >= 1);
 }
 
+void test_warp_confirms_after_watch_even_if_precursor_holds() {
+  AfddWarpConfig c = afddWarpDefaultConfig();
+  c.tPre = 0.01f;
+  c.nPre = 1;
+  c.tLo = 0.01f;
+  c.tHi = 100.0f;
+  c.nPersist = 8;
+  c.thetaEnergy = 100.0f;
+  c.gammaEnergy = 1.0f;
+  c.wT = 0.0f;
+  c.beta = 0.0f; // sJoint == sWarp, so a live precursor also crosses tLo
+  c.watchHorizonMs = 1.0f;
+  AfddWarpState st{};
+  afddWarpReset(&st);
+  st.sense = AfddWarpPrecursorWatch;
+  st.watchAge = afddWarpWatchFramesNeeded(c);
+  float x[256];
+  uint8_t ones[256];
+  for (size_t i = 0; i < 256; ++i) {
+    ones[i] = 1;
+  }
+  bool confirmed = false;
+  for (int frame = 0; frame < 8; ++frame) {
+    fillSparseImpulses(x, 256, static_cast<unsigned>(40 + frame * 5));
+    afddWarpProcessFrame(c, &st, x, 256, ones, 0.0f, 0.0f);
+    if (st.sense == AfddWarpPrecursorConfirmed) {
+      confirmed = true;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE(confirmed);
+}
+
+void test_warp_unsupported_rate_inhibits() {
+  AfddWarpConfig c = afddWarpDefaultConfig();
+  c.sampleRateHz = 4000000.0f; // packet width 250 kHz; none majority-overlap 15.6–78 kHz
+  AfddWarpState st{};
+  afddWarpReset(&st);
+  float x[128];
+  uint8_t ones[128];
+  for (size_t i = 0; i < 128; ++i) {
+    x[i] = 0.1f;
+    ones[i] = 1;
+  }
+  afddWarpProcessFrame(c, &st, x, 128, ones, 0.0f, 0.0f);
+  TEST_ASSERT_EQUAL_UINT8(AfddWarpInhibited, st.sense);
+}
+
 void test_warp_inhibit_clears_temporal_history() {
   AfddWarpConfig c = afddWarpDefaultConfig();
   AfddWarpState st{};
@@ -383,6 +434,8 @@ int main() {
   RUN_TEST(test_warp_zero_persist_is_not_zero_frame_high);
   RUN_TEST(test_warp_burst_uses_pre_update_ewma);
   RUN_TEST(test_warp_strong_irregularity_holds_precursor_watch);
+  RUN_TEST(test_warp_confirms_after_watch_even_if_precursor_holds);
+  RUN_TEST(test_warp_unsupported_rate_inhibits);
   RUN_TEST(test_warp_inhibit_clears_temporal_history);
   return UNITY_END();
 }

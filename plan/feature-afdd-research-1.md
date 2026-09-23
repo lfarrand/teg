@@ -76,7 +76,7 @@ Produce claim-safe research documentation and an IDE canvas for an innovative HF
 ## 6. Testing
 
 - **TEST-001**: Manual review — document contains no UL 1699B compliance claim and states zero Teensy trip authority.
-- **TEST-002**: Confirm PR diff excludes `.cache/`, `.cursor/`, and firmware behavioural changes.
+- **TEST-002**: Confirm this feature does not change OUTEN or other firmware behaviour. `.cursor/environment.json` and `.cursor/install.sh` are the cloud-agent bootstrap already on `main` (#77); they are not an AFDD deliverable. Do not add a second copy.
 - **TEST-003**: `pio test -e native --filter test_afdd_macapd` passes on host (math only).
 
 ## 7. Risks & Assumptions

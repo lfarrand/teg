@@ -32,6 +32,13 @@
 #define AFDD_MACAPD_BAND_PROBES 12
 #endif
 
+// Active FlexPWM compare phases supplied by the caller (fractions of the carrier).
+// edgeCount == 0 keeps the single dutyCycle compare. Tm4 VAL2–VAL5 and multi-cell
+// schedules must pass every edge; reload at phase 0 is always blanked as well.
+#ifndef AFDD_MACAPD_MAX_EDGES
+#define AFDD_MACAPD_MAX_EDGES 8
+#endif
+
 enum AfddMacapdSenseState : uint8_t {
   AfddMacapdInhibited = 0,
   AfddMacapdQuiet = 1,
@@ -44,7 +51,9 @@ struct AfddMacapdConfig {
   float carrierHz;        // FlexPWM carrier for tonal notches / blanking
   float blankHalfWidthS;  // ± blank around each edge (seconds)
   float carrierPhaseSamples; // absolute phase at frame start (samples, may wrap)
-  float dutyCycle;        // 0..1 FlexPWM duty — blank reload AND compare edges
+  float dutyCycle;        // 0..1 single compare when edgeCount == 0
+  uint8_t edgeCount;      // 0 → dutyCycle; else use edgePhaseFrac[0..edgeCount)
+  float edgePhaseFrac[AFDD_MACAPD_MAX_EDGES]; // 0..1 of the carrier period
   float hopSamples;       // frame hop length (N/2 for 50% overlap); drives persist/slopes
   float persistMs;        // HIGH needs tHi for this many ms (0 → use nPersist frames)
   float slopeHorizonMs;   // precursor slope window (default ~1 s, capped by hist)
@@ -54,7 +63,7 @@ struct AfddMacapdConfig {
   float wBurst;           // weight on burst duty
   float wSlope;           // weight on precursor slope
   float wTonal;           // penalty weight on tonal residual
-  float wCoh;             // weight on I/V coherence (parallel / CM cue)
+  float wCoh;             // penalty weight on |I/V| coherence (common-mode EMI)
   float tLo;              // low candidate threshold on raw score
   float tHi;              // high candidate threshold on raw score
   float observabilityMin; // inhibit Candidate* when observability below this
@@ -104,6 +113,7 @@ inline AfddMacapdConfig afddMacapdDefaultConfig() {
   c.blankHalfWidthS = 2.0e-6f;
   c.carrierPhaseSamples = 0.0f;
   c.dutyCycle = 0.5f;
+  c.edgeCount = 0;
   c.hopSamples = 256.0f; // 50% of N=512
   c.persistMs = 80.0f;   // ~50–150 ms ride-through
   c.slopeHorizonMs = 1000.0f;
@@ -200,7 +210,26 @@ inline void afddMacapdBuildBlankMask(const AfddMacapdConfig &cfg, size_t n, uint
   } else if (duty > 0.95f) {
     duty = 0.95f;
   }
-  const float comparePhase = duty * period;
+  float edgePhase[AFDD_MACAPD_MAX_EDGES];
+  int nEdges = 0;
+  if (cfg.edgeCount == 0) {
+    edgePhase[0] = duty * period;
+    nEdges = 1;
+  } else {
+    nEdges = cfg.edgeCount;
+    if (nEdges > AFDD_MACAPD_MAX_EDGES) {
+      nEdges = AFDD_MACAPD_MAX_EDGES;
+    }
+    for (int e = 0; e < nEdges; ++e) {
+      float frac = cfg.edgePhaseFrac[e];
+      if (frac < 0.0f) {
+        frac = 0.0f;
+      } else if (frac >= 1.0f) {
+        frac = 0.0f;
+      }
+      edgePhase[e] = frac * period;
+    }
+  }
   float phase0 = cfg.carrierPhaseSamples;
   // Normalize phase0 into [0, period).
   if (period > 1.0e-6f) {
@@ -218,10 +247,12 @@ inline void afddMacapdBuildBlankMask(const AfddMacapdConfig &cfg, size_t n, uint
     if (phase < 0.0f) {
       phase += period;
     }
-    const float distReload = fminf(phase, period - phase);
-    float dCmp = fabsf(phase - comparePhase);
-    dCmp = fminf(dCmp, period - dCmp);
-    const float dist = fminf(distReload, dCmp);
+    float dist = fminf(phase, period - phase); // reload at the carrier boundary
+    for (int e = 0; e < nEdges; ++e) {
+      float dEdge = fabsf(phase - edgePhase[e]);
+      dEdge = fminf(dEdge, period - dEdge);
+      dist = fminf(dist, dEdge);
+    }
     maskOut[i] = (dist > halfBlank) ? 1u : 0u;
   }
 }
@@ -239,9 +270,51 @@ inline uint16_t afddMacapdKeepCount(const uint8_t *mask, size_t n) {
   return k;
 }
 
+// Bridge blanked samples from the nearest kept endpoints. Band-energy Goertzel
+// uses this reconstruction so a periodic zero gate cannot smear carrier tones
+// into the arc bands. Tonal probes stay on the zero-stuffed buffer.
+inline void afddMacapdInterpolateBlanks(const float *x, const uint8_t *mask, size_t n, float *yOut) {
+  if (x == nullptr || yOut == nullptr || n == 0) {
+    return;
+  }
+  if (mask == nullptr) {
+    for (size_t i = 0; i < n; ++i) {
+      yOut[i] = x[i];
+    }
+    return;
+  }
+  size_t i = 0;
+  while (i < n) {
+    if (mask[i] != 0) {
+      yOut[i] = x[i];
+      ++i;
+      continue;
+    }
+    const size_t run = i;
+    while (i < n && mask[i] == 0) {
+      ++i;
+    }
+    const size_t end = i;
+    const bool hasL = run > 0;
+    const bool hasR = end < n;
+    const float left = hasL ? x[run - 1] : (hasR ? x[end] : 0.0f);
+    const float right = hasR ? x[end] : left;
+    for (size_t k = run; k < end; ++k) {
+      if (!hasL && !hasR) {
+        yOut[k] = 0.0f;
+      } else if (!hasL || !hasR) {
+        yOut[k] = left;
+      } else {
+        const float t = static_cast<float>(k - (run - 1)) / static_cast<float>(end - (run - 1));
+        yOut[k] = left + (right - left) * t;
+      }
+    }
+  }
+}
+
 inline void afddMacapdApplyBlank(const float *x, const uint8_t *mask, size_t n, float *yOut) {
   // Zero-stuff for tonal Goertzel only. Moments / kurtosis / coherence MUST use the mask
-  // (exclude blanks). Prefer mask-aware STFT on target firmware — zeros create sidebands.
+  // (exclude blanks). Band energy uses afddMacapdInterpolateBlanks — zeros create sidebands.
   if (x == nullptr || yOut == nullptr || n == 0) {
     return;
   }
@@ -484,10 +557,14 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
   }
 
   const float fs = cfg.sampleRateHz;
-  f.eL = afddMacapdBandEnergy(iBlanked, n, fs, 5000.0f, 20000.0f);
-  f.eM = afddMacapdBandEnergy(iBlanked, n, fs, 20000.0f, 50000.0f);
-  f.eH = afddMacapdBandEnergy(iBlanked, n, fs, 50000.0f, 100000.0f);
+  float recon[AFDD_MACAPD_MAX_N];
+  afddMacapdInterpolateBlanks(iBlanked, mask, n, recon);
+  f.eL = afddMacapdBandEnergy(recon, n, fs, 5000.0f, 20000.0f);
+  f.eM = afddMacapdBandEnergy(recon, n, fs, 20000.0f, 50000.0f);
+  f.eH = afddMacapdBandEnergy(recon, n, fs, 50000.0f, 100000.0f);
   const float eTot = f.eL + f.eM + f.eH + 1.0e-12f;
+  // Tonal residual stays on the zero-stuffed frame so a leftover carrier in the
+  // kept samples is still penalised. Band energy above uses the interpolation.
   f.rTonal = afddMacapdTonalResidual(iBlanked, n, fs, cfg.carrierHz, eTot, cfg.tonalDeltaHz);
   f.kurtosis = afddMacapdExcessKurtosisMasked(iBlanked, mask, n);
   f.coherence =
@@ -552,12 +629,13 @@ inline AfddMacapdFeatures afddMacapdProcessFrame(const AfddMacapdConfig &cfg, Af
   const float zBurst = f.dBurst;
   const float zSlope = fmaxf(f.slopeEm, 0.0f) / fmaxf(st->ewmaEm, 1.0e-9f) +
                        0.25f * fmaxf(f.slopeSk, 0.0f);
-  // High I/V coherence on HF can flag parallel / CM coupling (research cue).
+  // High I/V coherence is a common-mode EMI cue, so it lowers the presence score.
+  // v absent → coherence 0 → no penalty. Parallel-arc classification is not this term.
   const float zCoh = f.coherence;
 
   // Presence score only — masking is observability, not a subtractive presence cue.
   f.scoreRaw = cfg.wBand * zBand + cfg.wKurtosis * zSk + cfg.wBurst * zBurst +
-               cfg.wSlope * zSlope + cfg.wCoh * zCoh - cfg.wTonal * f.rTonal;
+               cfg.wSlope * zSlope - cfg.wCoh * zCoh - cfg.wTonal * f.rTonal;
 
   if (f.observability < cfg.observabilityMin) {
     // Low coverage honesty: do not arm Candidate*; keep Quiet research state.

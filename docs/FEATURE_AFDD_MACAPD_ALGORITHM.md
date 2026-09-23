@@ -72,7 +72,9 @@ Switching edges inject known impulsive EMI. Because this firmware **owns** FlexP
 - For sample index `i`, distance to nearest period edge: `min(i mod P, P − (i mod P))`
 - If distance ≤ `Tb · Fs`, mark **blank** (invalid); else **keep**
 
-Blanked samples are **zero-stuffed for Goertzel band / tonal energy** (remove edge EMI rather than interpolate). **Time moments (excess kurtosis) and I/V coherence use mask-exclude** — kept samples only — so blank zeros do not fake leptokurtosis. If `keepCount < keepMin` (default auto `max(8, n/4)`), the state machine forces **`Inhibited`** (“Quiet while blind” is forbidden).
+Blanked samples are **linearly interpolated before band-energy Goertzel** (`eL` / `eM` / `eH`) so a periodic zero gate cannot spread carrier tones into those bands. **Tonal residual stays on the zero-stuffed buffer** so a leftover carrier in the kept samples is still penalised. **Time moments (excess kurtosis) and I/V coherence use mask-exclude** — kept samples only — so blank zeros do not fake leptokurtosis. If `keepCount < keepMin` (default auto `max(8, n/4)`), the state machine forces **`Inhibited`** (“Quiet while blind” is forbidden).
+
+Reload (carrier phase 0) is always a blank. `edgeCount == 0` also blanks the single compare at `dutyCycle`. A non-zero `edgeCount` blanks `edgePhaseFrac[]` instead, which is how multi-cell and Tm4 VAL2–VAL5 schedules are supplied. `carrierPhaseSamples` is the absolute phase at the start of the frame.
 
 If `blankingAvailable == false`, or `ditherActive`, or `afeFault`, the state machine forces **`Inhibited`** and returns a zero score. Dither must stay mutexed off whenever HF sense is armed (see research note).
 
@@ -125,7 +127,7 @@ Rising kurtosis and/or mid-band energy **before** a long HIGH persistence window
 
 ### F6 — Coherence (optional)
 
-If `v_b` is present, `|corr(i_b, v_b)|` on **kept** samples. Default weight `wCoh=0.25` (MEF channel E19 often default-off in UI). Common-mode EMI often shows high coherence.
+If `v_b` is present, `|corr(i_b, v_b)|` on **kept** samples. Default weight `wCoh=0.25` is a **penalty**: common-mode EMI often shows high coherence, so it lowers the presence score (same sign as the tonal term). No voltage channel means coherence 0 and no penalty. Parallel-arc classification is not this term.
 
 ### F7 — Masking / observability (config)
 
@@ -149,8 +151,8 @@ z_{\mathrm{slope}} &= \max(\mathrm{slope}_{e_M},0)/\mathrm{EWMA}(e_M) + 0.25\max
 Precursor slopes use a hop-aware half-horizon ring (default ~1 s), not a 1-frame Δ.
 
 \[
-S = w_b z_{\mathrm{band}} + w_k z_{\mathrm{sk}} + w_d z_{\mathrm{burst}} + w_s z_{\mathrm{slope}} + w_c z_{\mathrm{coh}}
-  - w_t r_{\mathrm{tonal}}
+S = w_b z_{\mathrm{band}} + w_k z_{\mathrm{sk}} + w_d z_{\mathrm{burst}} + w_s z_{\mathrm{slope}}
+  - w_c z_{\mathrm{coh}} - w_t r_{\mathrm{tonal}}
 \]
 
 Default weights live in `afddMacapdDefaultConfig()` (`wBand=1`, `wKurtosis=0.75`, `wBurst=0.5`, `wSlope=0.5`, `wCoh=0.25`, `wTonal=1`). Band energy uses dense Goertzel probes across each advertised band.

@@ -20,7 +20,7 @@
 
 1. **DC arcs need HF signatures, not line-frequency hooks.** Series arcs inject broadband / pink-like conducted noise; inverters inject strong tonal switching from roughly **1 kHz to >100 kHz**. Detectors must separate those classes under **masking** (series L, C-to-ground) and **unwanted-trip** (irradiance steps, optimizers, EMI) pressure — not merely raise energy thresholds.
 2. **MACAPD’s architecture matches the literature’s hard constraints** for this platform: separate HF path, carrier-aware blanking, multi-feature score (band energy + impulsiveness + burst + precursor slopes), dither mutex, masking honesty, dual-MCU before any trip claim.
-3. **The present host math is a research skeleton, not a field detector.** Several literature-shaped edges are soft or unimplemented: blank zeros bias moments; tonal penalty is single-bin not ±Δ; EWMA adapts into events; `maskingPenalty` / coherence barely drive physics; Fs/Nyquist and AFE aliasing are unchecked; persistence is frame-count not energy-budgeted ride-through.
+3. **The present host math is a research skeleton, not a field detector.** Landed host safeguards: mask-exclude moments, ±Δ tonal probes, EWMA freeze on Candidate*, Nyquist and keep-count inhibit, hop-aware slopes, interpolated band energy, an explicit compare-edge schedule, and a Haar WARP interim whose arc packets stay in fixed hertz. Still open: persistence is a frame count, not an energy budget; `maskingPenalty` is an operator knob; db4 WPT is not the host transform. Nothing here drives OUTEN.
 4. **Listing / field history is a warning, not a target.** Sandia/Tigo surveys of UL-listed products still found missed arcs and nuisance trips under realistic extras. That is why Teensy MACAPD scores must **never** drive OUTEN.
 5. **FFT-only energy is a late cue.** Intermittent micro-discharges and contact chatter raise **time-local irregularity** (wavelet packet CV, entropy, micro-burst rate) **before** mean mid-band energy would trip a naive FFT/Goertzel detector. **WARP** (§6) is the proposed wavelet-first precursor sibling: primary tool is lifting **db4 WPT**; FFT/Goertzel is **tonal EMI penalty only**. Still research-only; still never OUTEN.
 
@@ -192,25 +192,21 @@ Any future interrupter / OUTEN-class action lives on a **separate MCU + hardware
 
 Happy-path assumptions the code encodes well: separate float HF frame API; dither / blanking / AFE inhibit; mid-band Goertzel triplet; excess kurtosis; burst duty history; simple score + persistence; `maskingPenalty` hook.
 
-Gaps to treat as **research backlog** (not UL work):
+Gaps that are **still open** (not UL work). Items that used to live here and are now in the header — tonal ±Δ, EWMA freeze, coherence in the score, Nyquist / keep-count inhibit, hop-aware slopes — are in the §7 table, not this list.
 
-1. **Blank zeros vs exclude** — moments and Goertzel see periodic zeros (blanking modulation).
-2. **Tonal ±Δ notch** — docs say neighbourhood of `k·fc`; code is exact bin only → carrier jitter under-penalises inverter energy.
-3. **EWMA policy** — seeds on first frame (`zBand≈1` near `tLo`); continues adapting during strong events.
-4. **Coherence not in `scoreRaw`** — F6 is computed then ignored.
-5. **`maskingPenalty` default 0** — “masking-aware” is opt-in honesty, not physics.
-6. **No Fs / Nyquist / keep-count guards** — undersampled or over-blanked frames can look Quiet.
-7. **Precursor horizon** — research text 0.5–2 s; code is one-frame Δ.
-8. **Overlap / STFT** — no 50% overlap streaming model in the header.
-9. **API inconsistency** — `ProcessRaw` truncates `n > MAX_N`; `ProcessFrame` inhibits.
+1. **Tonal path is still zero-stuffed.** Band energy interpolates blanks; the tonal residual intentionally stays on the gated buffer. Sidebands of that gate are a penalty input, not an arc-band feature.
+2. **`maskingPenalty` default 0** — observability is an operator knob, not a string-L / C physics model.
+3. **Persistence is a frame count**, not an energy-budgeted ride-through.
+4. **Overlap assembly** — `hopSamples` sizes persistence and slopes; the header does not build the overlapping frames itself.
+5. **`n > MAX_N`** — `ProcessRaw` clamps; `ProcessFrame` inhibits.
 
-Suggested **host synthetic** hardenings (claim only that math responds as coded): blank phase slip; blank duty sweep; kurtosis zeros-vs-exclude; tonal `fc+δ`; Fs floor; cold-start EWMA; floor contamination mid-event; masking knob delta; coherence inertness lock; flag matrix; aliased aggressor; length mismatch. Existing `test_afdd_macapd` is smoke, not this matrix.
+Suggested **host synthetic** hardenings (claim only that math responds as coded): multi-edge schedule vs single duty; interpolated vs zero-stuffed band ratio; coherence penalty polarity; unsupported WARP `fs`; precursor confirm while `prePersist` still holds.
 
 ---
 
 ## 6. WARP — Wavelet-Augmented Rich Precursor
 
-**Status:** research blueprint only. **NO-SHIP.** Not implemented in `src/` yet. Never drives Teensy OUTEN. Host Unity / synthetic “precursor before energy” tests would **not** be bench proof or UL evidence.
+**Status:** Haar interim is landed in `src/afdd_warp.h` with `test/test_afdd_warp/`. **NO-SHIP.** db4 lifting is still the preferred transform and is not this host path. Never drives Teensy OUTEN. Host tests are **not** bench proof or UL evidence.
 
 ### 6.1 Why FFT alone is late
 
@@ -266,6 +262,8 @@ blanked HF frame i[n]
 | p1–p4 | 15.625–78.125 | **Arc interest** `P_arc` |
 | p5–p6 | 78.125–109.375 | Upper HF (`P_hi`) |
 | p7 | 109.375–125 | Near Nyquist honesty |
+
+Those indices are the **250 kSPS** map. `afddWarpIsArcPacket` keeps `P_arc` on **15.625–78.125 kHz** (strict majority overlap), so a 500 kSPS frame does not keep scoring packets 1–4. A rate whose packets cannot cover that band inhibits.
 
 **Complexity:** lifting db4 WPT ≈ \(c\cdot N\cdot J\) MACCs with \(c\sim 8\)–\(12\). At N=512, J=3 → ~15k–20k MACCs/frame — fine for **offline / lab M7**, not for FAULT/OUTEN IRQ or the Teensy control-loop WCET until explicitly budgeted. Prefer DTCM scratch; no EXTMEM dependence for coeffs.
 
@@ -401,7 +399,7 @@ Track status in-place. **Done** = landed in host math and/or claim-safe docs on 
 | P1 | Change kurtosis / moments to **mask-exclude**; add keep-count inhibit | Fixes blank-zero bias and “Quiet while blind” | **Done** (`afdd_macapd.h` + tests) |
 | P1 | Widen tonal residual to **±Δ bins** or short STFT ridge | Matches docs; fights carrier drift | **Done** (±Δ Goertzel in host) |
 | P2 | Freeze EWMA while Candidate* / Precursor*; longer slope windows | Stops floor chasing the event; real precursors | **Done** (freeze on Candidate*; WARP horizon slopes) |
-| P2 | Put coherence (and optionally eL/eH ratios) into the score with weights | Parallel / CM discrimination | **Partial** (`wCoh` hook; eL/eH ratio soft) |
+| P2 | Put coherence (and optionally eL/eH ratios) into the score with weights | Parallel / CM discrimination | **Done** (`wCoh` subtracts; high coherence is a CM penalty, not a presence reward) |
 | P2 | Estimate or configure masking from known string L / C or self-test | Make “masking-aware” honest | **Spec** (`maskingPenalty` still operator/default) |
 | P2 | Prototype **WARP** host math (`afdd_warp.h`) per §6; fuse with MACAPD | Wavelet-first precursor sibling; FFT penalty-only | **Done** (Haar interim + `test_afdd_warp`; db4 still preferred) |
 | P2 | Land **MEF** catalog + Settings Evidence[20] blueprint | Multi-evidence enable matrix | **Docs done**; UI/config **Spec** |
@@ -415,7 +413,7 @@ Track status in-place. **Done** = landed in host math and/or claim-safe docs on 
 ## 8. Non-claims (repeat for claim hygiene)
 
 - This document is **not** evidence of UL 1699B / IEC AFDD compliance.
-- Host tests of MACAPD (or future WARP) are **not** disconnected-bench proof and **not** ISR/OUTEN proof.
+- Host tests of MACAPD and the Haar WARP path are **not** disconnected-bench proof and **not** ISR/OUTEN proof.
 - CandidateHigh / PrecursorWatch / PrecursorConfirmed are **not** trip commands.
 - Preferring ADS8860 / AD7380-class parts is a **lab instrumentation** recommendation, not a certified BOM for AFCI.
 - Citing Sandia / IEEE / ACM work acknowledges **problem structure**, not that MACAPD or WARP reproduces their results on TEG hardware.

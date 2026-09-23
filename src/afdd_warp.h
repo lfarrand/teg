@@ -65,8 +65,8 @@ struct AfddWarpConfig {
   float thetaEnergy; // energy trip proxy (research floor)
   float hopSamples;  // frame hop (N/2 @ 50% overlap)
   float watchHorizonMs; // PrecursorConfirmed needs full watch age (~T_H)
-  uint16_t nPre;
-  uint16_t nPersist;
+  uint16_t nPre;     // precursor frames before Watch (0 → research default 5)
+  uint16_t nPersist; // frames above tHi before High (0 → research default 3)
   uint16_t keepMin;
   bool freezeEwmaOnArm;
   bool ditherActive;
@@ -160,6 +160,12 @@ inline uint16_t afddWarpWatchFramesNeeded(const AfddWarpConfig &cfg) {
 // nPersist==0 is auto (research default 3), never a zero-frame High trip.
 inline uint16_t afddWarpPersistFrames(const AfddWarpConfig &cfg) {
   return (cfg.nPersist > 0) ? cfg.nPersist : 3;
+}
+
+// nPre==0 is the research default (5), never a zero-frame PrecursorWatch.
+// A raw compare would treat prePersist==0 as already satisfied.
+inline uint16_t afddWarpPreFrames(const AfddWarpConfig &cfg) {
+  return (cfg.nPre > 0) ? cfg.nPre : 5;
 }
 
 inline void afddWarpReset(AfddWarpState *s) {
@@ -582,6 +588,7 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
 
   const uint16_t needWatch = afddWarpWatchFramesNeeded(cfg);
   const uint16_t needPersist = afddWarpPersistFrames(cfg);
+  const uint16_t needPre = afddWarpPreFrames(cfg);
 
   // Confirm a finished PrecursorWatch before the watch-retain branch. If
   // prePersist is still true when sJoint crosses tLo, the old order never
@@ -594,7 +601,7 @@ inline AfddWarpFeatures afddWarpProcessFrame(const AfddWarpConfig &cfg, AfddWarp
     st->sense = AfddWarpPrecursorConfirmed;
   } else if (st->sense == AfddWarpPrecursorConfirmed && f.sJoint > cfg.tLo) {
     st->sense = AfddWarpPrecursorConfirmed;
-  } else if (st->prePersist >= cfg.nPre) {
+  } else if (st->prePersist >= needPre) {
     if (st->sense != AfddWarpPrecursorWatch) {
       st->watchAge = 0;
     }

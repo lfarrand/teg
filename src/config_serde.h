@@ -140,10 +140,10 @@ inline void configFromJson(const JsonDocument &doc, MainConfig &config) {
   config.CurrentLimit.FilterPeriod = Config_CurrentLimit["FilterPeriod"] | 0;
 
   JsonObjectConst Config_Influx = doc["Config"]["Influx"];
-  copyConfigString(config.Influx.Host, sizeof(config.Influx.Host), Config_Influx["Host"] | "ub-1.lan");
+  copyConfigString(config.Influx.Host, sizeof(config.Influx.Host), Config_Influx["Host"] | "");
   config.Influx.Port = Config_Influx["Port"] | 8086;
-  copyConfigString(config.Influx.Org, sizeof(config.Influx.Org), Config_Influx["Org"] | "501eaf58ac3171cd");
-  copyConfigString(config.Influx.Bucket, sizeof(config.Influx.Bucket), Config_Influx["Bucket"] | "power_generator");
+  copyConfigString(config.Influx.Org, sizeof(config.Influx.Org), Config_Influx["Org"] | "");
+  copyConfigString(config.Influx.Bucket, sizeof(config.Influx.Bucket), Config_Influx["Bucket"] | "");
   copyConfigString(config.Influx.Token, sizeof(config.Influx.Token), Config_Influx["Token"] | "");
   config.Influx.IntervalSeconds = Config_Influx["IntervalSeconds"] | 10;
 

@@ -18,7 +18,7 @@ This leftover class (operator-doc / comment honesty) is now empty. Remaining
 review items need a bench or are hard stay-offs.
 
 Canvas (open beside the chat):
-`C:\Users\lee\.cursor\projects\d-git-teg\canvases\review-fixes-2026-08-28-5.canvas.tsx`
+`review-fixes-2026-08-28-5.canvas.tsx`
 
 ---
 

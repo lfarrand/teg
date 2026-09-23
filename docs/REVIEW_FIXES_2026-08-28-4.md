@@ -15,7 +15,7 @@ This is the last honest host-safe leftover from the 28 August review.
 Remaining items need a bench or are hard stay-offs.
 
 Canvas (open beside the chat):
-`C:\Users\lee\.cursor\projects\d-git-teg\canvases\review-fixes-2026-08-28-4.canvas.tsx`
+`review-fixes-2026-08-28-4.canvas.tsx`
 
 ---
 

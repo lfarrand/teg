@@ -373,13 +373,19 @@ static bool writeAuthorized(Request &req) {
   return false;
 }
 
+// aWOT dispatches the next matching handler until Response::end().
+// sendStatus() writes the status line and leaves the chain running, so a
+// rejected GET would still append the handler body (config, logs, capture).
+// AuthMiddleware in aWOT ends the response after sendStatus for the same reason.
 static void requireApiAuthorization(Request &req, Response &res) {
   if (!requestPeerIsLocal(req) || !authorityAllowed()) {
     res.sendStatus(403);
+    res.end();
     return;
   }
   if (!writeAuthorized(req)) {
     res.sendStatus(authPeerBlocked(req) ? 429 : 401);
+    res.end();
   }
 }
 

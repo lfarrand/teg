@@ -9,7 +9,7 @@ Companion sources:
 - [PRODUCT_READINESS.md](PRODUCT_READINESS.md) — firmware constraints that kill naïve product stories
 - [BENCH_CHECKS.md](BENCH_CHECKS.md) — disconnected evidence gate
 - [REVIEW_FIXES_2026-08-28.md](REVIEW_FIXES_2026-08-28.md) … `-6.md` — completed host-safe review slices (historical)
-- Canvas (IDE): `feature-roadmap-2026-08-30.canvas.tsx`
+- Canvas (IDE, outside the git tree): `feature-roadmap-2026-08-30.canvas.tsx`
 - Operator README: modes, custom waveforms, capture, spectrum, PLL, MPPT, MQTT — all **bench** language
 
 Do **not** create `plan/refactor-adversarial-fixes-7.md`. Remaining adversarial items are bench evidence or stay-offs.
@@ -46,7 +46,7 @@ Ground truth for “what can we productise” starts from landed capability, not
 | Custom waveforms | Arbitrary references / pulse sequences via web + API | Field waveform library with signed provenance |
 | Closed loop | `Feedback.LoopHz` default 250; regulation paths | Host-proven OUTEN safety |
 | Fault | ACMP → XBAR → FAULT0 shape; generation-gated `releaseOutputInhibit` | Pin-to-gate latency measurement; Tm3/Tm4 HW gate |
-| Capture / spectrum | ISR-tied capture, portable FFT, TEGS binary spectrum wire | 250–500 kSPS free-running HF path for arcs |
+| Capture / spectrum | ISR-tied capture, one sample per carrier (20 kSPS at the 20 kHz default, 200 kSPS at the 200 kHz ceiling), portable FFT, TEGS binary spectrum wire | 250–500 kSPS free-running HF path for arcs |
 | Metering | Power / VRMS / IRMS / PF / energy on full status | Die-only thermal as release gate (explicitly refused) |
 | PLL | Bench reference lock | Grid-tie / anti-islanding / interconnection |
 | MPPT | ~3 s string-level settle | Module-level ripple correlation |
@@ -60,7 +60,7 @@ Ground truth for “what can we productise” starts from landed capability, not
 
 From PRODUCT_READINESS (unchanged; still binding):
 
-1. **Capture cannot see an arc.** One sample per carrier → tens of kSPS, not the 1–100 kHz arc band. AFDD needs a **separate** ADC_ETC+DMA (or external ADC) path and an HF CT AFE that does not exist on the board yet.
+1. **Capture cannot see an arc.** `captureTick()` runs once per carrier cycle (`src/capture.h`, `src/pwm_utils.cpp`). At the 20 kHz default (`DefaultModulationCarrierHz`) that is 20 kSPS — Nyquist 10 kHz — against an arc signature in the 1–100 kHz band. The config ceiling is 200 kHz (`MaxModulationCarrierHz`): 200 kSPS, nominal Nyquist 100 kHz, with the inverter control loop competing for the same ADC. A separate free-running ADC_ETC+DMA (or external ADC) path at 250–500 kSPS, plus an HF CT AFE that does not exist on the board yet, is still required. See PRODUCT_READINESS §1.1.
 2. **Carrier dither sabotages detection.** Spread-spectrum and arc listening share the band. Enforce mutual exclusion in validation, not only in docs.
 3. **Safety shares a superloop with the internet.** HTTP, MQTT, Influx, SD, MTP, OTA, and trip logic on one MCU fail freedom-from-interference for any serious safety case. Split: bare-metal safety MCU (no network) + this firmware as comms / lab UI.
 4. **MPPT is string-period.** Settled meter windows make ~3 s loops correct for strings and useless for module MLPE without a different control law (ripple correlation).
@@ -182,7 +182,7 @@ Ranked by fit to **this** repo’s strengths (PWM timing, capture, web, Ethernet
 | P0 | Finish disconnected `BENCH_CHECKS` campaign | All | Hardware time |
 | P0 | Claim-safe roadmap / PRODUCT_READINESS cross-links (this doc) | All | Docs PR |
 | P1 | Waveform library + dither/sense mutex bit | R-WGEN, R-AFDD-R prep | Host tests + docs |
-| P1 | Release-refuse reason codes in status/MQTT | R-SAFE-LAB | Host serde tests |
+| P1 | Release-refuse reason codes in status/MQTT | R-SAFE-LAB | Target or API check that `api_status` and `mqtt.cpp` emit the reason; host serde alone is not enough |
 | P2 | Ripple-correlation MPPT experiment behind flag | R-MPPT | Bench V/I integrity |
 | P2 | HF DMA capture prototype on spare ADC pins (lab AFE) | R-AFDD-R | Hardware AFE first |
 | P3 | Dual-image design notes / second MCU handshake stub | R-AFDD-R, R-SAFE | Architecture only until board |
@@ -190,6 +190,8 @@ Ranked by fit to **this** repo’s strengths (PWM timing, capture, web, Ethernet
 | Stay-off | Grid services, HA energy dashboard product claims | — | Policy |
 | Stay-off | CMSIS FFT / global `-O3`, USB lean PID, strip `applyPwmConfig` | — | Existing stay-offs |
 | Stay-off | “AFDD certified” / UL 1699B marketing on Teensy image | — | Impossible honestly |
+
+A reason code that exists only in a host-tested header is not evidence it left the device. Native Unity sets `test_build_src = no`, so `api_status` (`src/web_handlers.cpp`) and `src/mqtt.cpp` are not in those suites. Treat status/MQTT reasons as landed only after a target build or an API/MQTT integration check shows the reason on the wire.
 
 ---
 
@@ -205,9 +207,9 @@ Phase C  Cert path    Dual MCU + interrupter self-test + SunSpec — explicit no
 Phase N completion criteria:
 
 - [x] This document exists under `docs/`
-- [ ] Canvas `feature-roadmap-2026-08-30.canvas.tsx` available in IDE
-- [ ] `AGENTS.md` / `teg-pwm-memory` note multi-role ideation is claim-safe only
-- [ ] No behavioural firmware change required
+- [x] `AGENTS.md` / `teg-pwm-memory` note multi-role ideation is claim-safe only
+- [x] No behavioural firmware change in this docs PR
+- IDE canvas `feature-roadmap-2026-08-30.canvas.tsx` stays outside the git tree (same pattern as the review canvases) and is not a merge gate
 
 Phase B does **not** unlock product claims; it unlocks confidence in the **existing** bench instrument.
 
@@ -248,10 +250,10 @@ Phase C is a **different program** (hardware + process + licence), not a Teensy 
 
 Executable docs/bench only unless a later plan says otherwise:
 
-1. Squash-merge open docs PRs that stay claim-safe (#73 re-audit when ready).
+1. Keep later docs PRs claim-safe. The 2026-08-30 re-audit is already on `main` (#73). Do not open `plan/refactor-adversarial-fixes-7.md`.
 2. Run disconnected checklist; stamp rows in `BENCH_CHECKS.md`.
 3. When Phase R is authorised: new plan under `plan/feature-afdd-research-*.md` (never `refactor-adversarial-fixes-7.md`) with HF path design only.
-4. Optional host tests for release-refuse reason codes / waveform library CRC — after API design review.
+4. After an API design review, a waveform-library CRC or a release-refuse reason enum may get host tests if it lives in a tested header. Status JSON and MQTT emission stay in target `.cpp`, so those need a target or API integration check before the feature counts as landed.
 
 ---
 

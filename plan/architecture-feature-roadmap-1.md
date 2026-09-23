@@ -2,7 +2,7 @@
 goal: Land claim-safe multi-role feature roadmap documentation for TEG
 version: 1.0
 date_created: 2026-08-30
-last_updated: 2026-08-30
+last_updated: 2026-09-23
 owner: teg
 status: 'Completed'
 tags: [docs, architecture, feature, roadmap]
@@ -46,6 +46,7 @@ Publish a claim-safe multi-role feature roadmap (inverter, waveform generator, A
 |------|-------------|-----------|------|
 | TASK-005 | Commit roadmap + memories on branch `docs/feature-roadmap-2026-08-30` | ✅ | 2026-08-30 |
 | TASK-006 | Push and open PR to `main` with claim-safe summary and test plan (docs review only) | ✅ | 2026-08-30 |
+| TASK-007 | Match capture rate to PRODUCT_READINESS §1.1 (20 kHz default, 200 kHz ceiling) and require target/API coverage for status/MQTT release-refuse reasons | ✅ | 2026-09-23 |
 
 ## 3. Alternatives
 
@@ -71,6 +72,7 @@ Publish a claim-safe multi-role feature roadmap (inverter, waveform generator, A
 - **TEST-001**: Human review that roadmap contains no UL/grid-tie/HA energy-dashboard product claims.
 - **TEST-002**: Confirm PR does not modify `src/**` behavioural firmware.
 - **TEST-003**: Identifier uniqueness checks on this plan file return empty for declaration duplicates.
+- **TEST-004**: Capture-rate text names 20 kSPS at the 20 kHz default and 200 kSPS at the 200 kHz ceiling, and the status/MQTT gate requires target or API integration.
 
 ## 7. Risks & Assumptions
 

@@ -8,7 +8,7 @@
 - Keep Serena project memories after layout, build, or convention changes.
 - PWM/thermal/import invariants also live in `.github/instructions/teg-pwm-memory.instructions.md`. Do not add a `teensy41-pwm` env or skip `applyPwmConfig` capture/thermal/PLL. That file's `applyTo` includes `README.md`, `docs/images/readme-ui-*.png`, and `scripts/readme_ui_fixtures/**` so screenshot/caption rules attach there; do not widen to `docs/**`.
 - Keep `delay(1)` in the control loop (QNEthernet yield); do not replace it with bare `yield()`.
-- README operator UI stills live under `docs/images/readme-ui-*.png`; regenerate with `scripts/readme_ui_fixtures/serve_and_capture.py` (local fixture `/api`, not Teensy). Captions must say UI orientation / fixture / inhibited — not bench proof / not ISR/OUTEN proof. Do not put gallery media in `web/`; prefer PNG stills over animated live-meter GIFs. Docs media plan `plan/process-readme-screenshots-1.md` is Completed; still no `plan/refactor-adversarial-fixes-7.md`.
+- README operator UI stills live under `docs/images/readme-ui-*.png`; regenerate with `scripts/readme_ui_fixtures/serve_and_capture.py` (local fixture `/api`, not Teensy). Captions must say UI orientation / fixture / inhibited — not bench proof / not ISR/OUTEN proof. Do not put gallery media in `web/`; prefer PNG stills over animated live-meter GIFs. Docs media plan `plan/process-readme-screenshots-1.md` is Completed; still no `plan/refactor-adversarial-fixes-7.md`. After slices 1–6, deep adversarial re-audits are evidence triage (canvas + dated `docs/REVIEW_*.md` via feature-branch PR), not a seventh software-fix slice; no-go new host fix PRs unless a fresh host-testable regression appears.
 
 ## Learned Workspace Facts
 

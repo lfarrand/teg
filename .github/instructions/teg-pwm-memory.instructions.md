@@ -43,6 +43,10 @@ When thermal is enabled, PWM release waits for a valid DS18B20 sample. OneWire b
 
 Production leaves `TEG_ENABLE_UNSAFE_LAB_OTA` undefined: `ota.h` stubs, empty `ota.cpp` / `flash_ota.cpp`, no `/api/ota*` routes (HTTP 404, not 501). Settings poll `/api/status?lite=1` (no `analogRead`; still emit last-window `meterActive`). Named presets and waveform GET when those panels open; clear the loaded flag if the fetch fails so the next open retries. Export is `/api/config?download=1`. Pico lives at `/pico.min.css` as a token sheet, not the 83 KB library. `setup()` must `flushDisplay()` while still inhibited before `clearFaultTrip(false)` so a generated write PIN reaches the OLED; `flushDisplay()` stays skipped while OUTEN is live.
 
+## Adversarial re-audit
+
+After slices 1–6, deep re-audits are evidence triage (`docs/REVIEW_YYYY-MM-DD.md` + canvas via feature-branch PR), not a seventh software-fix slice. Do not create `plan/refactor-adversarial-fixes-7.md`. No-go new host fix PRs unless a fresh host-testable regression appears. Remaining gate is `docs/BENCH_CHECKS.md`.
+
 ## Multi-role ideation
 
 Treat inverter, custom waveform generator, instrumentation, PLL, MPPT, and AFDD-class arc work as **roles/lenses** on the bench PWM instrument — not certified SKUs. Capture remains ISR-tied (not an arc band). AFDD research needs a separate HF ADC path, AFE, dither/detect mutex, and dual-MCU for any safety argument; do not add UL 1699B or “arc protection” product claims. Durable note: `docs/FEATURE_ROADMAP_2026-08-30.md`. Do not open `plan/refactor-adversarial-fixes-7.md` for this.

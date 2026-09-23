@@ -9,7 +9,7 @@ code-simplifier pass. Target ISR/OUTEN behaviour is not host-proven. NO-SHIP
 until `docs/BENCH_CHECKS.md` disconnected checklist still passes.
 
 Canvas (open beside the chat):
-`C:\Users\lee\.cursor\projects\d-git-teg\canvases\review-fixes-2026-08-28.canvas.tsx`
+`review-fixes-2026-08-28.canvas.tsx`
 
 ---
 

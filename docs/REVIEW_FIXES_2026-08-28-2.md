@@ -14,7 +14,7 @@ absent). Token CSS, Tm2 frequency hide, and deferred `<details>` panels
 render. Lite-status hide of the OTA article needs the device (`otaEnabled`).
 
 Canvas (open beside the chat):
-`C:\Users\lee\.cursor\projects\d-git-teg\canvases\review-fixes-2026-08-28-2.canvas.tsx`
+`review-fixes-2026-08-28-2.canvas.tsx`
 
 ---
 

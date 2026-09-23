@@ -132,13 +132,14 @@ struct CurrentLimitConfig {
   uint8_t FilterPeriod = 0;            // CMP sample period in bus clocks; 0 = bypass
 };
 
-// InfluxDB v2 metrics target. Metrics are disabled until a token is set —
-// the token lives ONLY in /settings.cfg (or the web UI), never in source.
+// InfluxDB v2 metrics target. Metrics stay off until both a host and a token
+// are set. Host, org, bucket, and token are blank in source; the token lives
+// only in /settings.cfg or the web UI.
 struct InfluxConfig {
-  char Host[40] = "ub-1.lan";
+  char Host[40] = "";
   uint16_t Port = 8086;
-  char Org[24] = "501eaf58ac3171cd";
-  char Bucket[32] = "power_generator";
+  char Org[24] = "";
+  char Bucket[32] = "";
   char Token[96] = "";
   uint16_t IntervalSeconds = 10; // metrics push cadence; 0 disables
 };

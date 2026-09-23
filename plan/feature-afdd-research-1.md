@@ -2,7 +2,7 @@
 goal: Document MACAPD AFDD-class HF arc research for Teensy 4.1 / i.MX RT1060
 version: 1.0
 date_created: 2026-08-30
-last_updated: 2026-08-30
+last_updated: 2026-09-23
 owner: teg
 status: 'Completed'
 tags: [feature, research, afdd, docs, architecture]
@@ -72,11 +72,12 @@ Produce claim-safe research documentation and an IDE canvas for an innovative HF
 - **FILE-006**: `docs/FEATURE_AFDD_MACAPD_ALGORITHM.md` — detailed MACAPD explanation.
 - **FILE-007**: `src/afdd_macapd.h` — host-testable algorithm (no OUTEN).
 - **FILE-008**: `test/test_afdd_macapd/test_main.cpp` — Unity native tests.
+- **FILE-009**: `.cursor/environment.json`, `.cursor/install.sh` — cloud-agent bootstrap from #77, merged into this branch.
 
 ## 6. Testing
 
 - **TEST-001**: Manual review — document contains no UL 1699B compliance claim and states zero Teensy trip authority.
-- **TEST-002**: Confirm this feature does not change OUTEN or other firmware behaviour. `.cursor/environment.json` and `.cursor/install.sh` are the cloud-agent bootstrap already on `main` (#77); they are not an AFDD deliverable. Do not add a second copy.
+- **TEST-002**: `.cursor/environment.json` and `.cursor/install.sh` are in this PR because #77 (cloud-agent bootstrap) merged into `docs/feature-afdd-research-2026-08-30`, not into `main`. That bootstrap is the only `.cursor/` change in scope. The AFDD work must not change OUTEN or other firmware behaviour, and must not add `.cache/`.
 - **TEST-003**: `pio test -e native --filter test_afdd_macapd` passes on host (math only).
 
 ## 7. Risks & Assumptions

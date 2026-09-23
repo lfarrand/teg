@@ -73,7 +73,7 @@ Hardware reminder: the existing switch board is a **bidirectional AC interrupter
 
 ### 4.1 R-CORE — Bench PWM instrument
 
-**Keep as the identity.** Every README / UI / MQTT sentence stays “bench / inhibited / not ISR proof” unless a checklist row is checked.
+**Keep as the identity.** README, UI, and MQTT copy stays bench / inhibited / not ISR proof. A checked `BENCH_CHECKS` row may be cited only for the observation that row records. It does not clear unrelated ISR/OUTEN paths, and it does not change NO-SHIP or Phase B.
 
 Useful near-term features (still claim-safe):
 
@@ -102,7 +102,7 @@ Useful additions (host-testable where possible):
 | Idea | Why | Caveat |
 |------|-----|--------|
 | Waveform library with CRC + schema version | Reproducible lab recipes | Do not auto-release OUTEN on load |
-| Segmented sequences (burst / dead / re-arm) | Arc-injection *research* stimulus and EMI stress | Never call it AFDD self-test |
+| Finite non-looping burst, or an explicit re-arm | Looping `teg-wave` `type=sequence` (up to 64 segments) already plays in `IsrOverflowSm20` | Do not add a second parser; never call a burst AFDD self-test |
 | Import/export of waveform sets separately from full config | Avoid secret/identity pitfalls | Keep `restoreSecrets` identity gate |
 | Host Unity for quantize / clamp edges | Matches spectrum_wire pattern | Still not ISR proof |
 | Dither auto-off when “sense” mode engaged | Prepares AFDD coexistence | Requires explicit mode bit |
@@ -182,7 +182,7 @@ Ranked by fit to **this** repo’s strengths (PWM timing, capture, web, Ethernet
 | P0 | Finish disconnected `BENCH_CHECKS` campaign | All | Hardware time |
 | P0 | Claim-safe roadmap / PRODUCT_READINESS cross-links (this doc) | All | Docs PR |
 | P1 | Waveform library + dither/sense mutex bit | R-WGEN, R-AFDD-R prep | Host tests + docs |
-| P1 | Release-refuse reason codes in status/MQTT | R-SAFE-LAB | Target or API check that `api_status` and `mqtt.cpp` emit the reason; host serde alone is not enough |
+| P1 | Release-refuse reason codes in status/MQTT | R-SAFE-LAB | On-wire status JSON and MQTT publish, both; a target compile does not count |
 | P2 | Ripple-correlation MPPT experiment behind flag | R-MPPT | Bench V/I integrity |
 | P2 | HF DMA capture prototype on spare ADC pins (lab AFE) | R-AFDD-R | Hardware AFE first |
 | P3 | Dual-image design notes / second MCU handshake stub | R-AFDD-R, R-SAFE | Architecture only until board |
@@ -191,7 +191,7 @@ Ranked by fit to **this** repo’s strengths (PWM timing, capture, web, Ethernet
 | Stay-off | CMSIS FFT / global `-O3`, USB lean PID, strip `applyPwmConfig` | — | Existing stay-offs |
 | Stay-off | “AFDD certified” / UL 1699B marketing on Teensy image | — | Impossible honestly |
 
-A reason code that exists only in a host-tested header is not evidence it left the device. Native Unity sets `test_build_src = no`, so `api_status` (`src/web_handlers.cpp`) and `src/mqtt.cpp` are not in those suites. Treat status/MQTT reasons as landed only after a target build or an API/MQTT integration check shows the reason on the wire.
+A reason code that exists only in a host-tested header is not evidence it left the device. Native Unity sets `test_build_src = no`, so `api_status` (`src/web_handlers.cpp`) and `src/mqtt.cpp` are not in those suites. Treat status/MQTT reasons as landed only after target execution, or an API/MQTT integration check, shows the reason in both the status payload and the MQTT publish. A successful target compile does not count.
 
 ---
 
@@ -253,7 +253,7 @@ Executable docs/bench only unless a later plan says otherwise:
 1. Keep later docs PRs claim-safe. The 2026-08-30 re-audit is already on `main` (#73). Do not open `plan/refactor-adversarial-fixes-7.md`.
 2. Run disconnected checklist; stamp rows in `BENCH_CHECKS.md`.
 3. When Phase R is authorised: new plan under `plan/feature-afdd-research-*.md` (never `refactor-adversarial-fixes-7.md`) with HF path design only.
-4. After an API design review, a waveform-library CRC or a release-refuse reason enum may get host tests if it lives in a tested header. Status JSON and MQTT emission stay in target `.cpp`, so those need a target or API integration check before the feature counts as landed.
+4. After an API design review, a waveform-library CRC or a release-refuse reason enum may get host tests if it lives in a tested header. Status JSON and MQTT emission stay in target `.cpp`, so both outputs need an on-wire check before the feature counts as landed. A target compile does not count.
 
 ---
 

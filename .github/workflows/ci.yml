@@ -330,7 +330,7 @@ jobs:
           # --all-packages keeps clean C/C++ locks in the JSON for coverage checks.
           # --no-resolve skips requirements.txt transitive resolution. That path
           # uses specifier lower bounds (e.g. requests 2.9.2), not the packages
-          # pip installs from the two pinned CI tools.
+          # pip installs from the three pinned CI tools.
           /tmp/osv-scanner scan source \
             --recursive --include-git-root --allow-no-lockfiles --all-packages \
             --no-resolve \

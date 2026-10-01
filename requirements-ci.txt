@@ -1,2 +1,3 @@
 platformio==6.2.0
 gcovr==8.6
+playwright==1.63.0

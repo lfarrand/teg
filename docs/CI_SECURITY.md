@@ -83,7 +83,7 @@ an unknown package and therefore matched nothing. OSV-Scanner is used instead
 because its C/C++ mode accepts exact repository commits. `scripts/osv-dependencies.json`
 maps the pinned registry, framework, and vendored sources to reviewed upstream
 commits, while recursive source scanning must also discover both gitlink commits.
-The two `requirements-ci.txt` pins are scanned as declared versions only
+The three `requirements-ci.txt` pins are scanned as declared versions only
 (`--no-resolve`); resolving that file invents transitive lower bounds that are
 not the installed CI tree.
 The sentinel scan is intentionally vulnerable and CI fails if OSV stops detecting

@@ -121,6 +121,15 @@ Replay reports retain final tier availability and a sample-clock coverage
 transition history, so reduced coverage is explicit rather than inferred from
 the absence of fast blocks.
 
+## Latency-first integer preparation
+
+The separate [latency study](LATENCY_STUDY.md) adds a certified integer FIR/raw
+fast-path oracle, frozen per-variant calibration, component golden vectors and
+a reproducible baseline/multirate comparison. Outputs stay passive/unqualified.
+It records arithmetic savings, extra multirate delay, synthetic detections
+**and misses**, host execution cost, and FPGA/electrical blockers. It does not
+replace the floating raw/residual detector or establish market superiority.
+
 ## What follows this deliverable
 
 Capture real series/parallel arcs and nuisance events across held-out hardware

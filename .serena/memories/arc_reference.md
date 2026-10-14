@@ -21,3 +21,12 @@
   changes before /5 buffering; preserve sample-local invalid-word timing and
   valid prefixes. Quantised coefficients must fit after rounding, not just
   before it. Empty and partial calls retain health/tier telemetry.
+- `fixed_point.py` is the signed, bounded Q1.23 FIR oracle; `fast_oracle.py` is
+  passive raw-only integer fast detection. `latency_study.py` exports component
+  golden vectors and compares `baseline_4m`/`multirate_2m` with independently
+  fitted frozen thresholds and explicit domain units. All deny permit and
+  hardware qualification. Large JSON integers use decimal strings.
+- `LATENCY_STUDY.md` records decisions/results/blockers. Multirate reduces FIR
+  work but adds delay; synthesis fit, full cancellation/FFT parity, real arc
+  performance, extinction and market superiority remain unproven. Synthetic
+  detections AND raw-only misses must be retained, not marketed as guarantees.

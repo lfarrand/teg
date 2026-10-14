@@ -91,6 +91,15 @@ class FastOracleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.oracle(envelope={"energy_q999": [1] * 6})
 
+    def test_calibration_rejects_modified_same_name_architecture(self):
+        healthy = np.zeros(4096, dtype=np.int64)
+        for name in ("baseline_4m", "multirate_2m"):
+            with self.subTest(architecture=name):
+                altered = replace(architecture(name), block_samples=architecture(name).block_samples // 2)
+                with self.assertRaisesRegex(ValueError, "unchanged named architecture"):
+                    calibrate_fast(healthy, architecture=altered, domain=self.domain,
+                                   verified_healthy=True, provenance="Known zero numerical fixture")
+
     def test_integer_energy_and_fragment_comparisons_are_strict(self):
         for name in self.envelopes:
             variant, envelope = architecture(name), self.envelopes[name]

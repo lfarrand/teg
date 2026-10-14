@@ -136,6 +136,30 @@ class StudyAndGoldenTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     compare_codes(self.healthy, values, **arguments)
 
+    def test_study_accepts_two_million_samples_and_validates_final_chunk_before_fit(self):
+        # Exercise both complete captures through actual calibration/detection,
+        # beyond the domain utility's one-million-sample per-call limit.
+        values = np.zeros(2_000_000, dtype=np.int64)
+        arguments = dict(domain=self.domain, verified_healthy=True,
+                         provenance="independent numerical full-limit fixture")
+        report = compare_codes(values, values, **arguments)
+        self.assertEqual(report["healthy_sample_count"], 2_000_000)
+        self.assertEqual(report["evaluation_sample_count"], 2_000_000)
+        self.assertFalse(report["permit"])
+        self.assertFalse(report["hardware_qualification"])
+        for result in report["variants"].values():
+            self.assertGreater(result["envelope"]["calibration_blocks"], 7000)
+            self.assertGreater(result["valid_blocks"], 7000)
+            self.assertEqual(result["candidate_decisions"], [])
+        values[-1] = 32768  # First invalid code in this signed 16-bit domain.
+        with patch("arc_detector.latency_study.calibrate_fast") as fit:
+            for healthy, evaluation in ((values, self.evaluation), (self.healthy, values),
+                                        (self.healthy, np.zeros(2_000_001, dtype=np.int64))):
+                with self.subTest(healthy=len(healthy), evaluation=len(evaluation)):
+                    with self.assertRaises(ValueError):
+                        compare_codes(healthy, evaluation, **arguments)
+            fit.assert_not_called()
+
     def test_golden_ports_match_independent_integer_convolution_and_phase(self):
         report = golden_vectors(self.domain, sample_count=512, start_index=5, seed=43)
         self.assertEqual(len(report["streams"]), 15)
@@ -186,6 +210,21 @@ class StudyAndGoldenTests(unittest.TestCase):
             self.assertFalse(result["permit"])
             for row in result["variants"].values():
                 self.assertEqual(row["candidate_decisions"], [])
+
+    def test_recording_compare_rejects_different_node_in_same_operating_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            metadata, arrays = make_recording(count=4096)
+            healthy = RecordingMetadata.from_dict(metadata)
+            healthy_path, evaluation_path = Path(directory) / "healthy.npz", Path(directory) / "eval.npz"
+            np.savez(healthy_path, **arrays)
+            np.savez(evaluation_path, **arrays)
+            result = compare_recordings(healthy_path, healthy, evaluation_path, healthy,
+                                        domain=self.domain, verified_healthy=True)
+            self.assertEqual(result["node_id"], healthy.node_id)
+            different_node = replace(healthy, node_id=healthy.node_id + "-other")
+            with self.assertRaisesRegex(ValueError, "node"):
+                compare_recordings(healthy_path, healthy, evaluation_path, different_node,
+                                   domain=self.domain, verified_healthy=True)
 
     def test_recording_compare_rejects_training_arc_failed_health_and_same_file(self):
         with tempfile.TemporaryDirectory() as directory:

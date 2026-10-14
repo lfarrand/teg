@@ -206,8 +206,10 @@ def compare_codes(healthy_codes, evaluation_codes, *, domain, verified_healthy, 
         values = np.asarray(codes)
         if values.ndim != 1 or not 1 <= values.size <= MAX_STUDY_SAMPLES:
             raise ValueError("study captures must be nonempty bounded vectors")
-        # Exercise the domain's exact integer validation before any fit/run.
-        domain.decode(values)
+        # Validate the whole capture before fitting, but respect the domain
+        # utility's bounded per-call size independently of capture length.
+        for offset in range(0, values.size, 32768):
+            domain.decode(values[offset:offset + 32768])
     healthy_codes, evaluation_codes = np.asarray(healthy_codes), np.asarray(evaluation_codes)
     _integer(healthy_start, "healthy_start", 0, (2 ** 63 - 1) - len(healthy_codes))
     _integer(evaluation_start, "evaluation_start", 0, (2 ** 63 - 1) - len(evaluation_codes))

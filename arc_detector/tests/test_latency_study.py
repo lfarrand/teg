@@ -63,6 +63,28 @@ class WorkloadAndMetricsTests(unittest.TestCase):
         self.assertFalse(metrics["candidate_is_shutdown"])
         self.assertFalse(metrics["extinction_established"])
 
+    def test_candidate_metrics_preserve_adjacent_ticks_beyond_binary64_precision(self):
+        onset = 2 ** 32
+        boundary = onset * 4_000_000
+        event = LabelledEvent("wide-clock", "arc", onset, onset + .000008)
+        # Binary64 absolute seconds merge these two distinct physical ticks.
+        decisions = (CandidateDecision(boundary - 1, 0), CandidateDecision(boundary + 1, 0))
+        report = candidate_metrics((event,), decisions, start_index=boundary - 20, sample_count=100)
+        found = report["event_candidates"][0]
+        self.assertEqual(found["candidate_latency_s"], 1 / 4_000_000)
+        self.assertEqual(found["candidate_source_end_index"], boundary + 1)
+        self.assertEqual(found["candidate_latency_sample_ratio"], {"numerator": 1, "denominator": 1})
+        self.assertEqual(report["unlabelled_candidates"], 1)
+        self.assertEqual(report["missed_labelled_arc_events"], 0)
+        # A candidate just before end must not be rounded into the excluded end.
+        end = onset + .25
+        near_end = boundary + 1_000_000 - 1
+        tail = candidate_metrics((LabelledEvent("tail", "arc", onset, end),),
+                                 (CandidateDecision(near_end, 0),), start_index=boundary,
+                                 sample_count=1_000_000)
+        self.assertEqual(tail["event_candidates"][0]["candidate_source_end_index"], near_end)
+        self.assertEqual(tail["event_candidates"][0]["candidate_latency_s"], .25 - 1 / 4_000_000)
+
     def test_benign_exposure_unions_intervals_and_removes_arc_overlap(self):
         events = (LabelledEvent("noise1", "nuisance", 0, .003),
                   LabelledEvent("noise2", "nuisance", .002, .004),

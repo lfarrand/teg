@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, is_dataclass
+from fractions import Fraction
 import hashlib
 import json
 import os
@@ -138,11 +139,16 @@ def candidate_metrics(events, decisions, *, start_index, sample_count, verified_
         raise ValueError("verified_arc_free must be Boolean")
     _integer(sample_count, "sample_count", 1, MAX_STUDY_SAMPLES)
     _integer(start_index, "start_index", 0, (2 ** 63 - 1) - sample_count)
-    start_s, end_s = start_index / DETECTION_RATE, (start_index + sample_count) / DETECTION_RATE
+    # Keep containment/exposure/latency on an exact sample clock. Labels retain
+    # their supplied canonical decimal-seconds representation; do not subtract
+    # large binary64 absolute times to obtain a small candidate latency.
+    start_s = Fraction(start_index, DETECTION_RATE)
+    end_s = Fraction(start_index + sample_count, DETECTION_RATE)
     events = tuple(events)
     if any(not isinstance(event, LabelledEvent) for event in events):
         raise ValueError("events require independently supplied LabelledEvent values")
-    if any(event.onset_s < start_s or event.end_s > end_s for event in events):
+    intervals = [(event, Fraction(str(event.onset_s)), Fraction(str(event.end_s))) for event in events]
+    if any(onset < start_s or end > end_s for _, onset, end in intervals):
         raise ValueError("event labels are outside the evaluated capture")
     if len({event.event_id for event in events}) != len(events):
         raise ValueError("event identifiers must be unique")
@@ -152,17 +158,22 @@ def candidate_metrics(events, decisions, *, start_index, sample_count, verified_
                         start_index + sample_count) for decision in decisions]
     if indices != sorted(set(indices)):
         raise ValueError("candidate source clock must be strictly increasing")
-    times = [index / DETECTION_RATE for index in indices]
-    arcs = [event for event in events if event.kind == "arc"]
+    times = [Fraction(index, DETECTION_RATE) for index in indices]
+    arcs = [(event, onset, end) for event, onset, end in intervals if event.kind == "arc"]
     results = []
-    for event in arcs:
-        found = next((time for time in times if event.onset_s <= time < event.end_s), None)
+    for event, onset, end in arcs:
+        found_position = next((position for position, time in enumerate(times) if onset <= time < end), None)
+        found = None if found_position is None else times[found_position]
+        latency_samples = None if found is None else (found - onset) * DETECTION_RATE
         results.append({"event_id": event.event_id, "candidate_observed": found is not None,
-                        "onset_s": event.onset_s, "candidate_time_s": found,
-                        "candidate_latency_s": None if found is None else found - event.onset_s,
+                        "onset_s": event.onset_s, "candidate_time_s": None if found is None else float(found),
+                        "candidate_source_end_index": None if found_position is None else indices[found_position],
+                        "candidate_latency_s": None if found is None else float(found - onset),
+                        "candidate_latency_sample_ratio": None if latency_samples is None else
+                        {"numerator": latency_samples.numerator, "denominator": latency_samples.denominator},
                         "labelled_arc_type": event.arc_type, "inferred_arc_type": "unknown"})
     benign = [(start_s, end_s)] if verified_arc_free else [
-        (event.onset_s, event.end_s) for event in events if event.kind == "nuisance"]
+        (onset, end) for event, onset, end in intervals if event.kind == "nuisance"]
     # Exposure is interval union, not double-counted overlapping labels.
     merged = []
     for left, right in sorted(benign):
@@ -170,21 +181,23 @@ def candidate_metrics(events, decisions, *, start_index, sample_count, verified_
             merged[-1][1] = max(merged[-1][1], right)
         else:
             merged.append([left, right])
-    for event in arcs:
+    for _, onset, end in arcs:
         remaining = []
         for left, right in merged:
-            if event.end_s <= left or event.onset_s >= right:
+            if end <= left or onset >= right:
                 remaining.append([left, right])
             else:
-                if left < event.onset_s:
-                    remaining.append([left, event.onset_s])
-                if event.end_s < right:
-                    remaining.append([event.end_s, right])
+                if left < onset:
+                    remaining.append([left, onset])
+                if end < right:
+                    remaining.append([end, right])
         merged = remaining
-    in_arc = lambda time: any(event.onset_s <= time < event.end_s for event in arcs)
+    in_arc = lambda time: any(onset <= time < end for _, onset, end in arcs)
     in_benign = lambda time: any(left <= time < right for left, right in merged)
     return {"labelled_arc_events": len(arcs), "missed_labelled_arc_events": sum(not row["candidate_observed"] for row in results),
-            "event_candidates": results, "labelled_benign_exposure_s": sum(right - left for left, right in merged),
+            "event_candidates": results, "labelled_benign_exposure_s": float(sum((right - left for left, right in merged), Fraction(0))),
+            "sample_clock_hz": DETECTION_RATE,
+            "label_time_interpretation": "canonical decimal seconds; label precision is limited by the supplied metadata",
             "candidates_in_labelled_benign": sum(in_benign(time) and not in_arc(time) for time in times),
             "unlabelled_candidates": sum(not in_benign(time) and not in_arc(time) for time in times),
             "candidate_is_shutdown": False, "extinction_established": False}

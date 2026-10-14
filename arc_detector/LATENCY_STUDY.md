@@ -48,6 +48,12 @@ more than eight valid blocks. This does not establish that a capture was arc-fre
 runs identical evaluation samples. Labels only score candidates afterward.
 Half-open event intervals, missed events, benign exposure and host execution
 cost remain distinct. Terminal current-zero is not extinction.
+Containment, exposure and latency stay on an exact rational sample clock, even
+above binary64's adjacent-integer range. Reports retain the exact candidate
+source index and latency numerator/denominator in sample units. Absolute float
+time fields are presentation only and can coincide for different ticks. Labels
+use their supplied canonical decimal seconds; precision already lost in the
+metadata cannot be reconstructed.
 
 Gain/acquisition control, prediction/cancellation, the residual path, spectral
 FFT, protection state machine and shutdown are **not** ported here. The original
@@ -121,7 +127,7 @@ python scripts/verify_ci_policy.py
 git diff --check
 ```
 
-The arc suite passed 142 tests, including 48 new tests. The separate tooling
+The arc suite passed 143 tests, including 49 new tests. The separate tooling
 suite passed 52. These are scoped command results, not a TEG firmware/bench
 census. They do not test FPGA timing or ISR/OUTEN.
 
@@ -171,12 +177,12 @@ not byte-reproducible; the deterministic vector payload is.
 | Independent golden arithmetic/publication | `test_golden_ports_match_independent_integer_convolution_and_phase`; `test_atomic_artifact_publication_preserves_large_integers_and_collisions`; `test_nonfinite_json_and_publish_failure_leave_no_partial_artifact` |
 | Recording import constraints | `test_recording_compare_keeps_one_sample_processing_separate_from_import`; `test_recording_compare_rejects_training_arc_failed_health_and_same_file` |
 | Identity/canonical recipe and full capture limit | `test_recording_compare_rejects_different_node_in_same_operating_mode`; `test_calibration_rejects_modified_same_name_architecture`; `test_study_accepts_two_million_samples_and_validates_final_chunk_before_fit` |
+| Wide sample-clock precision | `test_candidate_metrics_preserve_adjacent_ticks_beyond_binary64_precision` |
 
 Focused independent source/assertion review found strong coverage of the
-bounded outcome inventory. Among the 48 new tests there are 237 assertion sites,
-28 tests with exception assertions, 36 with negative assertions and eight with
-exact array/deep assertions; no test is assertion-free. These are source metrics,
-not a mutation score or physical coverage percentage.
+bounded outcome inventory, including exact arithmetic, rejected inputs, denial
+flags and deep array results. None of the 49 new tests is assertion-free. This
+is an assertion review, not a mutation score or physical coverage percentage.
 
 Two specific guard removals survived the original covering tests and were
 killed by the new node-identity/canonical-recipe regressions at their expected
@@ -186,6 +192,10 @@ above 1M despite the 2M study contract. The new full-limit regression reproduced
 that error, then passed after bounded validation was added. It runs real fitting
 and detection on 2M healthy/evaluation code vectors and checks an invalid last
 chunk and 2M+1 rejection before any fitting.
+Another PR finding showed adjacent 4 MHz ticks merging when absolute indices
+were converted to float seconds. The wide-clock regression reproduced a false
+zero latency; exact rational containment/latency fixed it, with independent
+onset/end, exposure and near-int64-limit checks afterward.
 
 ## Remaining blockers and claims gate
 

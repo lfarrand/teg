@@ -71,6 +71,13 @@ Characterise passbands and alias rejection after coefficient quantisation;
 discarding samples without filtering is not a decimator. The FIR group-delay
 calculation alone is not the analogue/filter impulse-tail qualification.
 
+The [latency-first preparation](LATENCY_STUDY.md) supplies certified integer
+elementary FIR vectors and a passive raw fast-path oracle. It also compares an
+experimental 2 MSPS fast bank with additional anti-alias filtering. It is not
+complete ADC/predictor/spectral/protection RTL or a qualified architecture
+change. Bind its separate thresholds to the exact filter recipe/numeric domain;
+do not reuse the original floating profile or infer device fit from tap counts.
+
 Either raw or residual evidence can latch an arc. Fast-tier enable additionally
 requires independent fast-band, nuisance and complete impulse-tail qualification.
 Loss of that tier reports robust-only operation. Loss of all qualified spectral

@@ -40,7 +40,10 @@ def quantise_coefficients(values: Iterable[float], fractional_bits: int = 23) ->
     scale = 2 ** fractional_bits
     if np.any(values < -1) or np.any(values >= 1):
         raise ValueError("FIR coefficients exceed signed Q1 range")
-    result = np.rint(values * scale) / scale
+    integers = np.rint(values * scale)
+    if np.any(integers < -scale) or np.any(integers > scale - 1):
+        raise ValueError("FIR coefficients round outside signed Q1 range")
+    result = integers / scale
     result.setflags(write=False)
     return result
 

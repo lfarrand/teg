@@ -120,6 +120,29 @@ class SignalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             fast_features(np.zeros((1, 6)), FastEnvelope((1.0,) * 6, (1.0,) * 6))
 
+    def test_q1_23_positive_rounding_cannot_overflow_the_signed_integer(self):
+        scale = 2 ** 23
+        maximum = (scale - 1) / scale
+        quantised = quantise_coefficients([maximum, maximum + .25 / scale])
+        np.testing.assert_array_equal(quantised, [maximum, maximum])
+        self.assertFalse(quantised.flags.writeable)
+        for coefficient in (1 - 2 ** -25, maximum + .5 / scale,
+                            np.nextafter(1.0, 0.0)):
+            with self.subTest(coefficient=coefficient):
+                with self.assertRaisesRegex(ValueError, "round outside signed Q1"):
+                    quantise_coefficients([coefficient])
+
+    def test_q1_23_lower_boundary_remains_representable(self):
+        scale = 2 ** 23
+        quantised = quantise_coefficients([-1.0, -1.0 + .25 / scale,
+                                           np.nextafter(-1.0, 0.0), -1.0 + 1.0 / scale])
+        np.testing.assert_array_equal(quantised * scale,
+                                      [-scale, -scale, -scale, -scale + 1])
+        for coefficient in (np.nextafter(-1.0, -np.inf), -1.0 - 2 ** -25):
+            with self.subTest(coefficient=coefficient):
+                with self.assertRaisesRegex(ValueError, "exceed signed Q1"):
+                    quantise_coefficients([coefficient])
+
 
 if __name__ == "__main__":
     unittest.main()

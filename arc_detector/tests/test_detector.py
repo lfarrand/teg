@@ -117,6 +117,109 @@ class DetectorTests(unittest.TestCase):
         self.assertTrue(result.shutdown_latched)
         self.assertFalse(result.available_tiers)
 
+    def test_fresh_residual_path_cannot_inherit_raw_frame_readiness(self):
+        template = EdgeTemplate("pwm", (0.0,) * 512, (0.0,) * 512)
+        detector = Detector(profile(verified_arc_free=True, spectral_qualified=True, templates=(template,)))
+        raw_only = AcquisitionHealth(residual_profile_valid=False)
+        raw = detector.process(np.zeros(20000), start_index=0, health=raw_only, operating_mode="bench")
+        self.assertTrue(raw.permit)
+        residual_only = AcquisitionHealth(raw_profile_valid=False)
+        warming = detector.process(np.zeros(1000), start_index=20000, health=residual_only, operating_mode="bench")
+        self.assertFalse(warming.permit)
+        self.assertFalse(warming.shutdown_latched)
+        self.assertFalse(detector._spectral_ready["raw"])
+        self.assertFalse(detector._spectral_ready["residual"])
+        ready = detector.process(np.zeros(9000), start_index=21000, health=residual_only, operating_mode="bench")
+        self.assertTrue(any(frame.path == "residual" for frame in ready.spectral_frames))
+        self.assertTrue(ready.permit)
+
+    def test_fresh_raw_path_cannot_inherit_residual_frame_readiness(self):
+        template = EdgeTemplate("pwm", (0.0,) * 512, (0.0,) * 512)
+        detector = Detector(profile(verified_arc_free=True, spectral_qualified=True, templates=(template,)))
+        residual_only = AcquisitionHealth(raw_profile_valid=False)
+        residual = detector.process(np.zeros(20000), start_index=0, health=residual_only, operating_mode="bench")
+        self.assertTrue(residual.permit)
+        raw_only = AcquisitionHealth(residual_profile_valid=False)
+        warming = detector.process(np.zeros(1), start_index=20000, health=raw_only, operating_mode="bench")
+        self.assertFalse(warming.permit)
+        self.assertFalse(warming.shutdown_latched)
+        ready = detector.process(np.zeros(9000), start_index=20001, health=raw_only, operating_mode="bench")
+        self.assertTrue(any(frame.path == "raw" for frame in ready.spectral_frames))
+        self.assertTrue(ready.permit)
+
+    def test_raw_readiness_survives_only_cancellation_changes(self):
+        template = EdgeTemplate("pwm", (0.0,) * 512, (0.0,) * 512)
+        detector = Detector(profile(verified_arc_free=True, spectral_qualified=True, templates=(template,)))
+        ready = detector.process(np.zeros(20000), start_index=0,
+                                 health=AcquisitionHealth(pwm_reference_valid=False), operating_mode="bench")
+        self.assertTrue(ready.permit)
+        enabled = detector.process(np.zeros(1), start_index=20000, operating_mode="bench")
+        self.assertTrue(enabled.permit)
+        self.assertTrue(detector._spectral_ready["raw"])
+        self.assertFalse(detector._spectral_ready["residual"])
+        disabled = detector.process(np.zeros(1), start_index=20001,
+                                    health=AcquisitionHealth(pwm_reference_valid=False), operating_mode="bench")
+        self.assertTrue(disabled.permit)
+
+    def test_one_adc_sample_coverage_loss_latches_before_partial_interval_is_completed(self):
+        for prefix in (0, 100000):
+            with self.subTest(prefix=prefix):
+                detector = Detector(profile(verified_arc_free=True, spectral_qualified=True))
+                if prefix:
+                    ready = detector.process20m(np.zeros(prefix), start_index=0, operating_mode="bench")
+                    self.assertTrue(ready.permit)
+                failed = detector.process20m(np.zeros(1), start_index=prefix,
+                                             health=AcquisitionHealth(raw_profile_valid=False), operating_mode="bench")
+                self.assertTrue(failed.shutdown_latched)
+                self.assertFalse(failed.permit)
+                self.assertEqual(failed.decisions[0].reason, "no_qualified_spectral_bandwidth")
+                self.assertEqual(failed.decisions[0].sample_index, prefix / 5)
+                completed = detector.process20m(np.zeros(4), start_index=prefix + 1, operating_mode="bench")
+                self.assertTrue(completed.shutdown_latched)
+                self.assertFalse(completed.permit)
+                self.assertFalse(completed.decisions)
+
+    def test_adc_reference_reset_persists_across_incomplete_decimation_interval(self):
+        template = EdgeTemplate("pwm", (0.0,) * 512, (0.0,) * 512)
+        detector = Detector(profile(verified_arc_free=True, spectral_qualified=True, templates=(template,)))
+        ready = detector.process20m(np.zeros(100000), start_index=0, operating_mode="bench")
+        self.assertTrue(ready.permit)
+        self.assertTrue(detector._spectral_ready["residual"])
+        no_reference = detector.process20m(np.zeros(1), start_index=100000,
+                                           health=AcquisitionHealth(pwm_reference_valid=False), operating_mode="bench")
+        self.assertTrue(no_reference.permit)
+        self.assertFalse(detector._spectral_ready["residual"])
+        restored = detector.process20m(np.zeros(4), start_index=100001, operating_mode="bench")
+        self.assertTrue(restored.permit)
+        self.assertFalse(detector._spectral_ready["residual"])
+        fresh_residual_only = detector.process20m(np.zeros(1), start_index=100005,
+                                                  health=AcquisitionHealth(raw_profile_valid=False), operating_mode="bench")
+        self.assertFalse(fresh_residual_only.permit)
+        self.assertFalse(fresh_residual_only.shutdown_latched)
+
+    def test_initial_empty_calls_emit_pending_unqualified_decision_once(self):
+        for method in ("process", "process20m"):
+            with self.subTest(method=method):
+                detector = Detector(profile())
+                call = getattr(detector, method)
+                first = call((), start_index=0, operating_mode="bench")
+                self.assertEqual(len(first.decisions), 1)
+                self.assertEqual(first.decisions[0].reason, "unqualified_profile")
+                second = call((), start_index=0, operating_mode="bench")
+                self.assertFalse(second.decisions)
+
+    def test_partial_adc_calls_report_current_available_tiers(self):
+        detector = Detector(profile(verified_arc_free=True, spectral_qualified=True))
+        ready = detector.process20m(np.zeros(60000), start_index=0, operating_mode="bench")
+        self.assertTrue(ready.permit)
+        partial = detector.process20m(np.zeros(1), start_index=60000, operating_mode="bench")
+        self.assertTrue(partial.permit)
+        self.assertEqual(partial.available_tiers, ("raw_spectral",))
+        failed = detector.process20m(np.zeros(1), start_index=60001,
+                                     health=AcquisitionHealth(raw_profile_valid=False), operating_mode="bench")
+        self.assertFalse(failed.permit)
+        self.assertFalse(failed.available_tiers)
+
     def test_synthetic_startup_arc_detects_actual_samples_under_ten_ms(self):
         result = Detector(profile(), prototype=True).process(np.random.default_rng(10).normal(size=40000), start_index=0, operating_mode="bench")
         self.assertEqual(result.state, ProtectionState.ARC_DETECTED)

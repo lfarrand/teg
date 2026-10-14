@@ -99,6 +99,12 @@ qualified fast envelopes and impulse-tail behavior. Reduced fast availability
 does not disable a valid spectral tier. Clipping on both gain paths, invalid
 frames, sequence gaps, sensor failure, deadline failure or loss of usable
 spectral coverage latch protection unavailability.
+Changes to applicability/reference state are applied before ADC decimation
+buffering, even inside a five-sample interval. A permit requires a completed
+valid frame from a currently applicable spectral path; resetting one path does
+not borrow the other path's prior readiness. Local invalid integer ADC words
+are segmented at their actual sample time, preserving valid earlier evidence
+and consumed-sample continuity. Whole-block schema errors remain unavailable.
 
 Keep processing after a latch. Reset requires inhibited output and passing
 diagnostics, and clears filter/history state before monitoring restarts.

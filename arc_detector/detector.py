@@ -7,7 +7,7 @@ Nothing in this module drives TEG PWM, an interrupter, or actual FPGA pins.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 import math
 from typing import Iterable
@@ -107,10 +107,10 @@ class Detector:
     def _reset_all(self) -> None:
         self.state = ProtectionState.INITIALISING
         self.shutdown_latched = False
-        self._ready = False
         self._cancel_active = False
         self._fast_active = False
         self._raw_available: bool | None = None
+        self._residual_available = False
         self._suspect_since: int | None = None
         self._clear_frames = 0
         self._last_health = AcquisitionHealth()
@@ -135,6 +135,7 @@ class Detector:
         self._fast_buffer = {path: np.empty((0, 6)) for path in ("raw", "residual")}
         self._fast_indices = {path: np.empty(0, dtype=np.int64) for path in ("raw", "residual")}
         self._previous_psd = {"raw": None, "residual": None}
+        self._spectral_ready = {"raw": False, "residual": False}
         self._predictor = FrozenPredictor(self.profile.templates, self.profile.edge_delay_samples)
         self._residual_valid_after: int | None = None
         self._residual_signal_valid_after: int | None = None
@@ -210,6 +211,7 @@ class Detector:
         self._fast_indices["residual"] = np.empty(0, dtype=np.int64)
         self._previous_psd["residual"] = None
         self._temporal["residual"] = _Temporal()
+        self._spectral_ready["residual"] = False
         self._predictor.reset()
 
     def _clear_raw(self, start_index: int) -> None:
@@ -226,9 +228,56 @@ class Detector:
         self._fast_indices["raw"] = np.empty(0, dtype=np.int64)
         self._previous_psd["raw"] = None
         self._temporal["raw"] = _Temporal()
+        self._spectral_ready["raw"] = False
         upstream_warmup = 26 if self._20_next_index is not None else 0
         self._raw_spectral_valid_after = start_index + upstream_warmup + 254
         self._raw_fast_valid_after = start_index + upstream_warmup + FastFilterBank.warmup_samples
+
+    def _qualification_decision(self, index: int | float, decisions: list[Decision]) -> None:
+        if self._qualification_fault_pending:
+            decisions.append(Decision(index, index / DETECTION_RATE * 1e6,
+                                      ProtectionState.PROTECTION_UNAVAILABLE, "unqualified_profile", "health"))
+            self._qualification_fault_pending = False
+
+    def _apply_applicability(self, index: int | float, health: AcquisitionHealth,
+                             known_edges: bool, decisions: list[Decision]) -> None:
+        """Apply control changes at their actual time, before sample buffering.
+
+        ADC calls may not complete a /5 interval. Path resets and coverage loss
+        must still persist so later samples cannot overwrite that history.
+        """
+        cancellation = bool(self.profile.templates and self.profile.verified_arc_free and
+                            self._operating_mode_valid and health.pwm_reference_valid and
+                            health.residual_profile_valid and known_edges)
+        if cancellation != self._cancel_active:
+            self._clear_residual()
+            self._residual_signal_valid_after = index + 512 + math.ceil(self.profile.edge_delay_samples)
+            self._residual_valid_after = self._residual_signal_valid_after + 254
+        self._cancel_active = cancellation
+        profile_available = self.prototype or (self.profile.spectral_qualified and self.profile.verified_arc_free)
+        raw_available = (profile_available and self._operating_mode_valid and health.raw_profile_valid and
+                         self._usable_count(self.profile.raw_envelope) >= 2)
+        residual_available = (profile_available and cancellation and
+                              self._usable_count(self.profile.residual_envelope) >= 2)
+        if raw_available != self._raw_available:
+            self._clear_raw(index)
+        self._raw_available = raw_available
+        self._residual_available = residual_available
+        if not raw_available and not residual_available:
+            self._latch(ProtectionState.PROTECTION_UNAVAILABLE, "no_qualified_spectral_bandwidth", "health", index, decisions)
+        fast_enabled = (self.profile.fast_qualified and self.profile.impulse_tail_qualified and
+                        self.profile.fast_raw is not None and health.pwm_reference_valid and
+                        self._operating_mode_valid)
+        if fast_enabled != self._fast_active:
+            for path in ("raw", "residual"):
+                self._fast_banks[path].reset()
+                self._fast_buffer[path] = np.empty((0, 6))
+                self._fast_indices[path] = np.empty(0, dtype=np.int64)
+                self._temporal[path].fast_streak = 0
+            self._fast_valid_after = index + FastFilterBank.warmup_samples
+            if self._wrapper_first_valid_4m is not None:
+                self._fast_valid_after = max(self._fast_valid_after, self._wrapper_first_valid_4m + FastFilterBank.warmup_samples)
+        self._fast_active = fast_enabled
 
     def _spectral(self, path: str, values: np.ndarray, start_index: int,
                   valid_after: int) -> list[SpectralFrame]:
@@ -280,6 +329,7 @@ class Detector:
         index = frames[0].sample_index
         weak_any = False
         for frame in frames:
+            self._spectral_ready[frame.path] = True
             temporal = self._temporal[frame.path]
             weak = sum(band.weak for band in frame.bands) >= 2
             strong = sum(band.strong for band in frame.bands) >= 3
@@ -291,7 +341,6 @@ class Detector:
                 self._latch(ProtectionState.ARC_DETECTED, "spectral_strong", frame.path, index, decisions)
             if temporal.weak_samples >= 80_000:
                 self._latch(ProtectionState.ARC_DETECTED, "spectral_accumulated", frame.path, index, decisions)
-        self._ready = True
         if weak_any:
             self._clear_frames = 0
             if self._suspect_since is None:
@@ -322,9 +371,21 @@ class Detector:
             self._latch(ProtectionState.ARC_DETECTED, "fast_sustained", block.path, block.sample_index, decisions)
         self._timeout(block.sample_index, decisions)
 
-    def _result(self, decisions=(), spectral=(), fast=(), tiers=()) -> ProcessResult:
+    def _result(self, decisions=(), spectral=(), fast=(), tiers=None) -> ProcessResult:
+        if tiers is None:
+            tiers = []
+            if self._raw_available:
+                tiers.append("raw_spectral")
+            if self._residual_available:
+                tiers.append("residual_spectral")
+            if self._fast_active and self._raw_available:
+                tiers.append("raw_fast")
+            if self._fast_active and self._residual_available and self.profile.fast_residual is not None:
+                tiers.append("residual_fast")
+        ready = ((self._raw_available and self._spectral_ready["raw"]) or
+                 (self._residual_available and self._spectral_ready["residual"]))
         permit = (not self.prototype and self.profile.spectral_qualified and self.profile.verified_arc_free and
-                  self._operating_mode_valid and self._ready and not self.shutdown_latched and
+                  self._operating_mode_valid and ready and not self.shutdown_latched and
                   self.state in (ProtectionState.MONITORING, ProtectionState.SUSPECT) and
                   self._last_health.diagnostics_passed)
         return ProcessResult(self.state, self.shutdown_latched, permit, self._cancel_active,
@@ -349,10 +410,7 @@ class Detector:
             raise ValueError("edges require SwitchingEdge objects")
         decisions: list[Decision] = []
         self._last_health = health
-        if self._qualification_fault_pending:
-            decisions.append(Decision(start_index, start_index / DETECTION_RATE * 1e6,
-                                      ProtectionState.PROTECTION_UNAVAILABLE, "unqualified_profile", "health"))
-            self._qualification_fault_pending = False
+        self._qualification_decision(start_index, decisions)
         mode_reason = self._mode_reason(operating_mode)
         reason = self._health_reason(health, start_index) or mode_reason
         if reason:
@@ -361,33 +419,21 @@ class Detector:
             self._cancel_active = False
             self._fast_active = False
             self._raw_available = None
+            self._residual_available = False
             self._next_index = start_index + len(values)
             self._first_index = self._next_index
             self._temporal = {"raw": _Temporal(), "residual": _Temporal()}
             return self._result(decisions)
+        known_edges = all(edge.channel in {template.channel for template in self.profile.templates} for edge in edges)
+        self._apply_applicability(start_index, health, known_edges, decisions)
+        raw_available = self._raw_available
+        residual_available = self._residual_available
+        cancellation = self._cancel_active
         if not len(values):
-            return self._result()
+            return self._result(decisions)
         if self._first_index is None:
             self._first_index = start_index
         self._next_index = start_index + len(values)
-        mode_matches = self._operating_mode_valid
-        known_edges = all(edge.channel in {template.channel for template in self.profile.templates} for edge in edges)
-        cancellation = bool(self.profile.templates and self.profile.verified_arc_free and
-                            mode_matches and health.pwm_reference_valid and health.residual_profile_valid and known_edges)
-        if cancellation != self._cancel_active:
-            self._clear_residual()
-            self._residual_signal_valid_after = start_index + 512 + math.ceil(self.profile.edge_delay_samples)
-            self._residual_valid_after = self._residual_signal_valid_after + 254
-        self._cancel_active = cancellation
-        profile_available = self.prototype or (self.profile.spectral_qualified and self.profile.verified_arc_free)
-        raw_available = (profile_available and mode_matches and health.raw_profile_valid and
-                         self._usable_count(self.profile.raw_envelope) >= 2)
-        residual_available = profile_available and cancellation and self._usable_count(self.profile.residual_envelope) >= 2
-        if raw_available != self._raw_available:
-            self._clear_raw(start_index)
-        self._raw_available = raw_available
-        if not raw_available and not residual_available:
-            self._latch(ProtectionState.PROTECTION_UNAVAILABLE, "no_qualified_spectral_bandwidth", "health", start_index, decisions)
         # All inputs remain visible in raw evidence. No residual veto exists.
         raw_valid_after = max(self._first_index, self._raw_spectral_valid_after)
         if self._wrapper_first_valid_4m is not None:
@@ -398,18 +444,7 @@ class Detector:
             prediction = self._predictor.process(len(values), start_index, edges)
             residual = values - prediction
             spectral += self._spectral("residual", residual, start_index, self._residual_valid_after)
-        fast_enabled = (self.profile.fast_qualified and self.profile.impulse_tail_qualified and
-                        self.profile.fast_raw is not None and health.pwm_reference_valid and mode_matches)
-        if fast_enabled != self._fast_active:
-            for path in ("raw", "residual"):
-                self._fast_banks[path].reset()
-                self._fast_buffer[path] = np.empty((0, 6))
-                self._fast_indices[path] = np.empty(0, dtype=np.int64)
-                self._temporal[path].fast_streak = 0
-            self._fast_valid_after = start_index + FastFilterBank.warmup_samples
-            if self._wrapper_first_valid_4m is not None:
-                self._fast_valid_after = max(self._fast_valid_after, self._wrapper_first_valid_4m + FastFilterBank.warmup_samples)
-        self._fast_active = fast_enabled
+        fast_enabled = self._fast_active
         fast = []
         if fast_enabled:
             if self._wrapper_first_valid_4m is not None:
@@ -446,17 +481,8 @@ class Detector:
                 if grouped:
                     self._consume_spectral(grouped, decisions)
         self._timeout(self._next_index, decisions)
-        tiers = []
-        if raw_available:
-            tiers.append("raw_spectral")
-        if residual_available:
-            tiers.append("residual_spectral")
-        if fast_enabled and raw_available:
-            tiers.append("raw_fast")
-        if fast_enabled and residual_available and self.profile.fast_residual is not None:
-            tiers.append("residual_fast")
         return self._result(decisions, sorted(spectral, key=lambda frame: (frame.sample_index, frame.path)),
-                            sorted(fast, key=lambda block: (block.sample_index, block.path)), tiers)
+                            sorted(fast, key=lambda block: (block.sample_index, block.path)))
 
     def process20m(self, samples_20m: Iterable[float], *, start_index: int,
                    edges: Iterable[SwitchingEdge] = (), health: AcquisitionHealth | None = None,
@@ -475,28 +501,25 @@ class Detector:
         health = AcquisitionHealth() if health is None else health
         if not isinstance(health, AcquisitionHealth):
             raise ValueError("health must be an AcquisitionHealth")
+        decisions: list[Decision] = []
+        physical4 = start_index // 5 if start_index % 5 == 0 else start_index / 5
+        self._last_health = health
+        self._qualification_decision(physical4, decisions)
         if self._20_next_index is not None and self._20_next_index != start_index:
             health = AcquisitionHealth(**{**health.__dict__, "continuous": False})
         mode_reason = self._mode_reason(operating_mode)
         reason = self._health_reason(health, self._next_index if self._next_index is not None else start_index // 5) or mode_reason
         if reason:
-            decisions: list[Decision] = []
             # A raw ADC fault can occur between 4 MSPS sample ticks. Keep its
             # actual 20 MSPS time, rather than a stale completed-/5 index.
-            physical4 = start_index // 5 if start_index % 5 == 0 else start_index / 5
-            self._last_health = health
-            if self._qualification_fault_pending:
-                decisions.append(Decision(physical4, physical4 / DETECTION_RATE * 1e6,
-                                          ProtectionState.PROTECTION_UNAVAILABLE, "unqualified_profile", "health"))
-                self._qualification_fault_pending = False
             self._latch(ProtectionState.PROTECTION_UNAVAILABLE, reason, "health", physical4, decisions)
             self._reset_streams()
             self._cancel_active = False
             self._fast_active = False
             self._raw_available = None
+            self._residual_available = False
             self._next_index = None
             self._first_index = None
-            self._ready = False
             self._suspect_since = None
             self._temporal = {"raw": _Temporal(), "residual": _Temporal()}
             self._20_next_index = start_index + len(values)
@@ -505,6 +528,8 @@ class Detector:
         if any(not isinstance(edge, SwitchingEdge) or
                not start_index / 5 <= edge.sample_index < (start_index + len(values)) / 5 for edge in incoming):
             raise ValueError("ADC wrapper edges must be within the supplied physical sample interval")
+        known_edges = all(edge.channel in {template.channel for template in self.profile.templates} for edge in incoming)
+        self._apply_applicability(physical4, health, known_edges, decisions)
         down = self._first_decimator.process(values, start_index)
         if self._wrapper_first_valid_4m is None and down.valid.any():
             self._wrapper_first_valid_4m = int(down.sample_indices[down.valid][0]) // 5
@@ -516,7 +541,7 @@ class Detector:
         count = int(complete.sum())
         self._20_next_index = end20
         if not count:
-            return self._result()
+            return self._result(decisions)
         first4 = int(self._20_pending_indices[0])
         end4 = int(self._20_pending_indices[count - 1]) + 1
         ready_edges = tuple(edge for edge in self._20_pending_edges if first4 <= edge.sample_index < end4)
@@ -524,4 +549,5 @@ class Detector:
         ready_values = self._20_pending_values[:count]
         self._20_pending_values = self._20_pending_values[count:]
         self._20_pending_indices = self._20_pending_indices[count:]
-        return self.process(ready_values, start_index=first4, edges=ready_edges, health=health, operating_mode=operating_mode)
+        result = self.process(ready_values, start_index=first4, edges=ready_edges, health=health, operating_mode=operating_mode)
+        return replace(result, decisions=tuple(decisions) + result.decisions) if decisions else result

@@ -17,3 +17,7 @@
   Calibration excludes pre-capture predictor tails before fitting and residual
   FIR/envelope/floor estimation. Publish provenance before the profile with
   exclusive creation and rollback; replay retains tier availability/history.
+- Readiness is per spectral path and resets with its history. Apply coverage
+  changes before /5 buffering; preserve sample-local invalid-word timing and
+  valid prefixes. Quantised coefficients must fit after rounding, not just
+  before it. Empty and partial calls retain health/tier telemetry.

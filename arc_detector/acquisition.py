@@ -167,33 +167,44 @@ class CaptureProcessor:
         if type(start_index) is not int or start_index < 0:
             raise ValueError("raw capture start requires a nonnegative integer")
         try:
-            high = decode_words(high_words, mode=self.mode).counts
-            low = decode_words(low_words, mode=self.mode).counts
+            high_input, low_input = np.asarray(high_words), np.asarray(low_words)
+            if (high_input.ndim != 1 or low_input.ndim != 1
+                    or high_input.shape != low_input.shape or not high_input.size
+                    or high_input.dtype.kind not in "iu" or low_input.dtype.kind not in "iu"):
+                raise ValueError("capture requires equal nonempty integer word arrays")
+            # A numeric out-of-range word is a local acquisition failure, not
+            # grounds to discard earlier valid samples in the host vector.
+            invalid = ((high_input < 0) | (high_input > 0xFFFFFF) |
+                       (low_input < 0) | (low_input > 0xFFFFFF))
+            high = decode_words(np.where(invalid, 0, high_input), mode=self.mode).counts
+            low = decode_words(np.where(invalid, 0, low_input), mode=self.mode).counts
             chosen = select_gain(high, low, self.calibration)
-            if not chosen.samples.size or not np.all(np.isfinite(chosen.samples)):
-                raise ValueError("empty or nonfinite raw capture")
+            invalid |= ~np.isfinite(chosen.samples)
+            samples = np.where(invalid, 0.0, chosen.samples)
         except (ValueError, TypeError, OverflowError):
             bad = AcquisitionHealth(**{**health.__dict__, "frame_valid": False})
             return self.detector.process20m((), start_index=start_index,
                                            health=bad, operating_mode=operating_mode)
-        # Split only at acquisition-health transitions. Otherwise a late clipped
-        # sample in a large host chunk would be reported at the chunk's start,
-        # preempting genuine earlier decisions and fabricating latency.
+        # Split at local frame-validity and clipping transitions. Placeholders
+        # carry failure health and their actual length: continuity advances over
+        # bad words, while filters never treat them as healthy evidence.
         edges = tuple(edges)
         clipped = chosen.unusable
-        boundaries = np.concatenate(([0], np.flatnonzero(clipped[1:] != clipped[:-1]) + 1,
+        flags = invalid.astype(np.uint8) | (clipped.astype(np.uint8) << 1)
+        boundaries = np.concatenate(([0], np.flatnonzero(flags[1:] != flags[:-1]) + 1,
                                      [len(clipped)]))
         results = []
         for first, end in zip(boundaries[:-1], boundaries[1:]):
             first, end = int(first), int(end)
             selected_health = AcquisitionHealth(**{
                 **health.__dict__,
+                "frame_valid": health.frame_valid and not bool(invalid[first]),
                 "both_gains_clipped": health.both_gains_clipped or bool(clipped[first]),
             })
             raw_first, raw_end = start_index + first, start_index + end
             segment_edges = tuple(e for e in edges if raw_first / 5 <= e.sample_index < raw_end / 5)
             results.append(self.detector.process20m(
-                chosen.samples[first:end], start_index=raw_first, edges=segment_edges,
+                samples[first:end], start_index=raw_first, edges=segment_edges,
                 health=selected_health, operating_mode=operating_mode))
         return replace(results[-1],
                        decisions=tuple(d for result in results for d in result.decisions),

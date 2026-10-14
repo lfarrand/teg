@@ -142,6 +142,64 @@ class AcquisitionTests(unittest.TestCase):
         self.assertEqual(outcomes[0], outcomes[1])
         self.assertEqual(outcomes[0], [("both_gains_clipped", 6000, 1500.0)])
 
+    def test_late_invalid_word_preserves_prefix_time_and_consumed_continuity(self):
+        from arc_detector.detector import Detector
+        from arc_detector.profile import Profile, SpectralEnvelope
+
+        envelope = SpectralEnvelope((1.0,) * 4, (1.0,) * 513)
+        profile = Profile("capture", "string-1", "fixed", envelope, envelope)
+        for bad_word, bad_index in ((-1, 30_000), (0x1000000, 30_000),
+                                    (-1, 30_003), (0x1000000, 30_003)):
+            outcomes = []
+            for chunk_size in (40_000, 1_000):
+                with self.subTest(bad_word=bad_word, bad_index=bad_index, chunk_size=chunk_size):
+                    words = np.zeros(40_000, dtype=np.int64)
+                    words[bad_index] = bad_word
+                    adapter = CaptureProcessor(Detector(profile, prototype=True),
+                                               mode=Randomization.NONE)
+                    decisions = []
+                    for start in range(0, len(words), chunk_size):
+                        result = adapter.process(words[start:start + chunk_size],
+                                                 np.zeros(min(chunk_size, len(words) - start), dtype=np.int64),
+                                                 start_index=start, operating_mode="fixed")
+                        decisions.extend(result.decisions)
+                    self.assertEqual(adapter.detector._20_next_index, 40_000)
+                    # Continue sensing after the invalid sample and the latch.
+                    after = adapter.process(np.zeros(100_000, dtype=np.int64),
+                                            np.zeros(100_000, dtype=np.int64),
+                                            start_index=40_000, operating_mode="fixed")
+                    self.assertGreater(len(after.spectral_frames), 0)
+                    self.assertFalse(after.permit)
+                    outcomes.append([(d.reason, d.sample_index, d.timestamp_us) for d in decisions])
+            self.assertEqual(outcomes[0], outcomes[1])
+            self.assertEqual(outcomes[0], [("invalid_adc_frame", bad_index / 5,
+                                           bad_index / 20_000_000 * 1e6)])
+
+    def test_late_invalid_word_cannot_preempt_an_earlier_arc(self):
+        from arc_detector.detector import Detector, ProtectionState
+        from arc_detector.profile import Profile, SpectralEnvelope
+
+        envelope = SpectralEnvelope((1e-6,) * 4, (1e-12,) * 513)
+        profile = Profile("capture", "string-1", "fixed", envelope, envelope,
+                          verified_arc_free=True, spectral_qualified=True)
+        counts = np.random.default_rng(322).normal(0, 100, 200_000).round().astype(np.int64)
+        high = (((counts * 16) & 0x3FFFF) << 6).astype(np.int64)
+        low = ((counts & 0x3FFFF) << 6).astype(np.int64)
+        low[150_000] = 0x1000000
+        outcomes = []
+        for chunk_size in (200_000, 1_000):
+            adapter = CaptureProcessor(Detector(profile), mode=Randomization.NONE)
+            decisions = []
+            for start in range(0, len(high), chunk_size):
+                result = adapter.process(high[start:start + chunk_size], low[start:start + chunk_size],
+                                         start_index=start, operating_mode="fixed")
+                decisions.extend(result.decisions)
+            self.assertEqual(result.state, ProtectionState.ARC_DETECTED)
+            self.assertEqual(decisions[0].state, ProtectionState.ARC_DETECTED)
+            self.assertLess(decisions[0].timestamp_us, 150_000 / 20_000_000 * 1e6)
+            outcomes.append([(d.reason, d.sample_index, d.timestamp_us) for d in decisions])
+        self.assertEqual(outcomes[0], outcomes[1])
+
 
 if __name__ == "__main__":
     unittest.main()

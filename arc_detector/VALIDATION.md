@@ -8,11 +8,11 @@ fixed before this validation. Commands from the repository root:
 python -m unittest discover -s arc_detector/tests -p 'test_*.py' -v
 python -m unittest discover -s scripts/tests -p 'test_*.py' -v
 python scripts/verify_ci_policy.py
-python -m arc_detector demo --output-dir .pio/arc-demo-reviewed-20261014
+python -m arc_detector demo --output-dir .pio/arc-demo-final-20261014
 git diff --check
 ```
 
-Results: 83 arc reference tests and 52 existing release-tooling tests passed;
+Results: 94 arc reference tests and 52 existing release-tooling tests passed;
 workflow policy, synthetic CLI demo and whitespace checks passed. This is not a
 firmware test census. No firmware/PlatformIO inputs or TEG power-control paths
 were modified, so these results make no ISR, OUTEN or power-stage claim.
@@ -44,10 +44,17 @@ All names below are executable unittest cases under `arc_detector/tests`.
 | No partial or overwritten calibration pair | `test_calibration_pair_collision_preserves_existing_file_without_partial_profile`, `test_calibration_pair_second_publish_failure_rolls_back_both_artifacts`, `test_calibration_pair_raced_collision_retains_new_operator_file`, `test_calibration_pair_success_has_complete_profile_and_provenance` |
 | Explicit unavailable, spectral-only and full tier telemetry | `test_tier_telemetry_distinguishes_unavailable_robust_only_and_full` |
 | Pre-capture tails cannot inflate residual fit, thresholds or floors | `test_calibration_excludes_unmodelled_prefix_before_residual_filters_and_floor`, `test_residual_calibration_requires_eight_frames_after_predictor_warmup`, `test_fit_settling_samples_must_leave_valid_objective` |
+| Invalid ADC words preserve earlier decisions and actual fault time | `test_late_invalid_word_preserves_prefix_time_and_consumed_continuity`, `test_late_invalid_word_cannot_preempt_an_earlier_arc` |
+| Rounded coefficients remain representable in signed Q1.23 | `test_q1_23_positive_rounding_cannot_overflow_the_signed_integer`, `test_q1_23_lower_boundary_remains_representable` |
+| Only currently applicable paths with completed frames can grant permit | `test_fresh_residual_path_cannot_inherit_raw_frame_readiness`, `test_fresh_raw_path_cannot_inherit_residual_frame_readiness`, `test_raw_readiness_survives_only_cancellation_changes` |
+| Sub-decimation applicability/reference changes are retained | `test_one_adc_sample_coverage_loss_latches_before_partial_interval_is_completed`, `test_adc_reference_reset_persists_across_incomplete_decimation_interval` |
+| Empty/partial calls retain qualification and tier telemetry | `test_initial_empty_calls_emit_pending_unqualified_decision_once`, `test_partial_adc_calls_report_current_available_tiers` |
 
-All four automated PR-review findings (mode applicability, calibration-pair
-publication, tier reporting and pre-capture residual contamination) were
-reproduced, fixed and independently rechecked. Prefix exclusion was also
+Automated PR-review findings (mode applicability, calibration-pair publication,
+tier reporting, pre-capture residual contamination, path readiness, sub-interval
+coverage loss, local ADC word failures, empty-input reporting and coefficient
+rounding overflow) were reproduced, fixed and independently rechecked.
+Prefix exclusion was also
 compared against the original-stream causal FIR at multiple absolute sample
 phases; calibration retains the decimator's physical phase.
 

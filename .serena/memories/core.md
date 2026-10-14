@@ -38,4 +38,5 @@ Pins, languages, and CI tool versions: `mem:tech_stack`.
 Local/Windows commands: `mem:suggested_commands`.
 Header/test/build-flag landmines: `mem:conventions`.
 What to run before calling a change done: `mem:task_completion`.
+Independent Python arc reference, qualification boundaries and ADC/replay rates: `mem:arc_reference`.
 PWM inhibit/release races, ACMP vs software gates, thermal/OneWire, preset IRQ, restoreSecrets: `mem:pwm_safety`.

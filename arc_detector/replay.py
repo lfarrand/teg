@@ -341,6 +341,8 @@ def replay(path: str | Path, metadata: RecordingMetadata, profile: Profile, *,
     edge_position = 0
     total_samples = 0
     spectral_frames = fast_blocks = 0
+    tier_coverage_transitions = []
+    previous_tiers = None
     last = None
     for chunk in read_chunks(path, metadata, chunk_samples):
         limit = chunk.start_index + chunk.current.size
@@ -353,6 +355,12 @@ def replay(path: str | Path, metadata: RecordingMetadata, profile: Profile, *,
         last = detector.process(chunk.current, start_index=chunk.start_index,
                                 edges=tuple(chunk_edges), health=health,
                                 operating_mode=metadata.operating_mode)
+        tiers = tuple(last.available_tiers)
+        if tiers != previous_tiers:
+            tier_coverage_transitions.append({"sample_index": chunk.start_index,
+                                              "timestamp_s": chunk.start_index / SAMPLE_RATE,
+                                              "available_tiers": list(tiers)})
+            previous_tiers = tiers
         for decision in last.decisions:
             plain = _plain(decision)
             plain["timestamp_s"] = plain["timestamp_us"] / 1_000_000
@@ -367,6 +375,8 @@ def replay(path: str | Path, metadata: RecordingMetadata, profile: Profile, *,
                    "spectral_frames": spectral_frames, "fast_blocks": fast_blocks,
                    "final_state": _plain(last.state), "shutdown_latched": last.shutdown_latched,
                    "permit": last.permit, "cancellation_active": last.cancellation_active,
+                   "available_tiers": list(last.available_tiers),
+                   "tier_coverage_transitions": tier_coverage_transitions,
                    "decisions": decisions})
     report["known_benign_observation_s"] = (metadata.sample_count / SAMPLE_RATE if metadata.verified_arc_free
                                             else sum(event.end_s - event.onset_s for event in metadata.events if event.kind == "nuisance"))

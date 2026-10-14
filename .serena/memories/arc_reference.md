@@ -12,3 +12,8 @@
   PRBS appended bit or conversion-LSB XOR. Tail user bits are opaque, not padding.
 - Keep the scientific reference out of `src/`, PlatformIO and the TEG safety
   path. Raw20M capture and normalised4M replay are distinct input boundaries.
+- Every processing call explicitly binds an exact operating mode; omission or
+  mismatch latches unavailable, including before the first ADC decimator output.
+  Calibration excludes pre-capture predictor tails before fitting and residual
+  FIR/envelope/floor estimation. Publish provenance before the profile with
+  exclusive creation and rollback; replay retains tier availability/history.

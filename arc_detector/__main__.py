@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 from pathlib import Path
 import sys
+import tempfile
 import zipfile
 import numpy as np
 
@@ -29,15 +32,51 @@ def _calibration_from_recording(recording, metadata, profile_id):
 
 
 def _write_calibration(output, result, metadata):
-    write_json(output, result.profile.to_dict())
-    write_json(str(output) + ".calibration.json", {
+    profile_path = Path(output)
+    provenance_path = Path(str(output) + ".calibration.json")
+    provenance = {
         "schema_version": 1, "profile_id": result.profile.profile_id,
         "provenance": metadata.provenance, "synthetic": metadata.synthetic,
         "verified_arc_free_assertion": metadata.verified_arc_free,
         "hardware_qualification": False, "spectral_frames": result.spectral_frames,
         "fast_blocks": result.fast_blocks, "fit_relative_rms": result.fit_relative_rms,
         "solver_stop": result.solver_stop, "solver_iterations": result.solver_iterations,
-        "note": "Offline fit on this recording; qualify on independent held-out hardware events before deployment."})
+        "note": "Offline fit on this recording; qualify on independent held-out hardware events before deployment."}
+    # Publish provenance first and the loadable profile last. Fully stage both
+    # files before publication, then use exclusive atomic links so a concurrent
+    # writer cannot be overwritten between the preflight and publication.
+    targets = (provenance_path, profile_path)
+    values = (provenance, result.profile.to_dict())
+    for target in targets:
+        if target.exists() or target.is_symlink():
+            raise FileExistsError(f"calibration output already exists: {target}")
+    contents = [json.dumps(value, indent=2, allow_nan=False) + "\n" for value in values]
+    staged = []
+    published = False
+    try:
+        for target, content in zip(targets, contents):
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                             prefix=".arc-calibration-", suffix=".tmp",
+                                             dir=target.parent, delete=False) as temporary:
+                staged.append(Path(temporary.name))
+                temporary.write(content)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+        for temporary, target in zip(staged, targets):
+            os.link(temporary, target)
+        published = True
+    finally:
+        if not published:
+            # Only remove final files still referring to our own staged inode;
+            # a collision or replacement created by another writer is retained.
+            for temporary, target in zip(staged, targets):
+                try:
+                    if target.exists() and os.path.samefile(temporary, target):
+                        target.unlink()
+                except FileNotFoundError:
+                    pass
+        for temporary in staged:
+            temporary.unlink(missing_ok=True)
 
 
 def _save_npz(path, arrays):

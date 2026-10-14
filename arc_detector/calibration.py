@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import numpy as np
 from scipy.signal import fftconvolve
 from scipy.sparse.linalg import LinearOperator, lsqr
@@ -54,18 +55,23 @@ def edge_impulses(count: int, edges: tuple[SwitchingEdge, ...], channels: tuple[
 
 def fit_templates(samples: np.ndarray, edges: tuple[SwitchingEdge, ...], *,
                   start_index: int = 0, edge_delay_samples: float = 12.6,
-                  max_iterations: int = 160) -> tuple[tuple[EdgeTemplate, ...], np.ndarray, int, int]:
+                  max_iterations: int = 160, settling_samples: int = 0
+                  ) -> tuple[tuple[EdgeTemplate, ...], np.ndarray, int, int]:
     """Joint bounded-memory convolution least squares for all edge polarities.
 
     No dense N-by-(channels*1024) design matrix is constructed. Some repetitive
     schedules are rank deficient; the result is a minimum-norm prediction model,
     not an identified physical impulse response. Held-out recordings must validate it.
+    Exclude any unmodelled pre-capture response from the fit objective by setting
+    settling_samples; predictions retain the original full-stream alignment.
     """
     x = np.asarray(samples, dtype=np.float64)
     if x.ndim != 1 or not 4096 <= x.size <= MAX_CALIBRATION_SAMPLES or not np.isfinite(x).all():
         raise ValueError("healthy calibration requires 4096..2000000 finite samples")
     if type(max_iterations) is not int or not 1 <= max_iterations <= 1000:
         raise ValueError("solver iterations must be bounded within 1..1000")
+    if type(settling_samples) is not int or not 0 <= settling_samples < x.size:
+        raise ValueError("settling samples must leave a nonempty fit interval")
     if isinstance(edge_delay_samples, bool) or not isinstance(edge_delay_samples, (int, float)) or not np.isfinite(edge_delay_samples) or not 0 <= edge_delay_samples <= 512:
         raise ValueError("edge delay must be finite and within 0..512 samples")
     channels = tuple(sorted({edge.channel for edge in edges}))
@@ -94,9 +100,17 @@ def fit_templates(samples: np.ndarray, edges: tuple[SwitchingEdge, ...], *,
             result.append(correlation[x.size - 1:x.size - 1 + TAPS])
         return np.concatenate(result)
 
-    matrix = LinearOperator((x.size, variables), matvec=multiply, rmatvec=transpose,
+    def settled_multiply(coefficients):
+        return multiply(coefficients)[settling_samples:]
+
+    def settled_transpose(values):
+        return transpose(np.pad(values, (settling_samples, 0)))
+
+    matrix = LinearOperator((x.size - settling_samples, variables),
+                            matvec=settled_multiply, rmatvec=settled_transpose,
                             dtype=np.float64)
-    fit = lsqr(matrix, x, damp=1e-6, atol=1e-7, btol=1e-7, iter_lim=max_iterations)
+    fit = lsqr(matrix, x[settling_samples:], damp=1e-6, atol=1e-7, btol=1e-7,
+               iter_lim=max_iterations)
     if fit[1] not in (1, 2, 4, 5):
         raise ValueError(f"template solver did not converge (stop={fit[1]})")
     kernels = fit[0].reshape(-1, TAPS)
@@ -145,15 +159,26 @@ def calibrate(samples: np.ndarray, edges: tuple[SwitchingEdge, ...], *,
     if not all(isinstance(value, str) and value.strip() for value in (profile_id, node_id, operating_mode)):
         raise ValueError("profile, node and known operating mode must be named")
     x = np.asarray(samples, dtype=np.float64)
+    if (isinstance(edge_delay_samples, bool) or
+            not isinstance(edge_delay_samples, (int, float)) or
+            not np.isfinite(edge_delay_samples) or not 0 <= edge_delay_samples <= 512):
+        raise ValueError("edge delay must be finite and within 0..512 samples")
+    # Metadata cannot carry edges before start_index. Their unknown responses
+    # must not bias either the fit or the residual thresholds. Start the FIRs
+    # only after the complete predictor tail, then apply their own settling.
+    predictor_settling = TAPS + math.ceil(edge_delay_samples)
     templates, prediction, stop, iterations = fit_templates(
-        x, tuple(edges), start_index=start_index, edge_delay_samples=edge_delay_samples)
+        x, tuple(edges), start_index=start_index, edge_delay_samples=edge_delay_samples,
+        settling_samples=predictor_settling)
     raw, fast_raw, frames, blocks = _envelopes(x, start_index, excluded_bins)
-    residual, fast_residual, _, _ = _envelopes(x - prediction, start_index, excluded_bins)
+    settled_residual = (x - prediction)[predictor_settling:]
+    residual, fast_residual, _, _ = _envelopes(
+        settled_residual, start_index + predictor_settling, excluded_bins)
     profile = Profile(profile_id=profile_id, node_id=node_id, operating_mode=operating_mode,
                       raw_envelope=raw, residual_envelope=residual,
                       fast_raw=fast_raw, fast_residual=fast_residual, templates=templates,
                       verified_arc_free=True, spectral_qualified=False, fast_qualified=False,
                       impulse_tail_qualified=False, edge_delay_samples=edge_delay_samples)
-    relative = float(np.sqrt(np.mean((x - prediction) ** 2)) /
-                     max(np.sqrt(np.mean(x * x)), 1e-24))
+    relative = float(np.sqrt(np.mean(settled_residual ** 2)) /
+                     max(np.sqrt(np.mean(x[predictor_settling:] ** 2)), 1e-24))
     return CalibrationResult(profile, relative, frames, blocks, stop, iterations)

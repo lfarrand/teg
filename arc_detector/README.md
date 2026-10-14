@@ -65,6 +65,10 @@ sensor gains and installation characteristics. Selection/validation of that
 cell from real slow sensors belongs to the acquisition controller. It must set
 `raw_profile_valid=false` outside the raw envelope. An invalid residual model
 disables subtraction while a still valid raw model continues monitoring.
+Every processing call must supply the exact profile mode; an omitted or
+mismatched mode latches protection unavailability, even if raw validity was
+otherwise asserted. A missing PWM reference can still leave matching raw
+spectral coverage available.
 
 Fit rising/falling responses only from verified healthy samples. Stored
 coefficients and healthy raw/residual envelopes are immutable during replay.
@@ -72,6 +76,11 @@ Runtime learning, arbitrary startup baseline learning, phase-independent
 subtraction and use of the low-gain channel as a noise-only reference are excluded.
 Profiles include distinct qualification and impulse-tail declarations; these
 are trusted engineering inputs, not a certificate or a signing mechanism.
+Calibration excludes the unmodelled pre-capture predictor tail from fitting
+and residual envelope generation (512 + ceil(edge delay), initially 525 samples
+at 4 MSPS). Residual spectral and fast filters then complete their own warm-up;
+at least eight valid spectral frames must remain. Raw calibration retains its
+uncancelled samples. The fit RMS describes only the settled fitting interval.
 
 ## Processing and protection behavior
 
@@ -102,6 +111,9 @@ qualification. The Python reference is not a real-time protection implementation
 The reporter separates independently supplied onset, detector decision,
 shutdown command, terminal current-zero and actual extinction labels. Missed
 events and nuisance shutdowns are separate from per-frame classifications.
+Replay reports retain final tier availability and a sample-clock coverage
+transition history, so reduced coverage is explicit rather than inferred from
+the absence of fast blocks.
 
 ## What follows this deliverable
 

@@ -114,6 +114,7 @@ class Detector:
         self._suspect_since: int | None = None
         self._clear_frames = 0
         self._last_health = AcquisitionHealth()
+        self._operating_mode_valid = False
         self._temporal = {"raw": _Temporal(), "residual": _Temporal()}
         self._next_index: int | None = None
         self._first_index: int | None = None
@@ -185,6 +186,14 @@ class Detector:
         if not health.diagnostics_passed:
             return "diagnostics_failed"
         return None
+
+    def _mode_reason(self, operating_mode: str | None) -> str | None:
+        """Bind all envelopes to an explicitly supplied, exact operating mode."""
+        self._operating_mode_valid = (type(operating_mode) is str and
+                                      operating_mode == self.profile.operating_mode)
+        if self._operating_mode_valid:
+            return None
+        return "missing_operating_mode" if operating_mode is None else "operating_mode_mismatch"
 
     @staticmethod
     def _usable_count(envelope) -> int:
@@ -315,7 +324,7 @@ class Detector:
 
     def _result(self, decisions=(), spectral=(), fast=(), tiers=()) -> ProcessResult:
         permit = (not self.prototype and self.profile.spectral_qualified and self.profile.verified_arc_free and
-                  self._ready and not self.shutdown_latched and
+                  self._operating_mode_valid and self._ready and not self.shutdown_latched and
                   self.state in (ProtectionState.MONITORING, ProtectionState.SUSPECT) and
                   self._last_health.diagnostics_passed)
         return ProcessResult(self.state, self.shutdown_latched, permit, self._cancel_active,
@@ -324,6 +333,11 @@ class Detector:
     def process(self, samples_4m: Iterable[float], *, start_index: int,
                 edges: Iterable[SwitchingEdge] = (), health: AcquisitionHealth | None = None,
                 operating_mode: str | None = None) -> ProcessResult:
+        """Process 4 MSPS samples under an explicitly supplied profile mode.
+
+        A missing or different mode latches unavailable; the profile's own mode
+        is never evidence of the currently observed operating conditions.
+        """
         if type(start_index) is not int or start_index < 0:
             raise ValueError("start_index requires a nonnegative integer at 4 MSPS")
         health = AcquisitionHealth() if health is None else health
@@ -339,7 +353,8 @@ class Detector:
             decisions.append(Decision(start_index, start_index / DETECTION_RATE * 1e6,
                                       ProtectionState.PROTECTION_UNAVAILABLE, "unqualified_profile", "health"))
             self._qualification_fault_pending = False
-        reason = self._health_reason(health, start_index)
+        mode_reason = self._mode_reason(operating_mode)
+        reason = self._health_reason(health, start_index) or mode_reason
         if reason:
             self._latch(ProtectionState.PROTECTION_UNAVAILABLE, reason, "health", start_index, decisions)
             self._reset_streams()
@@ -355,7 +370,7 @@ class Detector:
         if self._first_index is None:
             self._first_index = start_index
         self._next_index = start_index + len(values)
-        mode_matches = operating_mode is None or operating_mode == self.profile.operating_mode
+        mode_matches = self._operating_mode_valid
         known_edges = all(edge.channel in {template.channel for template in self.profile.templates} for edge in edges)
         cancellation = bool(self.profile.templates and self.profile.verified_arc_free and
                             mode_matches and health.pwm_reference_valid and health.residual_profile_valid and known_edges)
@@ -365,7 +380,8 @@ class Detector:
             self._residual_valid_after = self._residual_signal_valid_after + 254
         self._cancel_active = cancellation
         profile_available = self.prototype or (self.profile.spectral_qualified and self.profile.verified_arc_free)
-        raw_available = profile_available and health.raw_profile_valid and self._usable_count(self.profile.raw_envelope) >= 2
+        raw_available = (profile_available and mode_matches and health.raw_profile_valid and
+                         self._usable_count(self.profile.raw_envelope) >= 2)
         residual_available = profile_available and cancellation and self._usable_count(self.profile.residual_envelope) >= 2
         if raw_available != self._raw_available:
             self._clear_raw(start_index)
@@ -449,6 +465,8 @@ class Detector:
 
         Complete five-ADC-sample intervals are held together so edge ownership
         remains invariant even when a caller partitions data inside a /5 block.
+        ``operating_mode`` must explicitly match the profile, including chunks
+        too small to produce a decimated output sample.
         Do not mix this wrapper and direct ``process`` on the same instance.
         """
         if type(start_index) is not int or start_index < 0:
@@ -459,7 +477,8 @@ class Detector:
             raise ValueError("health must be an AcquisitionHealth")
         if self._20_next_index is not None and self._20_next_index != start_index:
             health = AcquisitionHealth(**{**health.__dict__, "continuous": False})
-        reason = self._health_reason(health, self._next_index if self._next_index is not None else start_index // 5)
+        mode_reason = self._mode_reason(operating_mode)
+        reason = self._health_reason(health, self._next_index if self._next_index is not None else start_index // 5) or mode_reason
         if reason:
             decisions: list[Decision] = []
             # A raw ADC fault can occur between 4 MSPS sample ticks. Keep its

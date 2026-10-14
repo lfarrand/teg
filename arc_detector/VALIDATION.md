@@ -8,11 +8,11 @@ fixed before this validation. Commands from the repository root:
 python -m unittest discover -s arc_detector/tests -p 'test_*.py' -v
 python -m unittest discover -s scripts/tests -p 'test_*.py' -v
 python scripts/verify_ci_policy.py
-python -m arc_detector demo --output-dir .pio/arc-demo-20261014
+python -m arc_detector demo --output-dir .pio/arc-demo-reviewed-20261014
 git diff --check
 ```
 
-Results: 71 arc reference tests and 52 existing release-tooling tests passed;
+Results: 83 arc reference tests and 52 existing release-tooling tests passed;
 workflow policy, synthetic CLI demo and whitespace checks passed. This is not a
 firmware test census. No firmware/PlatformIO inputs or TEG power-control paths
 were modified, so these results make no ISR, OUTEN or power-stage claim.
@@ -40,6 +40,16 @@ All names below are executable unittest cases under `arc_detector/tests`.
 | Labels do not leak into detection | `test_labels_cannot_change_detector_decisions_and_chunks_do_not_change_time` |
 | Health shutdown, arc decision and extinction are separate | `test_health_shutdown_is_protection_without_an_arc_classification`, `test_event_metrics_do_not_equate_terminal_zero_and_extinction` |
 | Qualification and prototype permit defaults | `test_unqualified_mode_rejects_permit_and_prototype_never_issues_permit`, `test_default_cli_never_claims_unqualified_protection_and_prototype_is_explicit` |
+| Explicit mode binding and latched mode loss | `test_qualified_profile_requires_explicit_exact_operating_mode`, `test_mode_loss_revokes_existing_permit_and_requires_explicit_reset`, `test_adc_wrapper_checks_mode_before_first_complete_decimation_interval`, `test_prototype_cannot_treat_unknown_mode_as_matching_envelopes` |
+| No partial or overwritten calibration pair | `test_calibration_pair_collision_preserves_existing_file_without_partial_profile`, `test_calibration_pair_second_publish_failure_rolls_back_both_artifacts`, `test_calibration_pair_raced_collision_retains_new_operator_file`, `test_calibration_pair_success_has_complete_profile_and_provenance` |
+| Explicit unavailable, spectral-only and full tier telemetry | `test_tier_telemetry_distinguishes_unavailable_robust_only_and_full` |
+| Pre-capture tails cannot inflate residual fit, thresholds or floors | `test_calibration_excludes_unmodelled_prefix_before_residual_filters_and_floor`, `test_residual_calibration_requires_eight_frames_after_predictor_warmup`, `test_fit_settling_samples_must_leave_valid_objective` |
+
+All four automated PR-review findings (mode applicability, calibration-pair
+publication, tier reporting and pre-capture residual contamination) were
+reproduced, fixed and independently rechecked. Prefix exclusion was also
+compared against the original-stream causal FIR at multiple absolute sample
+phases; calibration retains the decimator's physical phase.
 
 ## Numerical observations and limits
 

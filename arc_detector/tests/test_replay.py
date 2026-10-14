@@ -2,6 +2,7 @@ import copy
 import csv
 import json
 import io
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,7 +11,7 @@ import zipfile
 
 import numpy as np
 
-from arc_detector.__main__ import main
+from arc_detector.__main__ import _write_calibration, main
 from arc_detector.calibration import calibrate
 from arc_detector.examples.synthetic import make_recording
 from arc_detector.profile import Profile, SwitchingEdge
@@ -198,10 +199,12 @@ class PipelineReplayTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         metadata, arrays = make_recording(count=120_000)
-        cls.profile = calibrate(arrays["current_high"], tuple(SwitchingEdge(**edge) for edge in metadata["edges"]),
-                                profile_id="test", node_id=metadata["node_id"],
-                                operating_mode=metadata["operating_mode"], verified_arc_free=True,
-                                provenance=metadata["provenance"]).profile
+        cls.calibration = calibrate(arrays["current_high"], tuple(SwitchingEdge(**edge) for edge in metadata["edges"]),
+                                    profile_id="test", node_id=metadata["node_id"],
+                                    operating_mode=metadata["operating_mode"], verified_arc_free=True,
+                                    provenance=metadata["provenance"])
+        cls.profile = cls.calibration.profile
+        cls.healthy_metadata = RecordingMetadata.from_dict(metadata)
 
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -260,6 +263,14 @@ class PipelineReplayTests(unittest.TestCase):
             self.assertEqual(decision["sample_index"], clipped_index)
             self.assertAlmostEqual(decision["timestamp_s"], clipped_index / 4_000_000)
         self.assertEqual(reports[0]["decisions"], reports[1]["decisions"])
+        self.assertEqual(reports[0]["tier_coverage_transitions"], reports[1]["tier_coverage_transitions"])
+        self.assertEqual(reports[0]["tier_coverage_transitions"], [
+            {"sample_index": 0, "timestamp_s": 0.0,
+             "available_tiers": ["raw_spectral", "residual_spectral"]},
+            {"sample_index": clipped_index, "timestamp_s": clipped_index / 4_000_000,
+             "available_tiers": []},
+            {"sample_index": clipped_index + 17, "timestamp_s": (clipped_index + 17) / 4_000_000,
+             "available_tiers": ["raw_spectral", "residual_spectral"]}])
 
     def test_mid_chunk_clipping_cannot_preempt_an_earlier_arc(self):
         metadata, arrays = make_recording(count=160_000, seed=913, arc_onset_s=.001)
@@ -295,6 +306,76 @@ class PipelineReplayTests(unittest.TestCase):
             replay(path, recording, forged, prototype=True)
         self.assertEqual(main(["calibrate", "--recording", str(path), "--metadata", str(self.base / "record.json"),
                                "--output", str(self.base / "new-profile.json"), "--profile-id", "bad", "--verified-healthy"]), 2)
+
+    def test_calibration_pair_collision_preserves_existing_file_without_partial_profile(self):
+        for colliding_suffix in ("", ".calibration.json"):
+            with self.subTest(colliding_suffix=colliding_suffix), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "profile.json"
+                collision = Path(str(output) + colliding_suffix)
+                collision.write_text("existing operator artifact", encoding="utf-8")
+                with self.assertRaises(FileExistsError):
+                    _write_calibration(output, self.calibration, self.healthy_metadata)
+                self.assertEqual(collision.read_text(), "existing operator artifact")
+                self.assertEqual({path.name for path in Path(directory).iterdir()}, {collision.name})
+
+    def test_calibration_pair_second_publish_failure_rolls_back_both_artifacts(self):
+        output = self.base / "profile.json"
+        actual_link = os.link
+        calls = []
+        def fail_second_publish(source, target):
+            calls.append(Path(target).name)
+            if len(calls) == 2:
+                raise PermissionError("simulated second publication failure")
+            actual_link(source, target)
+        with patch("arc_detector.__main__.os.link", side_effect=fail_second_publish):
+            with self.assertRaisesRegex(PermissionError, "second publication"):
+                _write_calibration(output, self.calibration, self.healthy_metadata)
+        self.assertEqual(calls, ["profile.json.calibration.json", "profile.json"])
+        self.assertEqual(list(self.base.iterdir()), [])
+
+    def test_calibration_pair_raced_collision_retains_new_operator_file(self):
+        output = self.base / "profile.json"
+        actual_link = os.link
+        def create_collision(source, target):
+            if Path(target) == output:
+                output.write_text("concurrent operator artifact", encoding="utf-8")
+            actual_link(source, target)
+        with patch("arc_detector.__main__.os.link", side_effect=create_collision):
+            with self.assertRaises(FileExistsError):
+                _write_calibration(output, self.calibration, self.healthy_metadata)
+        self.assertEqual(output.read_text(), "concurrent operator artifact")
+        self.assertEqual({path.name for path in self.base.iterdir()}, {"profile.json"})
+
+    def test_calibration_pair_success_has_complete_profile_and_provenance(self):
+        output = self.base / "profile.json"
+        _write_calibration(output, self.calibration, self.healthy_metadata)
+        self.assertEqual(Profile.from_dict(load_json(output)), self.profile)
+        provenance = load_json(str(output) + ".calibration.json")
+        self.assertEqual(provenance["provenance"], self.healthy_metadata.provenance)
+        self.assertFalse(provenance["hardware_qualification"])
+        self.assertEqual({path.name for path in self.base.iterdir()},
+                         {"profile.json", "profile.json.calibration.json"})
+
+    def test_tier_telemetry_distinguishes_unavailable_robust_only_and_full(self):
+        metadata, arrays = make_recording(count=120_000)
+        path, recording = self.save(metadata, arrays)
+        unavailable = replay(path, recording, self.profile)
+        self.assertEqual(unavailable["available_tiers"], [])
+        self.assertEqual(unavailable["tier_coverage_transitions"],
+                         [{"sample_index": 0, "timestamp_s": 0.0, "available_tiers": []}])
+        robust = replay(path, recording, self.profile, prototype=True)
+        self.assertEqual(robust["available_tiers"], ["raw_spectral", "residual_spectral"])
+        from dataclasses import replace
+        # Qualification flags are a software coverage fixture, not bench evidence.
+        qualified_fixture = replace(self.profile, spectral_qualified=True, fast_qualified=True,
+                                    impulse_tail_qualified=True)
+        metadata["synthetic"] = False
+        full = replay(path, RecordingMetadata.from_dict(metadata), qualified_fixture)
+        expected = ["raw_spectral", "residual_spectral", "raw_fast", "residual_fast"]
+        self.assertEqual(full["available_tiers"], expected)
+        self.assertEqual(full["tier_coverage_transitions"],
+                         [{"sample_index": 0, "timestamp_s": 0.0, "available_tiers": expected}])
+        self.assertFalse(full["hardware_qualification"])
 
 
 if __name__ == "__main__":

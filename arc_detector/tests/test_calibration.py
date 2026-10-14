@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -86,6 +87,49 @@ class CalibrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "eight"):
             calibrate(self.samples, self.edges, profile_id="test", node_id="node", operating_mode="mode",
                       verified_arc_free=True, provenance="lab declaration")
+
+    def test_calibration_excludes_unmodelled_prefix_before_residual_filters_and_floor(self):
+        from arc_detector.examples.synthetic import make_recording
+        metadata, arrays = make_recording(count=100_000)
+        edges = tuple(SwitchingEdge(**edge) for edge in metadata["edges"])
+        samples = arrays["current_high"]
+        contaminated = samples.copy()
+        # Unknown pre-capture switching tail, including known edges early in
+        # the fit interval: neither fitting nor envelope floors may learn it.
+        contaminated[:525] += np.random.default_rng(912).normal(0, 1000, 525)
+        args = dict(profile_id="prefix", node_id=metadata["node_id"],
+                    operating_mode=metadata["operating_mode"],
+                    verified_arc_free=True, provenance=metadata["provenance"])
+        clean = calibrate(samples, edges, **args)
+        dirty = calibrate(contaminated, edges, **args)
+        self.assertGreater(max(dirty.profile.raw_envelope.energy_q999),
+                           max(clean.profile.raw_envelope.energy_q999))
+        np.testing.assert_allclose(dirty.profile.residual_envelope.energy_q999,
+                                   clean.profile.residual_envelope.energy_q999, rtol=1e-10)
+        np.testing.assert_allclose(dirty.profile.residual_envelope.psd_q95,
+                                   clean.profile.residual_envelope.psd_q95, rtol=1e-10)
+        np.testing.assert_allclose(dirty.profile.fast_residual.energy_q999,
+                                   clean.profile.fast_residual.energy_q999, rtol=1e-10)
+        np.testing.assert_allclose(dirty.profile.fast_residual.activity_floor,
+                                   clean.profile.fast_residual.activity_floor, rtol=1e-10)
+        self.assertEqual(dirty.profile.templates, clean.profile.templates)
+        self.assertEqual(dirty.fit_relative_rms, clean.fit_relative_rms)
+
+    def test_residual_calibration_requires_eight_frames_after_predictor_warmup(self):
+        # Exactly eight raw frames; residual lacks eight after its extra tail.
+        samples = np.zeros(65_790)
+        with patch("arc_detector.calibration.fit_templates",
+                   return_value=((), samples.copy(), 1, 1)):
+            with self.assertRaisesRegex(ValueError, "eight"):
+                calibrate(samples, (), profile_id="short", node_id="node",
+                          operating_mode="mode", verified_arc_free=True,
+                          provenance="independent healthy declaration")
+
+    def test_fit_settling_samples_must_leave_valid_objective(self):
+        for prefix in (-1, True, 4096):
+            with self.subTest(prefix=prefix):
+                with self.assertRaisesRegex(ValueError, "settling"):
+                    fit_templates(self.samples, self.edges, settling_samples=prefix)
 
 
 if __name__ == "__main__":

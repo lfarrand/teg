@@ -60,6 +60,9 @@ responses describe each known channel and operating mode. Unknown mode/reference
 disables cancellation; if the qualified raw profile is still applicable it must
 continue observing. Never use the low-gain current measurement as a noise-only
 reference or fit coefficients to samples from an operating, possibly arcing line.
+The reference binds raw applicability to an explicitly supplied matching
+profile mode: omission or mismatch requests protection unavailability. A
+missing PWM reference alone does not invalidate that matching raw profile.
 
 The 4 MSPS fast tier uses fresh, non-overlapping 256-sample blocks (64
 microseconds). The spectral tier further decimates by eight with a 255-tap FIR

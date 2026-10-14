@@ -28,13 +28,13 @@ class DetectorTests(unittest.TestCase):
         default = Detector(profile())
         self.assertEqual(default.state, ProtectionState.PROTECTION_UNAVAILABLE)
         self.assertTrue(default.shutdown_latched)
-        failed = default.process(np.zeros(12000), start_index=0)
+        failed = default.process(np.zeros(12000), start_index=0, operating_mode="bench")
         self.assertEqual(failed.decisions[0].reason, "unqualified_profile")
         self.assertFalse(failed.permit)
         self.assertTrue(default.reset(output_inhibited=True, diagnostics_passed=True))
         self.assertTrue(default.shutdown_latched)
         detector = Detector(profile(), prototype=True)
-        result = detector.process(np.zeros(20000), start_index=0)
+        result = detector.process(np.zeros(20000), start_index=0, operating_mode="bench")
         self.assertEqual(result.state, ProtectionState.MONITORING)
         self.assertFalse(result.permit)
         self.assertFalse(result.shutdown_latched)
@@ -43,14 +43,82 @@ class DetectorTests(unittest.TestCase):
     def test_qualified_suspect_keeps_permit_until_a_latched_decision(self):
         detector = Detector(profile(verified_arc_free=True, spectral_qualified=True))
         decisions = []
-        detector._consume_spectral([frame(8192, weak_bands=2)], decisions)
+        detector.process(np.zeros(9000), start_index=0, operating_mode="bench")
+        detector._consume_spectral([frame(16384, weak_bands=2)], decisions)
         self.assertEqual(detector.state, ProtectionState.SUSPECT)
         self.assertTrue(detector._result().permit)
-        detector._timeout(408192, decisions)
+        detector._timeout(416384, decisions)
         self.assertFalse(detector._result().permit)
 
+    def test_qualified_profile_requires_explicit_exact_operating_mode(self):
+        template = EdgeTemplate("pwm", (0.0,) * 512, (0.0,) * 512)
+        item = profile(verified_arc_free=True, spectral_qualified=True, templates=(template,),
+                       fast_qualified=True, impulse_tail_qualified=True,
+                       fast_raw=FastEnvelope((1e-8,) * 6, (1e-8,) * 6))
+        for mode in (None, "other", "bench ", 1):
+            with self.subTest(mode=mode):
+                detector = Detector(item)
+                arguments = {} if mode is None else {"operating_mode": mode}
+                result = detector.process(np.zeros(20000), start_index=0, **arguments)
+                self.assertEqual(result.state, ProtectionState.PROTECTION_UNAVAILABLE)
+                self.assertTrue(result.shutdown_latched)
+                self.assertFalse(result.permit)
+                self.assertFalse(result.cancellation_active)
+                self.assertFalse(result.available_tiers)
+                self.assertEqual(result.decisions[0].reason,
+                                 "missing_operating_mode" if mode is None else "operating_mode_mismatch")
+
+    def test_mode_loss_revokes_existing_permit_and_requires_explicit_reset(self):
+        item = profile(verified_arc_free=True, spectral_qualified=True)
+        for mode in (None, "unsupported"):
+            with self.subTest(mode=mode):
+                detector = Detector(item)
+                ready = detector.process(np.zeros(20000), start_index=0, operating_mode="bench")
+                self.assertTrue(ready.permit)
+                # Mode knowledge is required even when a caller supplies no
+                # further current samples; an old permit must not survive.
+                arguments = {} if mode is None else {"operating_mode": mode}
+                unavailable = detector.process((), start_index=20000, **arguments)
+                self.assertFalse(unavailable.permit)
+                self.assertTrue(unavailable.shutdown_latched)
+                self.assertEqual(unavailable.decisions[0].sample_index, 20000)
+                resumed = detector.process(np.zeros(20000), start_index=20000, operating_mode="bench")
+                self.assertTrue(resumed.spectral_frames)
+                self.assertFalse(resumed.permit)
+                self.assertTrue(resumed.shutdown_latched)
+                self.assertTrue(detector.reset(output_inhibited=True, diagnostics_passed=True))
+                self.assertFalse(detector._result().permit)
+                reset_ready = detector.process(np.zeros(20000), start_index=40000, operating_mode="bench")
+                self.assertTrue(reset_ready.permit)
+
+    def test_adc_wrapper_checks_mode_before_first_complete_decimation_interval(self):
+        item = profile(verified_arc_free=True, spectral_qualified=True)
+        for arguments in ({}, {"operating_mode": "unsupported"}):
+            with self.subTest(arguments=arguments):
+                detector = Detector(item)
+                first = detector.process20m(np.zeros(1), start_index=0, **arguments)
+                self.assertEqual(first.state, ProtectionState.PROTECTION_UNAVAILABLE)
+                self.assertTrue(first.shutdown_latched)
+                self.assertFalse(first.permit)
+                self.assertEqual(first.decisions[0].sample_index, 0)
+                detector = Detector(item)
+                ready = detector.process20m(np.zeros(60000), start_index=0, operating_mode="bench")
+                self.assertTrue(ready.permit)
+                lost = detector.process20m(np.zeros(1), start_index=60000, **arguments)
+                self.assertFalse(lost.permit)
+                self.assertTrue(lost.shutdown_latched)
+                self.assertEqual(lost.decisions[0].sample_index, 12000)
+                self.assertEqual(lost.decisions[0].timestamp_us, 3000)
+
+    def test_prototype_cannot_treat_unknown_mode_as_matching_envelopes(self):
+        detector = Detector(profile(), prototype=True)
+        result = detector.process(np.zeros(20000), start_index=0, operating_mode="other")
+        self.assertEqual(result.state, ProtectionState.PROTECTION_UNAVAILABLE)
+        self.assertTrue(result.shutdown_latched)
+        self.assertFalse(result.available_tiers)
+
     def test_synthetic_startup_arc_detects_actual_samples_under_ten_ms(self):
-        result = Detector(profile(), prototype=True).process(np.random.default_rng(10).normal(size=40000), start_index=0)
+        result = Detector(profile(), prototype=True).process(np.random.default_rng(10).normal(size=40000), start_index=0, operating_mode="bench")
         self.assertEqual(result.state, ProtectionState.ARC_DETECTED)
         self.assertEqual(result.decisions[0].reason, "spectral_strong")
         self.assertLess(result.decisions[0].timestamp_us, 10000)
@@ -62,7 +130,7 @@ class DetectorTests(unittest.TestCase):
         item = profile(templates=(template,), verified_arc_free=True)
         edges = tuple(SwitchingEdge(i, "pwm", bool((i // 1000) % 2)) for i in range(0, 40000, 1000))
         raw = FrozenPredictor((template,)).process(40000, 0, edges)
-        result = Detector(item, prototype=True).process(raw, start_index=0, edges=edges)
+        result = Detector(item, prototype=True).process(raw, start_index=0, edges=edges, operating_mode="bench")
         self.assertTrue(result.cancellation_active)
         self.assertEqual(result.decisions[0].path, "raw")
         residual = [f for f in result.spectral_frames if f.path == "residual"]
@@ -77,7 +145,12 @@ class DetectorTests(unittest.TestCase):
             with self.subTest(mode=mode, health=health):
                 result = Detector(item, prototype=True).process(np.zeros(12000), start_index=0, health=health, operating_mode=mode)
                 self.assertFalse(result.cancellation_active)
-                self.assertIn("raw_spectral", result.available_tiers)
+                if mode == "bench":
+                    self.assertIn("raw_spectral", result.available_tiers)
+                else:
+                    self.assertTrue(result.shutdown_latched)
+                    self.assertEqual(result.state, ProtectionState.PROTECTION_UNAVAILABLE)
+                    self.assertNotIn("raw_spectral", result.available_tiers)
 
     def test_strong_requires_three_bands_and_three_consecutive_complete_frames(self):
         detector = Detector(profile(), prototype=True)
@@ -142,7 +215,7 @@ class DetectorTests(unittest.TestCase):
         for flag in flags:
             with self.subTest(flag=flag):
                 detector = Detector(profile(), prototype=True)
-                result = detector.process(np.zeros(10), start_index=0, health=AcquisitionHealth(**{flag: False}))
+                result = detector.process(np.zeros(10), start_index=0, health=AcquisitionHealth(**{flag: False}), operating_mode="bench")
                 self.assertEqual(result.state, ProtectionState.PROTECTION_UNAVAILABLE)
                 self.assertFalse(detector.reset(output_inhibited=False, diagnostics_passed=True))
                 self.assertFalse(detector.reset(output_inhibited=True, diagnostics_passed=False))
@@ -150,16 +223,16 @@ class DetectorTests(unittest.TestCase):
                 self.assertTrue(detector.reset(output_inhibited=True, diagnostics_passed=True))
                 self.assertEqual(detector.state, ProtectionState.INITIALISING)
         detector = Detector(profile(), prototype=True)
-        result = detector.process(np.zeros(10), start_index=0, health=AcquisitionHealth(both_gains_clipped=True))
+        result = detector.process(np.zeros(10), start_index=0, health=AcquisitionHealth(both_gains_clipped=True), operating_mode="bench")
         self.assertEqual(result.decisions[0].reason, "both_gains_clipped")
 
     def test_gap_and_loss_of_all_qualified_bandwidth_latch(self):
         detector = Detector(profile(), prototype=True)
-        detector.process(np.zeros(100), start_index=0)
-        result = detector.process(np.zeros(100), start_index=101)
+        detector.process(np.zeros(100), start_index=0, operating_mode="bench")
+        result = detector.process(np.zeros(100), start_index=101, operating_mode="bench")
         self.assertEqual(result.decisions[0].reason, "acquisition_gap")
         detector = Detector(profile(), prototype=True)
-        result = detector.process(np.zeros(100), start_index=0, health=AcquisitionHealth(raw_profile_valid=False))
+        result = detector.process(np.zeros(100), start_index=0, health=AcquisitionHealth(raw_profile_valid=False), operating_mode="bench")
         self.assertEqual(result.decisions[0].reason, "no_qualified_spectral_bandwidth")
 
     def test_raw_profile_reentry_discards_old_qualified_streak_and_filter_history(self):
@@ -167,18 +240,18 @@ class DetectorTests(unittest.TestCase):
         item = profile(verified_arc_free=True, spectral_qualified=True, templates=(template,),
                        residual_envelope=SpectralEnvelope((1e12,) * 4, (1e10,) * 513))
         detector = Detector(item, prototype=True)
-        first = detector.process(np.random.default_rng(71).normal(size=16633), start_index=0)
+        first = detector.process(np.random.default_rng(71).normal(size=16633), start_index=0, operating_mode="bench")
         self.assertFalse(first.shutdown_latched)
         self.assertEqual(detector._temporal["raw"].strong_streak, 2)
         since = detector._suspect_since
         middle = detector.process(np.zeros(32000), start_index=16633,
-                                  health=AcquisitionHealth(raw_profile_valid=False))
+                                  health=AcquisitionHealth(raw_profile_valid=False), operating_mode="bench")
         self.assertFalse(middle.shutdown_latched)
         self.assertIn("residual_spectral", middle.available_tiers)
         self.assertNotIn("raw_spectral", middle.available_tiers)
         self.assertEqual(detector._temporal["raw"].strong_streak, 0)
         self.assertEqual(detector._suspect_since, since)
-        after = detector.process(np.random.default_rng(81).normal(size=9000), start_index=48633)
+        after = detector.process(np.random.default_rng(81).normal(size=9000), start_index=48633, operating_mode="bench")
         self.assertFalse(after.shutdown_latched)
         self.assertEqual(detector._temporal["raw"].strong_streak, 1)
         raw_frames = [f for f in after.spectral_frames if f.path == "raw"]
@@ -202,11 +275,11 @@ class DetectorTests(unittest.TestCase):
     def test_qualified_fast_actual_signal_detects_and_loss_reports_reduced_coverage(self):
         item = profile(verified_arc_free=True, spectral_qualified=True, fast_qualified=True,
                        impulse_tail_qualified=True, fast_raw=FastEnvelope((1e-8,) * 6, (1e-8,) * 6))
-        result = Detector(item, prototype=True).process(np.random.default_rng(19).normal(size=12000), start_index=0)
+        result = Detector(item, prototype=True).process(np.random.default_rng(19).normal(size=12000), start_index=0, operating_mode="bench")
         self.assertEqual(result.decisions[0].reason, "fast_sustained")
         self.assertLess(result.decisions[0].timestamp_us, 2000)
         degraded = Detector(item, prototype=True).process(np.zeros(12000), start_index=0,
-                                                         health=AcquisitionHealth(pwm_reference_valid=False))
+                                                         health=AcquisitionHealth(pwm_reference_valid=False), operating_mode="bench")
         self.assertFalse(degraded.shutdown_latched)
         self.assertIn("raw_spectral", degraded.available_tiers)
         self.assertNotIn("raw_fast", degraded.available_tiers)
@@ -216,14 +289,14 @@ class DetectorTests(unittest.TestCase):
                        impulse_tail_qualified=True, fast_raw=FastEnvelope((1e-8,) * 6, (1e-8,) * 6))
         samples = np.zeros(6000)
         samples[600] = 1000
-        result = Detector(item, prototype=True).process(samples, start_index=0)
+        result = Detector(item, prototype=True).process(samples, start_index=0, operating_mode="bench")
         self.assertFalse(result.shutdown_latched)
 
     def test_detection_and_sample_evidence_continue_after_trip(self):
         detector = Detector(profile(), prototype=True)
-        first = detector.process(np.random.default_rng(11).normal(size=30000), start_index=0)
+        first = detector.process(np.random.default_rng(11).normal(size=30000), start_index=0, operating_mode="bench")
         self.assertTrue(first.shutdown_latched)
-        after = detector.process(np.zeros(24000), start_index=30000)
+        after = detector.process(np.zeros(24000), start_index=30000, operating_mode="bench")
         self.assertTrue(after.spectral_frames)
         self.assertEqual(after.state, ProtectionState.ARC_DETECTED)
         self.assertFalse(after.permit)
@@ -232,13 +305,13 @@ class DetectorTests(unittest.TestCase):
     def test_complete_processing_chunk_invariance_and_chronological_first_decision(self):
         rng = np.random.default_rng(23)
         samples = np.concatenate((np.zeros(15000), rng.normal(size=50000)))
-        whole = Detector(profile(), prototype=True).process(samples, start_index=0)
+        whole = Detector(profile(), prototype=True).process(samples, start_index=0, operating_mode="bench")
         detector = Detector(profile(), prototype=True)
         decisions, frames = [], []
         offset = 0
         while offset < len(samples):
             count = min(int(rng.integers(1, 3500)), len(samples) - offset)
-            part = detector.process(samples[offset:offset + count], start_index=offset)
+            part = detector.process(samples[offset:offset + count], start_index=offset, operating_mode="bench")
             decisions.extend(part.decisions)
             frames.extend(part.spectral_frames)
             offset += count
@@ -250,13 +323,13 @@ class DetectorTests(unittest.TestCase):
     def test_twenty_msps_wrapper_chunk_invariant_even_inside_decimation_intervals(self):
         rng = np.random.default_rng(59)
         samples = rng.normal(size=210000)
-        whole = Detector(profile(), prototype=True).process20m(samples, start_index=0)
+        whole = Detector(profile(), prototype=True).process20m(samples, start_index=0, operating_mode="bench")
         detector = Detector(profile(), prototype=True)
         decisions, frames = [], []
         offset = 0
         while offset < len(samples):
             count = min(int(rng.integers(1, 1300)), len(samples) - offset)
-            part = detector.process20m(samples[offset:offset + count], start_index=offset)
+            part = detector.process20m(samples[offset:offset + count], start_index=offset, operating_mode="bench")
             decisions.extend(part.decisions)
             frames.extend(part.spectral_frames)
             offset += count
@@ -267,41 +340,41 @@ class DetectorTests(unittest.TestCase):
 
     def test_twenty_msps_cascaded_settling_excludes_incomplete_fir_history(self):
         samples = np.full(60000, 1.0)
-        whole = Detector(profile(), prototype=True).process20m(samples, start_index=0)
+        whole = Detector(profile(), prototype=True).process20m(samples, start_index=0, operating_mode="bench")
         first_frame_source = whole.spectral_frames[0].sample_index - 8185
         self.assertGreaterEqual(first_frame_source, 280)
         self.assertEqual(first_frame_source, 280)
         detector = Detector(profile(), prototype=True)
-        first = detector.process20m(samples[:126], start_index=0)
-        second = detector.process20m(samples[126:130], start_index=126)
-        third = detector.process20m(samples[130:], start_index=130)
+        first = detector.process20m(samples[:126], start_index=0, operating_mode="bench")
+        second = detector.process20m(samples[126:130], start_index=126, operating_mode="bench")
+        third = detector.process20m(samples[130:], start_index=130, operating_mode="bench")
         self.assertFalse(first.spectral_frames)
         self.assertFalse(second.spectral_frames)
         self.assertEqual(third.spectral_frames[0].sample_index, whole.spectral_frames[0].sample_index)
 
     def test_twenty_msps_health_failure_uses_exact_adc_fault_time_and_drops_pending_data(self):
         detector = Detector(profile(), prototype=True)
-        detector.process20m(np.zeros(30000), start_index=0)
+        detector.process20m(np.zeros(30000), start_index=0, operating_mode="bench")
         result = detector.process20m(np.ones(1), start_index=30000,
-                                     health=AcquisitionHealth(both_gains_clipped=True))
+                                     health=AcquisitionHealth(both_gains_clipped=True), operating_mode="bench")
         self.assertEqual(result.decisions[0].reason, "both_gains_clipped")
         self.assertEqual(result.decisions[0].sample_index, 6000)
         self.assertEqual(result.decisions[0].timestamp_us, 1500)
         # Recovery keeps the latch, starts fresh FIR history, and cannot bridge
         # the invalid raw sample with old wrapper values or switching edges.
-        after = detector.process20m(np.zeros(60000), start_index=30001)
+        after = detector.process20m(np.zeros(60000), start_index=30001, operating_mode="bench")
         self.assertTrue(after.shutdown_latched)
         self.assertTrue(after.spectral_frames)
         self.assertGreaterEqual(after.spectral_frames[0].sample_index - 8185, 6280)
         detector = Detector(profile(), prototype=True)
-        detector.process20m(np.zeros(2), start_index=0)
-        result = detector.process20m(np.zeros(1), start_index=2, health=AcquisitionHealth(frame_valid=False))
+        detector.process20m(np.zeros(2), start_index=0, operating_mode="bench")
+        result = detector.process20m(np.zeros(1), start_index=2, health=AcquisitionHealth(frame_valid=False), operating_mode="bench")
         self.assertEqual(result.decisions[0].sample_index, 0.4)
         self.assertAlmostEqual(result.decisions[0].timestamp_us, 0.1)
 
     def test_no_spectral_frame_or_decision_can_use_unobserved_future_samples(self):
         detector = Detector(profile(), prototype=True)
-        result = detector.process(np.random.default_rng(29).normal(size=8441), start_index=0)
+        result = detector.process(np.random.default_rng(29).normal(size=8441), start_index=0, operating_mode="bench")
         self.assertEqual(len(result.spectral_frames), 1)
         self.assertEqual(result.spectral_frames[0].sample_index, 8441)
         for index in (f.sample_index for f in result.spectral_frames):
@@ -313,13 +386,13 @@ class DetectorTests(unittest.TestCase):
         item = profile(verified_arc_free=True, spectral_qualified=True, fast_qualified=True,
                        impulse_tail_qualified=True, fast_raw=FastEnvelope((1e-8,) * 6, (1e-8,) * 6))
         samples = np.zeros(10000)
-        whole = Detector(item, prototype=True).process20m(samples, start_index=0)
+        whole = Detector(item, prototype=True).process20m(samples, start_index=0, operating_mode="bench")
         self.assertEqual(whole.fast_blocks[0].sample_index, 538)
         for first_count in (5, 100, 125, 129, 130):
             with self.subTest(first_count=first_count):
                 detector = Detector(item, prototype=True)
-                before = detector.process20m(samples[:first_count], start_index=0)
-                after = detector.process20m(samples[first_count:], start_index=first_count)
+                before = detector.process20m(samples[:first_count], start_index=0, operating_mode="bench")
+                after = detector.process20m(samples[first_count:], start_index=first_count, operating_mode="bench")
                 partitioned = before.fast_blocks + after.fast_blocks
                 self.assertEqual([b.sample_index for b in partitioned], [b.sample_index for b in whole.fast_blocks])
                 for block in before.fast_blocks:

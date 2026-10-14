@@ -98,7 +98,8 @@ class AcquisitionTests(unittest.TestCase):
         count = 100_000
         # Fixed words encode high=16 and low=1, both input-referred value=1.
         result = adapter.process(np.full(count, 0x400, dtype=np.uint32),
-                                 np.full(count, 0x40, dtype=np.uint32), start_index=0)
+                                 np.full(count, 0x40, dtype=np.uint32), start_index=0,
+                                 operating_mode="fixed")
         self.assertEqual(result.state, ProtectionState.MONITORING)
         self.assertFalse(result.permit)
         self.assertFalse(result.shutdown_latched)
@@ -115,7 +116,7 @@ class AcquisitionTests(unittest.TestCase):
                                 ("double-clip", [0x7FFFC0], [0x7FFFC0])):
             with self.subTest(case=case):
                 adapter = CaptureProcessor(Detector(profile, prototype=True), mode=Randomization.NONE)
-                result = adapter.process(high, low, start_index=0)
+                result = adapter.process(high, low, start_index=0, operating_mode="fixed")
                 self.assertEqual(result.state, ProtectionState.PROTECTION_UNAVAILABLE)
                 self.assertTrue(result.shutdown_latched)
                 self.assertFalse(result.permit)
@@ -136,7 +137,7 @@ class AcquisitionTests(unittest.TestCase):
             for start in range(0, len(words), chunk_size):
                 decisions.extend(adapter.process(words[start:start + chunk_size],
                                                  words[start:start + chunk_size],
-                                                 start_index=start).decisions)
+                                                 start_index=start, operating_mode="fixed").decisions)
             outcomes.append([(d.reason, d.sample_index, d.timestamp_us) for d in decisions])
         self.assertEqual(outcomes[0], outcomes[1])
         self.assertEqual(outcomes[0], [("both_gains_clipped", 6000, 1500.0)])

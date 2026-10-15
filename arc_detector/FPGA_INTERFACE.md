@@ -1,7 +1,7 @@
 # Independent detector FPGA interface, revision 1
 
 This is the interface specification for a host reference implementation. No
-Lattice bitstream, pin constraints, synthesizable complete detector, electrical
+hardware bitstream, physical board pin constraints, synthesizable complete detector, electrical
 shutdown circuit or measured latency is supplied by this package. It does not
 connect a host score to TEG OUTEN. Hardware layout and firmware integration follow
 qualification of this reference and this contract.
@@ -9,7 +9,9 @@ qualification of this reference and this contract.
 ## Acquisition boundary
 
 The proposed device is TI ADS9219 (two simultaneous 18-bit channels, 20 MSPS per
-channel), connected to Certus-NX LFD2NX-40. Feed the same HF current sensor into
+channel). The original Certus-NX LFD2NX-40 is now a mapping comparator;
+[VP1802 is the arithmetic-first target](FPGA_SELECTION.md), not a completed
+ADC/board implementation. Feed the same HF current sensor into
 calibrated high/low gain paths; these paths share common failure modes. Add
 independent DC-capable current, isolated voltage and residual-current sensing.
 The analogue path must be characterised from approximately 10 to 700 kHz, with
@@ -77,6 +79,16 @@ experimental 2 MSPS fast bank with additional anti-alias filtering. It is not
 complete ADC/predictor/spectral/protection RTL or a qualified architecture
 change. Bind its separate thresholds to the exact filter recipe/numeric domain;
 do not reuse the original floating profile or infer device fit from tap counts.
+
+[Actual raw-fast HDL and synthesis](FPGA_SYNTHESIS.md) now covers those two
+integer banks, activity/evidence and passive candidates. The core accepts
+`in_valid`, signed24-bit `in_sample` and64-bit `in_index`, with ready/busy,
+candidate/index/latch and protocol-fault outputs. It is not the ADC receiver,
+cancellation/residual/spectral pipeline or protection-state implementation.
+The synthesis wrapper's internal index cannot establish ADC continuity.
+Synthetic bonded-pad PDC is explicitly non-board/non-programming research;
+neither Nexus variant fits the tested40-class device and no routed timing
+has been established for the chosen VP1802.
 
 Either raw or residual evidence can latch an arc. Fast-tier enable additionally
 requires independent fast-band, nuisance and complete impulse-tail qualification.

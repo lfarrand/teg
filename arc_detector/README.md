@@ -5,6 +5,8 @@ cancellation design: numerical DSP, immutable profiles, protection decisions,
 ADC word decoding, calibration, recorded-data replay and an
 [FPGA interface contract](FPGA_INTERFACE.md). It is separate from Teensy
 firmware. It contains no hardware bitstream or electrical shutdown implementation.
+The separate raw-fast RTL and real HDL tool flow are described below; neither
+turns the host reference into a qualified protection product.
 
 The detector analyses both raw HF current and a residual formed by subtracting
 frozen switching-edge responses. Neither cancellation nor a missing PWM
@@ -130,11 +132,25 @@ It records arithmetic savings, extra multirate delay, synthetic detections
 **and misses**, host execution cost, and FPGA/electrical blockers. It does not
 replace the floating raw/residual detector or establish market superiority.
 
+## Actual raw-fast HDL and FPGA choice
+
+[HDL verification and synthesis](FPGA_SYNTHESIS.md) supplies synthesizable
+raw-fast baseline/multirate RTL, frozen ROM generation, actual Icarus-to-integer
+parity and reproducible Yosys/nextpnr reports. Both variants synthesize; neither
+fits Certus-NX-40 in this implementation. UltraScale+ mapping is not Versal
+implementation or timing proof. There is no complete detector RTL or bitstream.
+
+The arithmetic-first target is now
+[AMD Versal Premium VP1802](FPGA_SELECTION.md), with vendor-tool access, a
+parallel implementation and routed timing still outstanding. Power/package size
+are not selection constraints; purchases and licence commitments were not made.
+
 ## What follows this deliverable
 
 Capture real series/parallel arcs and nuisance events across held-out hardware
 and wiring families; validate complete impulse responses, noise masking and
-cancellation of PWM-correlated events. Port the reference to fixed-point RTL,
+cancellation of PWM-correlated events. Complete fixed-point ADC, prediction,
+residual, spectral and protection RTL beyond the raw-fast implementation;
 verify bit-accurate parity, close FPGA timing, and measure the full signal path.
 Then design the AFE/ADC/FPGA board and source shutdown coverage, and integrate
 the independent fault/permit and telemetry interface into TEG. The existing

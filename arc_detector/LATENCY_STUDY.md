@@ -209,8 +209,11 @@ onset/end, exposure and near-int64-limit checks afterward.
    qualification; bit-exact prediction, residual, spectral features and protection
    RTL; fault injection and parity beyond these component interfaces.
 4. FPGA package/speed grade, clocks/pins/constraints, DSP packing, memory schedule,
-   synthesis and worst-case timing. No HDL/synthesis toolchain or target
-   constraints was available; no bitstream was built.
+   synthesis and worst-case timing. This study initially had no HDL toolchain;
+   the subsequent [actual raw-fast HDL/synthesis work](FPGA_SYNTHESIS.md)
+   installs one and records real mapping/failed-fit results. It does not supply
+   a bitstream, board constraints or selected-device timing closure. The
+   [arithmetic-first target is now VP1802](FPGA_SELECTION.md).
 5. Independent hardwired permit/fault and source interruption coverage, reset
    and broken-wire behavior. Instrument onset, decision, command and extinction
    separately. Existing NO-SHIP/disconnected-bench gates remain.

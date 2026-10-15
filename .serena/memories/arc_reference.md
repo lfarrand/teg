@@ -3,7 +3,7 @@
 - `arc_detector/` is a standalone Python 3.12 host DSP/calibration/replay package;
   pinned NumPy/SciPy there are not Teensy libraries. Run unittest discovery in
   `arc_detector/tests`; CI is `arc-reference.yml`.
-- `FPGA_INTERFACE.md` is an external acquisition/protection contract, not RTL,
+- `FPGA_INTERFACE.md` is an external acquisition/protection contract, not complete detector RTL,
   a bitstream, working hardware, FPGA timing evidence or an OUTEN integration.
 - Immutable healthy templates; independent raw/residual detection. Synthetic
   profiles stay unqualified; explicit prototype never grants permit. Unavailable,
@@ -30,3 +30,20 @@
   work but adds delay; synthesis fit, full cancellation/FFT parity, real arc
   performance, extinction and market superiority remain unproven. Synthetic
   detections AND raw-only misses must be retained, not marketed as guarantees.
+- `rtl/` now implements the two raw-fast integer banks, feature evidence and
+  passive candidates; no ADC receiver/cancellation/residual/spectral/full-safety
+  RTL. `rtl_config.py` binds immutable ROMs to exact architecture/domain/envelope.
+  `fpga_build.py verify` runs actual Icarus parity, not a renamed host projection;
+  `hdl_tests/` is separate required discovery with explicit `ARC_FPGA_TOOLS`.
+  Missing tools fail. Retained artifact directories must be new.
+- `fpga_build.py synth` accepts verified unchanged ROM/RTL hashes and maps Nexus
+  (`synth_lattice -family lfd2nx`) or UltraScale+ (`xcup`, not Versal). Explicit
+  `--route --research-pdc` generates bonded-pad synthetic constraints, never a
+  physical board pinout or programming permission. Pack-only success is not fit.
+  Actual baseline/multirate Nexus results exceed Certus-NX-40 capacity; no routed
+  timing or bitstream. Keep large local logs/netlists in ignored `.pio/`.
+- `FPGA_SYNTHESIS.md` records actual installed tool versions/hashes, parity,
+  resource/failure results and reproduction. `FPGA_SELECTION.md` chooses VP1802
+  arithmetic-first with unconstrained power/size; vendor licence/download access,
+  parallel implementation and vendor timing remain gates. More DSP/I/O does not
+  remove the512us evidence interval or establish market superiority.

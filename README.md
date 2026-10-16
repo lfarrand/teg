@@ -32,6 +32,11 @@ hardware fault protection.
 > have to change to build products on it (including an AGPL licence blocker in
 > the Ethernet stack).
 
+The separate [DC/PV arc detector host reference](arc_detector/README.md) provides
+recorded switching-noise cancellation, raw/residual evidence, calibration and
+replay, and an external FPGA interface specification. It is research software;
+it is not connected to OUTEN and supplies no hardware arc-protection claim.
+
 ## Highlights
 
 - **9 modulation schemes** — from plain fixed-duty PWM through SPWM, THIPWM, SVPWM,

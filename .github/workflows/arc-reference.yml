@@ -1,0 +1,82 @@
+name: Arc detector reference
+
+on:
+  pull_request:
+    paths: ["arc_detector/**", ".github/workflows/arc-reference.yml"]
+  push:
+    branches: [main]
+    paths: ["arc_detector/**", ".github/workflows/arc-reference.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arc-reference-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reference-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.13"
+      - name: Install reference dependencies
+        run: python -m pip install --disable-pip-version-check -r arc_detector/requirements.txt
+      - name: Test reference algorithm and replay
+        run: python -m unittest discover -s arc_detector/tests -p 'test_*.py' -v
+
+  rtl-simulation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      ARC_FPGA_ARTIFACTS: .pio/hdl-ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.13"
+      - name: Install reference dependencies
+        run: python -m pip install --disable-pip-version-check -r arc_detector/requirements.txt
+      - name: Install digest-pinned public HDL toolchain
+        shell: python
+        run: |
+          import hashlib
+          import os
+          from pathlib import Path
+          import tarfile
+          from urllib.request import urlopen
+          destination = Path(os.environ["RUNNER_TEMP"]) / "arc-oss"
+          destination.mkdir()
+          archive = destination / "suite.tgz"
+          url = "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-10-14/oss-cad-suite-linux-x64-20261014.tgz"
+          digest = hashlib.sha256()
+          with urlopen(url, timeout=120) as response, archive.open("xb") as output:
+              while block := response.read(1024 * 1024):
+                  digest.update(block)
+                  output.write(block)
+          expected = "a6ccc6b96b2d985336a1061c78b2fd2bdd73e0f68690da17db88e00457881a11"
+          if digest.hexdigest() != expected:
+              raise RuntimeError("HDL archive SHA256 mismatch; refusing extraction")
+          with tarfile.open(archive) as source:
+              source.extractall(destination, filter="data")
+      - name: Compare actual HDL with exact integer reference
+        env:
+          ARC_FPGA_TOOLS: "${{ runner.temp }}/arc-oss/oss-cad-suite"
+        run: python -m unittest discover -s arc_detector/hdl_tests -p 'test_*.py' -v
+      - name: Preserve HDL verification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: arc-hdl-parity
+          path: .pio/hdl-ci
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
